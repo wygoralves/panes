@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use tauri::State;
 
 use crate::{
+    config::app_config::AppConfig,
     db,
     engines::validate_engine_sandbox_mode,
     engines::CodexRemoteThreadSummary,
@@ -657,6 +658,85 @@ fn build_opencode_remote_session_metadata(
     metadata
 }
 
+#[derive(Debug, PartialEq)]
+struct AutonomyPresetPolicy {
+    approval_policy: Value,
+    sandbox_mode: Option<&'static str>,
+    allow_network: Option<bool>,
+}
+
+fn autonomy_policy_for_preset(
+    engine_id: &str,
+    preset: &str,
+    codex_external_sandbox: bool,
+) -> Result<AutonomyPresetPolicy, String> {
+    let policy = match engine_id {
+        "opencode" => AutonomyPresetPolicy {
+            approval_policy: json!(match preset {
+                "read-only" => "deny",
+                "ask" => "ask",
+                "auto" | "full" => "allow",
+                _ => return Err(format!("unknown autonomy preset: {preset}")),
+            }),
+            sandbox_mode: None,
+            allow_network: None,
+        },
+        "claude" => match preset {
+            "read-only" => AutonomyPresetPolicy {
+                approval_policy: json!("restricted"),
+                sandbox_mode: Some("read-only"),
+                allow_network: Some(false),
+            },
+            "ask" => AutonomyPresetPolicy {
+                approval_policy: json!("standard"),
+                sandbox_mode: Some("workspace-write"),
+                allow_network: Some(false),
+            },
+            "auto" => AutonomyPresetPolicy {
+                approval_policy: json!("trusted"),
+                sandbox_mode: Some("workspace-write"),
+                allow_network: None,
+            },
+            "full" => AutonomyPresetPolicy {
+                approval_policy: json!("trusted"),
+                sandbox_mode: Some("workspace-write"),
+                allow_network: Some(true),
+            },
+            _ => return Err(format!("unknown autonomy preset: {preset}")),
+        },
+        "codex" => match preset {
+            "read-only" => AutonomyPresetPolicy {
+                approval_policy: json!("untrusted"),
+                sandbox_mode: (!codex_external_sandbox).then_some("read-only"),
+                allow_network: Some(false),
+            },
+            "ask" => AutonomyPresetPolicy {
+                approval_policy: json!("on-request"),
+                sandbox_mode: (!codex_external_sandbox).then_some("workspace-write"),
+                allow_network: Some(false),
+            },
+            "auto" => AutonomyPresetPolicy {
+                approval_policy: json!("on-failure"),
+                sandbox_mode: (!codex_external_sandbox).then_some("workspace-write"),
+                allow_network: Some(true),
+            },
+            "full" => AutonomyPresetPolicy {
+                approval_policy: json!("never"),
+                sandbox_mode: Some("danger-full-access"),
+                allow_network: Some(true),
+            },
+            _ => return Err(format!("unknown autonomy preset: {preset}")),
+        },
+        _ => {
+            return Err(format!(
+                "autonomy presets are unsupported for engine: {engine_id}"
+            ))
+        }
+    };
+
+    Ok(policy)
+}
+
 #[tauri::command]
 pub async fn create_thread(
     state: State<'_, AppState>,
@@ -668,6 +748,14 @@ pub async fn create_thread(
     reasoning_effort: Option<String>,
     service_tier: Option<String>,
 ) -> Result<ThreadDto, String> {
+    let default_autonomy_preset = tokio::task::spawn_blocking(|| {
+        AppConfig::load_or_create()
+            .map(|config| config.default_autonomy_preset().map(ToOwned::to_owned))
+            .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)??;
+
     create_thread_inner(
         state.inner(),
         workspace_id,
@@ -677,6 +765,7 @@ pub async fn create_thread(
         title,
         reasoning_effort,
         service_tier,
+        default_autonomy_preset,
     )
     .await
 }
@@ -690,6 +779,7 @@ async fn create_thread_inner(
     title: String,
     reasoning_effort: Option<String>,
     service_tier: Option<String>,
+    initial_autonomy_preset: Option<String>,
 ) -> Result<ThreadDto, String> {
     let normalized_service_tier = if engine_id == "codex" {
         normalize_thread_service_tier(service_tier)?
@@ -732,18 +822,31 @@ async fn create_thread_inner(
         } else {
             None
         };
-    let metadata = if validated_reasoning_effort.is_some() || normalized_service_tier.is_some() {
-        let mut object = serde_json::Map::new();
-        if let Some(value) = validated_reasoning_effort {
-            object.insert("reasoningEffort".to_string(), json!(value));
+    let mut metadata = serde_json::Map::new();
+    if let Some(value) = validated_reasoning_effort {
+        metadata.insert("reasoningEffort".to_string(), json!(value));
+    }
+    if let Some(value) = normalized_service_tier {
+        metadata.insert("serviceTier".to_string(), json!(value));
+    }
+
+    if let Some(preset) = initial_autonomy_preset.as_deref() {
+        let codex_external_sandbox =
+            engine_id == "codex" && state.engines.codex_uses_external_sandbox().await;
+        let policy = autonomy_policy_for_preset(&engine_id, preset, codex_external_sandbox)?;
+        metadata.insert(
+            approval_policy_metadata_key(&engine_id).to_string(),
+            policy.approval_policy,
+        );
+        if let Some(sandbox_mode) = policy.sandbox_mode {
+            metadata.insert("sandboxMode".to_string(), json!(sandbox_mode));
         }
-        if let Some(value) = normalized_service_tier {
-            object.insert("serviceTier".to_string(), json!(value));
+        if let Some(allow_network) = policy.allow_network {
+            metadata.insert("sandboxAllowNetwork".to_string(), json!(allow_network));
         }
-        Some(Value::Object(object))
-    } else {
-        None
-    };
+    }
+
+    let metadata = (!metadata.is_empty()).then_some(Value::Object(metadata));
 
     run_db(state.db.clone(), move |db| {
         let created = db::threads::create_thread(
@@ -3327,6 +3430,7 @@ mod tests {
             "Thread".to_string(),
             Some("HIGH".to_string()),
             Some("FAST".to_string()),
+            None,
         )
         .await
         .expect("expected thread creation to succeed");
@@ -3336,6 +3440,36 @@ mod tests {
             .expect("expected runtime metadata to be stored");
         assert_eq!(metadata.get("reasoningEffort"), Some(&json!("high")));
         assert_eq!(metadata.get("serviceTier"), Some(&json!("fast")));
+    }
+
+    #[tokio::test]
+    async fn create_thread_inner_persists_initial_autonomy_policy() {
+        let state = test_app_state();
+        let workspace = test_workspace(&state);
+
+        let created = create_thread_inner(
+            &state,
+            workspace.id,
+            None,
+            "claude".to_string(),
+            "claude-sonnet-4-6".to_string(),
+            "Thread".to_string(),
+            None,
+            None,
+            Some("read-only".to_string()),
+        )
+        .await
+        .expect("expected thread creation to succeed");
+
+        let metadata = created
+            .engine_metadata
+            .expect("expected autonomy metadata to be stored");
+        assert_eq!(
+            metadata.get("claudePermissionMode"),
+            Some(&json!("restricted"))
+        );
+        assert_eq!(metadata.get("sandboxMode"), Some(&json!("read-only")));
+        assert_eq!(metadata.get("sandboxAllowNetwork"), Some(&json!(false)));
     }
 
     #[tokio::test]
@@ -3351,6 +3485,7 @@ mod tests {
             "gpt-5.4".to_string(),
             "Thread".to_string(),
             Some("turbo".to_string()),
+            None,
             None,
         )
         .await
@@ -3373,11 +3508,58 @@ mod tests {
             "Thread".to_string(),
             None,
             Some("fast".to_string()),
+            None,
         )
         .await
         .expect_err("expected non-codex service tier to be rejected");
 
         assert!(error.contains("service tier is only supported for Codex threads"));
+    }
+
+    #[test]
+    fn autonomy_policy_for_preset_matches_engine_contracts() {
+        assert_eq!(
+            autonomy_policy_for_preset("codex", "read-only", false).unwrap(),
+            AutonomyPresetPolicy {
+                approval_policy: json!("untrusted"),
+                sandbox_mode: Some("read-only"),
+                allow_network: Some(false),
+            }
+        );
+        assert_eq!(
+            autonomy_policy_for_preset("claude", "full", false).unwrap(),
+            AutonomyPresetPolicy {
+                approval_policy: json!("trusted"),
+                sandbox_mode: Some("workspace-write"),
+                allow_network: Some(true),
+            }
+        );
+        assert_eq!(
+            autonomy_policy_for_preset("opencode", "auto", false).unwrap(),
+            AutonomyPresetPolicy {
+                approval_policy: json!("allow"),
+                sandbox_mode: None,
+                allow_network: None,
+            }
+        );
+    }
+
+    #[test]
+    fn external_sandbox_omits_blocked_codex_overrides() {
+        for preset in ["read-only", "ask", "auto"] {
+            assert_eq!(
+                autonomy_policy_for_preset("codex", preset, true)
+                    .unwrap()
+                    .sandbox_mode,
+                None
+            );
+        }
+        assert_eq!(
+            autonomy_policy_for_preset("codex", "full", true)
+                .unwrap()
+                .sandbox_mode,
+            Some("danger-full-access")
+        );
     }
 
     #[tokio::test]

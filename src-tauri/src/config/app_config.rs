@@ -13,6 +13,7 @@ use crate::runtime_env;
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 12;
 pub const MIN_TERMINAL_FONT_SIZE: u32 = 8;
 pub const MAX_TERMINAL_FONT_SIZE: u32 = 32;
+pub const VALID_AUTONOMY_PRESETS: [&str; 4] = ["read-only", "ask", "auto", "full"];
 
 /// Clamp a requested terminal font size into the supported range.
 pub fn clamp_terminal_font_size(font_size: u32) -> u32 {
@@ -213,6 +214,13 @@ impl AppConfig {
             .get(harness_id)
             .map(|args| args.trim())
             .filter(|args| !args.is_empty())
+    }
+
+    pub fn default_autonomy_preset(&self) -> Option<&str> {
+        self.general
+            .default_autonomy_preset
+            .as_deref()
+            .filter(|preset| VALID_AUTONOMY_PRESETS.contains(preset))
     }
 
     pub fn load_or_create() -> anyhow::Result<Self> {

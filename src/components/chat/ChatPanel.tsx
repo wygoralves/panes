@@ -4640,7 +4640,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     const previous = defaultAutonomyPreset;
     setDefaultAutonomyPreset(preset);
     try {
-      await ipc.setDefaultAutonomyPreset(preset);
+      const saved = await ipc.setDefaultAutonomyPreset(preset);
+      setDefaultAutonomyPreset(isAutonomyPresetId(saved) ? saved : null);
     } catch (error) {
       setDefaultAutonomyPreset(previous);
       toast.error(t("autonomy.defaultSaveFailed", { error: String(error) }));
