@@ -1,5 +1,28 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.62.2...vnull) (2026-07-13)
+
+### Features
+
+* add an autonomy preset ladder for chat execution policy ([1312a92](https://github.com/wygoralves/panes/commit/1312a926d9034800b9992fe3a707d615fcc576f1))
+* add en and pt-BR copy for the chat component rework ([0129040](https://github.com/wygoralves/panes/commit/012904026adfb3d49a69bc84de056cde4d6ddb78))
+* add per-harness launch flags to the agents menu ([601d908](https://github.com/wygoralves/panes/commit/601d9084e6d30ad705d7c51a6b9a56a351d0b2b6))
+* add unified chat component styles ([5a3eaa5](https://github.com/wygoralves/panes/commit/5a3eaa5c049ddda65860d621511a3eda933ed251))
+* consolidate the chat composer, status bar, and approvals ([b67df31](https://github.com/wygoralves/panes/commit/b67df310e677faa427bbc542cb5a12b98faf8a6d))
+* front the permission picker with autonomy presets ([acf2765](https://github.com/wygoralves/panes/commit/acf27653348ea6b494a161e43ff186c0882e798f))
+* let toasts carry a title, wrapping body, and action ([a12697f](https://github.com/wygoralves/panes/commit/a12697fa87d2d9cf7e854d8bc79c016dfc59ebbe))
+* make approval requests readable in the composer banner ([9f2f25a](https://github.com/wygoralves/panes/commit/9f2f25a2c44a75f8278f3cad4b6a91db71d45ea1))
+* rework message blocks onto the shared block grammar ([8fb41bf](https://github.com/wygoralves/panes/commit/8fb41bf990525e25e64762a8ed33c751c4ec0206))
+* surface background approvals and default autonomy ([a6a1c8b](https://github.com/wygoralves/panes/commit/a6a1c8b8c767f30289ccb93c31c554b29ea6c8d0))
+
+### Bug Fixes
+
+* install both darwin arches for the universal sidecar build ([20bf47e](https://github.com/wygoralves/panes/commit/20bf47e05a8b4f2fe8e9be58ada7e7e1874698d6))
+* make the read-only preset copy match codex untrusted semantics ([08fe23e](https://github.com/wygoralves/panes/commit/08fe23e3927ebcd178498d1348e61fdb46a9b4c2))
+* open chat diff files at the repo-relative path ([0c7a824](https://github.com/wygoralves/panes/commit/0c7a824bcc7572f9f81918f18bbbbb01704becec))
+* repair autonomy presets under external sandbox mode and picker layout ([a294822](https://github.com/wygoralves/panes/commit/a2948223d2a86241ba03324cac12e7ae8a93b23b))
+* resolve external sandbox mode from the backend for autonomy presets ([66cc741](https://github.com/wygoralves/panes/commit/66cc741f5fa8f0e35952c5f77e3d263a610ca632))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.62.1...vnull) (2026-07-12)
 
 ### Bug Fixes
