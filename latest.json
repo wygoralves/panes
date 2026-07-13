@@ -1,0 +1,31 @@
+{
+  "version": "0.63.0",
+  "notes": "## [](https://github.com/wygoralves/panes/compare/v0.62.2...vnull) (2026-07-13)\n\n### Features\n\n* add an autonomy preset ladder for chat execution policy ([1312a92](https://github.com/wygoralves/panes/commit/1312a926d9034800b9992fe3a707d615fcc576f1))\n* add en and pt-BR copy for the chat component rework ([0129040](https://github.com/wygoralves/panes/commit/012904026adfb3d49a69bc84de056cde4d6ddb78))\n* add per-harness launch flags to the agents menu ([601d908](https://github.com/wygoralves/panes/commit/601d9084e6d30ad705d7c51a6b9a56a351d0b2b6))\n* add unified chat component styles ([5a3eaa5](https://github.com/wygoralves/panes/commit/5a3eaa5c049ddda65860d621511a3eda933ed251))\n* consolidate the chat composer, status bar, and approvals ([b67df31](https://github.com/wygoralves/panes/commit/b67df310e677faa427bbc542cb5a12b98faf8a6d))\n* front the permission picker with autonomy presets ([acf2765](https://github.com/wygoralves/panes/commit/acf27653348ea6b494a161e43ff186c0882e798f))\n* let toasts carry a title, wrapping body, and action ([a12697f](https://github.com/wygoralves/panes/commit/a12697fa87d2d9cf7e854d8bc79c016dfc59ebbe))\n* make approval requests readable in the composer banner ([9f2f25a](https://github.com/wygoralves/panes/commit/9f2f25a2c44a75f8278f3cad4b6a91db71d45ea1))\n* rework message blocks onto the shared block grammar ([8fb41bf](https://github.com/wygoralves/panes/commit/8fb41bf990525e25e64762a8ed33c751c4ec0206))\n* surface background approvals and default autonomy ([a6a1c8b](https://github.com/wygoralves/panes/commit/a6a1c8b8c767f30289ccb93c31c554b29ea6c8d0))\n\n### Bug Fixes\n\n* install both darwin arches for the universal sidecar build ([20bf47e](https://github.com/wygoralves/panes/commit/20bf47e05a8b4f2fe8e9be58ada7e7e1874698d6))\n* make the read-only preset copy match codex untrusted semantics ([08fe23e](https://github.com/wygoralves/panes/commit/08fe23e3927ebcd178498d1348e61fdb46a9b4c2))\n* open chat diff files at the repo-relative path ([0c7a824](https://github.com/wygoralves/panes/commit/0c7a824bcc7572f9f81918f18bbbbb01704becec))\n* repair autonomy presets under external sandbox mode and picker layout ([a294822](https://github.com/wygoralves/panes/commit/a2948223d2a86241ba03324cac12e7ae8a93b23b))\n* resolve external sandbox mode from the backend for autonomy presets ([66cc741](https://github.com/wygoralves/panes/commit/66cc741f5fa8f0e35952c5f77e3d263a610ca632))",
+  "pub_date": "2026-07-13T01:36:06Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXFERHRyb0hDZ210TDcvckJJRjNHaWZES0FGUzIvbS9peWRxNkdKR3dpTjNSSzI0WFoyNi96WHlWNmFob0pqS3VZMWpkTXRUUU5yMlRvWUlMZkNJa3dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTA3NDc0CWZpbGU6UGFuZXMuYXBwLnRhci5negpEQlltQ0crUitVWCtZRVYzL0ZsejVZSTRucHk1N1h2ZnFJMUhDZUFnNzMvUG1YUmlSdmdtSEx6QUt2L2F4NXY0RVBZeHNzTHc5OGpoOCtCdEtnL3pBdz09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.63.0/Panes.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXFERHRyb0hDZ210TDcvckJJRjNHaWZES0FGUzIvbS9peWRxNkdKR3dpTjNSSzI0WFoyNi96WHlWNmFob0pqS3VZMWpkTXRUUU5yMlRvWUlMZkNJa3dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTA3NDc0CWZpbGU6UGFuZXMuYXBwLnRhci5negpEQlltQ0crUitVWCtZRVYzL0ZsejVZSTRucHk1N1h2ZnFJMUhDZUFnNzMvUG1YUmlSdmdtSEx6QUt2L2F4NXY0RVBZeHNzTHc5OGpoOCtCdEtnL3pBdz09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.63.0/Panes.app.tar.gz"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWo4VDJkdlFES1kweWxpY0xDVTgyWkVyZ05FWlJYNlBOQnBBZzhUbU5HT2Y0Wm90eXFRSHpxK0N0eGVlMXMxSmhCS1dxZktwVGc0YlpZRmJta2owMHc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTA3MzIyCWZpbGU6UGFuZXNfMC42My4wX2FtZDY0LkFwcEltYWdlClQxa29Mdi8rVngzNFhOS3B3akxMMXozSmlSRHJReGZkaEpwMGZnbkltVmZyVk1PQ3IvdGZmdHZDM3Fwb0NZTjhqbDBsRVcrbjYyZ2RBOEdTV2JCRUR3PT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.63.0/Panes_0.63.0_amd64.AppImage"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWo4VDJkdlFES1kweWxpY0xDVTgyWkVyZ05FWlJYNlBOQnBBZzhUbU5HT2Y0Wm90eXFRSHpxK0N0eGVlMXMxSmhCS1dxZktwVGc0YlpZRmJta2owMHc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTA3MzIyCWZpbGU6UGFuZXNfMC42My4wX2FtZDY0LkFwcEltYWdlClQxa29Mdi8rVngzNFhOS3B3akxMMXozSmlSRHJReGZkaEpwMGZnbkltVmZyVk1PQ3IvdGZmdHZDM3Fwb0NZTjhqbDBsRVcrbjYyZ2RBOEdTV2JCRUR3PT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.63.0/Panes_0.63.0_amd64.AppImage"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWlKeUZodzFLTVBmTUJvdkIySXoyZDN1SVhYUXpYQmtnY1pHN3h4bXZXTVlRQWdWdnlNdzZ3dWtta29hQnVTT2ZtYnpWSDZEbnhHbzBBVytNZEF4U2d3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTA3MzIyCWZpbGU6UGFuZXNfMC42My4wX2FtZDY0LmRlYgpyMVdnOE9xUGhWRWkwcWVGZzgyYUcwRnpBRXE4N1RqWEtPVjhmVDNXT0UzN3g0aGRDVTNkb0NHUENLelV1ZG1iZHdkU1E3dGhMcnhqWFdVOHhjaUtEZz09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.63.0/Panes_0.63.0_amd64.deb"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cXJTanBTd1Z2YXhEeGdLRzFkcEk2Mkw4WlFTWjNWVGd1clFtUWlhLzI2NXNqSkxVOHVwMkJsWFp0V21QSVp6WEZkRTIxT0pUcEdOamc3dk5jWTQvTXdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzOTA3NTY2CWZpbGU6UGFuZXNfMC42My4wX3g2NC1zZXR1cC5leGUKay9LaFNkR3JCVUJIdGRWZ1p4alB2VTE5S2NwMG54aE5pSEZ0Sm9LdFBlRTdiNFYyLzQyZk90bVZKM096d1J6UEhXSzRQMlhrWkVMZXJBRW4yS01uQ0E9PQo=",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.63.0/Panes_0.63.0_x64-setup.exe"
+    }
+  }
+}
