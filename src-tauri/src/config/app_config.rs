@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::PathBuf,
     sync::{Mutex, MutexGuard, OnceLock},
@@ -12,6 +13,7 @@ use crate::runtime_env;
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 12;
 pub const MIN_TERMINAL_FONT_SIZE: u32 = 8;
 pub const MAX_TERMINAL_FONT_SIZE: u32 = 32;
+pub const VALID_AUTONOMY_PRESETS: [&str; 4] = ["read-only", "ask", "auto", "full"];
 
 /// Clamp a requested terminal font size into the supported range.
 pub fn clamp_terminal_font_size(font_size: u32) -> u32 {
@@ -25,6 +27,8 @@ pub struct AppConfig {
     pub ui: UiConfig,
     pub debug: DebugConfig,
     pub power: PowerConfig,
+    #[serde(skip_serializing_if = "HarnessesConfig::is_empty")]
+    pub harnesses: HarnessesConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +49,10 @@ pub struct GeneralConfig {
     pub terminal_notifications: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_sound: Option<String>,
+    /// Autonomy preset applied to newly created chat threads
+    /// (`read-only` | `ask` | `auto` | `full`); `None` follows repo trust.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_autonomy_preset: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +84,21 @@ pub struct PowerConfig {
     pub prevent_closed_display_sleep: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HarnessesConfig {
+    /// Extra CLI flags appended to a harness command when it is launched into
+    /// a terminal, keyed by harness id (e.g. `codex = "--yolo"`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub launch_args: BTreeMap<String, String>,
+}
+
+impl HarnessesConfig {
+    fn is_empty(&self) -> bool {
+        self.launch_args.is_empty()
+    }
+}
+
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
@@ -88,6 +111,7 @@ impl Default for GeneralConfig {
             chat_notifications: None,
             terminal_notifications: None,
             notification_sound: None,
+            default_autonomy_preset: None,
         }
     }
 }
@@ -157,6 +181,7 @@ impl Default for AppConfig {
             ui: UiConfig::default(),
             debug: DebugConfig::default(),
             power: PowerConfig::default(),
+            harnesses: HarnessesConfig::default(),
         }
     }
 }
@@ -179,6 +204,23 @@ impl AppConfig {
 
     pub fn terminal_notifications_enabled(&self) -> bool {
         self.general.terminal_notifications.unwrap_or(false)
+    }
+
+    /// Extra launch flags configured for a harness, or `None` when unset or
+    /// blank.
+    pub fn harness_launch_args(&self, harness_id: &str) -> Option<&str> {
+        self.harnesses
+            .launch_args
+            .get(harness_id)
+            .map(|args| args.trim())
+            .filter(|args| !args.is_empty())
+    }
+
+    pub fn default_autonomy_preset(&self) -> Option<&str> {
+        self.general
+            .default_autonomy_preset
+            .as_deref()
+            .filter(|preset| VALID_AUTONOMY_PRESETS.contains(preset))
     }
 
     pub fn load_or_create() -> anyhow::Result<Self> {
@@ -374,6 +416,30 @@ max_action_output_chars = 20000
         assert!(!raw.contains("terminal_accelerated_rendering"));
         assert!(!raw.contains("terminal_notifications"));
         assert!(!raw.contains("terminal_font_size"));
+        assert!(!raw.contains("harnesses"));
+    }
+
+    #[test]
+    fn harness_launch_args_roundtrip_and_lookup() {
+        let mut config = AppConfig::default();
+        config
+            .harnesses
+            .launch_args
+            .insert("codex".to_string(), "--yolo".to_string());
+        config
+            .harnesses
+            .launch_args
+            .insert("claude-code".to_string(), "  ".to_string());
+
+        let raw = toml::to_string_pretty(&config).expect("config should serialize");
+        assert!(raw.contains("[harnesses.launch_args]"));
+        assert!(raw.contains("codex = \"--yolo\""));
+
+        let reloaded = toml::from_str::<AppConfig>(&raw).expect("config should deserialize");
+        assert_eq!(reloaded.harness_launch_args("codex"), Some("--yolo"));
+        // Blank values are treated as unset.
+        assert_eq!(reloaded.harness_launch_args("claude-code"), None);
+        assert_eq!(reloaded.harness_launch_args("gemini-cli"), None);
     }
 
     #[test]

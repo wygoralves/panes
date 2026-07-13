@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
+import { UnfoldVertical } from "lucide-react";
 import {
   extractDiffFilename,
   LINE_CLASS,
@@ -67,6 +69,70 @@ function scheduleDiffWorkerIdleTermination() {
 
 function getDiffLineHeight(line: ParsedLine): number {
   return line.type === "hunk" ? DIFF_HUNK_HEIGHT : DIFF_LINE_HEIGHT;
+}
+
+/* ── Context folding: long unchanged runs collapse behind an explicit count ── */
+
+const FOLD_MIN_RUN = 12;
+const FOLD_EDGE_KEEP = 4;
+
+type DiffDisplayRow =
+  | { kind: "line"; line: ParsedLine; key: number }
+  | { kind: "fold"; id: number; count: number };
+
+function getDisplayRowHeight(row: DiffDisplayRow): number {
+  return row.kind === "fold" ? DIFF_LINE_HEIGHT : getDiffLineHeight(row.line);
+}
+
+function buildDisplayRows(
+  parsed: ParsedLine[],
+  foldContext: boolean,
+  expandedFolds: ReadonlySet<number>,
+): DiffDisplayRow[] {
+  if (!foldContext) {
+    return parsed.map((line, index) => ({ kind: "line", line, key: index }));
+  }
+
+  const rows: DiffDisplayRow[] = [];
+  let index = 0;
+  while (index < parsed.length) {
+    if (parsed[index].type !== "context") {
+      rows.push({ kind: "line", line: parsed[index], key: index });
+      index += 1;
+      continue;
+    }
+
+    let runEnd = index;
+    while (runEnd < parsed.length && parsed[runEnd].type === "context") {
+      runEnd += 1;
+    }
+    const runLength = runEnd - index;
+    if (runLength < FOLD_MIN_RUN) {
+      for (let k = index; k < runEnd; k += 1) {
+        rows.push({ kind: "line", line: parsed[k], key: k });
+      }
+      index = runEnd;
+      continue;
+    }
+
+    const foldStart = index + FOLD_EDGE_KEEP;
+    const foldEnd = runEnd - FOLD_EDGE_KEEP;
+    for (let k = index; k < foldStart; k += 1) {
+      rows.push({ kind: "line", line: parsed[k], key: k });
+    }
+    if (expandedFolds.has(foldStart)) {
+      for (let k = foldStart; k < foldEnd; k += 1) {
+        rows.push({ kind: "line", line: parsed[k], key: k });
+      }
+    } else {
+      rows.push({ kind: "fold", id: foldStart, count: foldEnd - foldStart });
+    }
+    for (let k = foldEnd; k < runEnd; k += 1) {
+      rows.push({ kind: "line", line: parsed[k], key: k });
+    }
+    index = runEnd;
+  }
+  return rows;
 }
 
 function renderDiffLine(line: ParsedLine, key: number | string) {
@@ -238,6 +304,7 @@ interface VirtualizedDiffBodyProps {
   fillAvailableHeight?: boolean;
   maxHeight?: number;
   style?: CSSProperties;
+  foldContext?: boolean;
 }
 
 export function VirtualizedDiffBody({
@@ -245,23 +312,60 @@ export function VirtualizedDiffBody({
   fillAvailableHeight = false,
   maxHeight = DIFF_VIEWPORT_FALLBACK_HEIGHT,
   style,
+  foldContext = false,
 }: VirtualizedDiffBodyProps) {
+  const { t } = useTranslation("common");
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(maxHeight);
+  const [expandedFolds, setExpandedFolds] = useState<ReadonlySet<number>>(
+    () => new Set<number>(),
+  );
+
+  useEffect(() => {
+    setExpandedFolds(new Set<number>());
+  }, [parsed]);
+
+  const rows = useMemo(
+    () => buildDisplayRows(parsed, foldContext, expandedFolds),
+    [parsed, foldContext, expandedFolds],
+  );
 
   const virtualizationEnabled =
-    parsed.length >= DIFF_VIRTUALIZATION_THRESHOLD_LINES;
+    rows.length >= DIFF_VIRTUALIZATION_THRESHOLD_LINES;
 
   const offsets = useMemo(() => {
-    const nextOffsets = new Array<number>(parsed.length + 1);
+    const nextOffsets = new Array<number>(rows.length + 1);
     nextOffsets[0] = 0;
-    for (let index = 0; index < parsed.length; index += 1) {
+    for (let index = 0; index < rows.length; index += 1) {
       nextOffsets[index + 1] =
-        nextOffsets[index] + getDiffLineHeight(parsed[index]);
+        nextOffsets[index] + getDisplayRowHeight(rows[index]);
     }
     return nextOffsets;
-  }, [parsed]);
+  }, [rows]);
+
+  const renderRow = (row: DiffDisplayRow) => {
+    if (row.kind === "fold") {
+      return (
+        <button
+          key={`fold-${row.id}`}
+          type="button"
+          className="git-diff-fold"
+          onClick={() =>
+            setExpandedFolds((current) => {
+              const next = new Set(current);
+              next.add(row.id);
+              return next;
+            })
+          }
+        >
+          <UnfoldVertical size={11} />
+          {t("diff.unchangedLines", { count: row.count })}
+        </button>
+      );
+    }
+    return renderDiffLine(row.line, row.key);
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -316,7 +420,7 @@ export function VirtualizedDiffBody({
       return null;
     }
 
-    const rowCount = parsed.length;
+    const rowCount = rows.length;
     const totalHeight = offsets[rowCount];
     const visibleStart = Math.max(0, scrollTop - DIFF_OVERSCAN_PX);
     const visibleEnd = scrollTop + viewportHeight + DIFF_OVERSCAN_PX;
@@ -354,7 +458,7 @@ export function VirtualizedDiffBody({
       totalHeight,
       topOffset: offsets[startIndex],
     };
-  }, [offsets, parsed, scrollTop, viewportHeight, virtualizationEnabled]);
+  }, [offsets, rows, scrollTop, viewportHeight, virtualizationEnabled]);
 
   const viewportStyle: CSSProperties = fillAvailableHeight
     ? {
@@ -379,7 +483,7 @@ export function VirtualizedDiffBody({
             padding: `${DIFF_CONTENT_VERTICAL_PADDING}px 0`,
           }}
         >
-          {parsed.map((line, index) => renderDiffLine(line, index))}
+          {rows.map((row) => renderRow(row))}
         </div>
       </div>
     );
@@ -403,13 +507,9 @@ export function VirtualizedDiffBody({
             top: virtualWindow.topOffset + DIFF_CONTENT_VERTICAL_PADDING,
           }}
         >
-          {parsed
+          {rows
             .slice(virtualWindow.startIndex, virtualWindow.endIndexExclusive)
-            .map((line, relativeIndex) => {
-              const absoluteIndex =
-                virtualWindow.startIndex + relativeIndex;
-              return renderDiffLine(line, absoluteIndex);
-            })}
+            .map((row) => renderRow(row))}
         </div>
       </div>
     </div>

@@ -40,6 +40,7 @@
     "workspaceFallback": "Workspace",
     "noThreads": "No threads",
     "untitledThread": "Untitled thread",
+    "needsApproval": "Needs approval",
     "archiveThread": "Archive thread",
     "showMore": "Show {{count}} more",
     "archived": "Archived",
@@ -384,6 +385,17 @@
     "detectedCount": "{{installed}} of {{total}} tools detected",
     "loading": "Detecting installed harnesses...",
     "footerHint": "Installed harnesses appear as quick-launch options in your terminal + button",
+    "launchSettings": {
+      "title": "Launch options",
+      "description": "Flags appended whenever {{name}} opens in a terminal",
+      "argsLabel": "Additional flags",
+      "argsPlaceholder": "--flag",
+      "preview": "Launch command",
+      "save": "Save",
+      "cancel": "Cancel",
+      "saved": "Launch options saved",
+      "saveFailed": "Could not save. Use only letters, numbers, spaces, and - _ . / : = , +"
+    },
     "descriptions": {
       "codex": "OpenAI's coding agent CLI, integrated natively with Panes chat and terminal workflows",
       "claude-code": "Anthropic's coding CLI, integrated natively with Panes for repo-aware and terminal-driven workflows",

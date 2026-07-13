@@ -62,6 +62,7 @@ interface ThreadState {
   ) => Promise<Thread | null>;
   setActiveThread: (threadId: string | null) => void;
   applyThreadUpdateLocal: (thread: Thread) => boolean;
+  markThreadAwaitingApproval: (threadId: string) => void;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
   setThreadLastModelLocal: (threadId: string, modelId: string | null) => void;
 }
@@ -671,6 +672,25 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
 
     return applied;
   },
+  markThreadAwaitingApproval: (threadId) =>
+    set((state) => {
+      const updateThread = (thread: Thread) =>
+        thread.id === threadId && thread.status !== "awaiting_approval"
+          ? { ...thread, status: "awaiting_approval" as const }
+          : thread;
+
+      const threadsByWorkspace = Object.entries(state.threadsByWorkspace).reduce<
+        Record<string, Thread[]>
+      >((acc, [workspaceId, threads]) => {
+        acc[workspaceId] = threads.map(updateThread);
+        return acc;
+      }, {});
+
+      return {
+        threadsByWorkspace,
+        threads: flattenThreadsByWorkspace(threadsByWorkspace),
+      };
+    }),
   setThreadReasoningEffortLocal: (threadId, reasoningEffort) =>
     set((state) => {
       const updateThread = (thread: Thread) =>

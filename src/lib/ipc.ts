@@ -633,6 +633,16 @@ export const ipc = {
     invoke<InstallResult>("install_harness", { harnessId }),
   launchHarness: (harnessId: string) =>
     invoke<string>("launch_harness", { harnessId }),
+  getHarnessLaunchArgs: () =>
+    invoke<Record<string, string>>("get_harness_launch_args"),
+  setHarnessLaunchArgs: (harnessId: string, args: string) =>
+    invoke<string>("set_harness_launch_args", { harnessId, args }),
+  getDefaultAutonomyPreset: () =>
+    invoke<string | null>("get_default_autonomy_preset"),
+  setDefaultAutonomyPreset: (preset: string | null) =>
+    invoke<string | null>("set_default_autonomy_preset", { preset }),
+  codexUsesExternalSandbox: () =>
+    invoke<boolean>("codex_uses_external_sandbox"),
 };
 
 export async function listenThreadEvents(
@@ -677,6 +687,23 @@ export async function listenChatTurnFinished(
   onEvent: (event: ChatTurnFinishedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<ChatTurnFinishedEvent>("chat-turn-finished", ({ payload }) => onEvent(payload));
+}
+
+export interface ChatApprovalRequestedEvent {
+  threadId: string;
+  workspaceId: string;
+  engineId: ChatEngineId;
+  threadTitle: string;
+  summary: string;
+}
+
+export async function listenChatApprovalRequested(
+  onEvent: (event: ChatApprovalRequestedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<ChatApprovalRequestedEvent>(
+    "chat-approval-requested",
+    ({ payload }) => onEvent(payload)
+  );
 }
 
 export async function listenEngineRuntimeUpdated(

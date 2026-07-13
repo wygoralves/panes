@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-shell";
 import {
@@ -11,6 +11,7 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  SlidersHorizontal,
   Terminal,
 } from "lucide-react";
 import { useHarnessStore } from "../../stores/harnessStore";
@@ -26,6 +27,7 @@ import {
 } from "../../lib/harnessInstallActions";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 import { getHarnessIcon } from "../shared/HarnessLogos";
+import { HarnessLaunchSettingsModal } from "./HarnessLaunchSettingsModal";
 import type { HarnessInfo } from "../../types";
 
 /* ─── Harness tile ─── */
@@ -33,18 +35,22 @@ function HarnessTile({
   harness,
   description,
   preferredInstallMethod,
+  launchArgs,
   onInstallInTerminal,
   onCopyCommand,
   onLaunch,
   onOpenWebsite,
+  onOpenLaunchSettings,
 }: {
   harness: HarnessInfo;
   description: string;
   preferredInstallMethod: string | null;
+  launchArgs: string | undefined;
   onInstallInTerminal: () => void;
   onCopyCommand: () => void;
   onLaunch: () => void;
   onOpenWebsite: () => void;
+  onOpenLaunchSettings: () => void;
 }) {
   const { t } = useTranslation("app");
   const installCmd = getHarnessInstallCommand(harness.id, preferredInstallMethod);
@@ -62,53 +68,73 @@ function HarnessTile({
           {harness.native && <span className="hp-tile-badge">{t("harnesses.native")}</span>}
         </div>
         <p className="hp-tile-desc">{description}</p>
-        {harness.found && (
+        {(harness.found || launchArgs) && (
           <div className="hp-tile-meta">
-            <span className="hp-tile-status-ok">
-              <CheckCircle2 size={10} />
-              {t("harnesses.installed")}
-            </span>
-            {harness.version && <span className="hp-tile-version">{harness.version}</span>}
+            {harness.found && (
+              <span className="hp-tile-status-ok">
+                <CheckCircle2 size={10} />
+                {t("harnesses.installed")}
+              </span>
+            )}
+            {harness.found && harness.version && (
+              <span className="hp-tile-version">{harness.version}</span>
+            )}
+            {launchArgs && (
+              <span className="hp-tile-flags" title={launchArgs}>
+                {launchArgs}
+              </span>
+            )}
           </div>
         )}
       </div>
 
       <div className="hp-tile-action">
-        {action === "launch" ? (
-          <button type="button" className="hp-btn hp-btn-launch" onClick={onLaunch}>
-            <Play size={11} />
-            {t("harnesses.launch")}
-          </button>
-        ) : action === "install" && installCmd ? (
-          <div className="hp-tile-action-group">
-            <button
-              type="button"
-              className="hp-btn hp-btn-copy"
-              onClick={onCopyCommand}
-              title={installCmd}
-            >
-              <ClipboardCopy size={11} />
-            </button>
-            <button
-              type="button"
-              className="hp-btn hp-btn-install"
-              onClick={onInstallInTerminal}
-            >
-              <Download size={11} />
-              {t("harnesses.install")}
-            </button>
-          </div>
-        ) : action === "manual" ? (
+        <div className="hp-tile-action-group">
           <button
             type="button"
             className="hp-btn hp-btn-copy"
-            onClick={onOpenWebsite}
-            title={harness.website}
+            onClick={onOpenLaunchSettings}
+            title={t("harnesses.launchSettings.title")}
+            aria-label={t("harnesses.launchSettings.title")}
           >
-            <ExternalLink size={11} />
-            {t("harnesses.website")}
+            <SlidersHorizontal size={11} />
           </button>
-        ) : null}
+          {action === "launch" ? (
+            <button type="button" className="hp-btn hp-btn-launch" onClick={onLaunch}>
+              <Play size={11} />
+              {t("harnesses.launch")}
+            </button>
+          ) : action === "install" && installCmd ? (
+            <>
+              <button
+                type="button"
+                className="hp-btn hp-btn-copy"
+                onClick={onCopyCommand}
+                title={installCmd}
+              >
+                <ClipboardCopy size={11} />
+              </button>
+              <button
+                type="button"
+                className="hp-btn hp-btn-install"
+                onClick={onInstallInTerminal}
+              >
+                <Download size={11} />
+                {t("harnesses.install")}
+              </button>
+            </>
+          ) : action === "manual" ? (
+            <button
+              type="button"
+              className="hp-btn hp-btn-copy"
+              onClick={onOpenWebsite}
+              title={harness.website}
+            >
+              <ExternalLink size={11} />
+              {t("harnesses.website")}
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -125,10 +151,15 @@ export function HarnessPanel() {
   const ensureScanned = useHarnessStore((s) => s.ensureScanned);
   const launch = useHarnessStore((s) => s.launch);
   const preferredInstallMethod = useHarnessStore((s) => s.preferredInstallMethod);
+  const launchArgs = useHarnessStore((s) => s.launchArgs);
+  const launchArgsLoaded = useHarnessStore((s) => s.launchArgsLoaded);
+  const loadLaunchArgs = useHarnessStore((s) => s.loadLaunchArgs);
 
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const createSession = useTerminalStore((s) => s.createSession);
   const setActiveView = useUiStore((s) => s.setActiveView);
+
+  const [settingsHarness, setSettingsHarness] = useState<HarnessInfo | null>(null);
 
   const installedCount = harnesses.filter((h) => h.found).length;
   const goBack = useCallback(() => setActiveView("chat"), [setActiveView]);
@@ -139,6 +170,13 @@ export function HarnessPanel() {
     }
     void ensureScanned();
   }, [ensureScanned, loadedOnce]);
+
+  useEffect(() => {
+    if (launchArgsLoaded) {
+      return;
+    }
+    void loadLaunchArgs();
+  }, [launchArgsLoaded, loadLaunchArgs]);
 
   const spawnInTerminal = useCallback(
     async (command: string) => {
@@ -253,10 +291,12 @@ export function HarnessPanel() {
                   harness={h}
                   description={t(`harnesses.descriptions.${h.id}`, { defaultValue: h.description })}
                   preferredInstallMethod={preferredInstallMethod}
+                  launchArgs={launchArgs[h.id]}
                   onInstallInTerminal={() => handleInstallInTerminal(h.id)}
                   onCopyCommand={() => handleCopyCommand(h.id)}
                   onLaunch={() => void handleLaunch(h.id)}
                   onOpenWebsite={() => handleOpenWebsite(h.website)}
+                  onOpenLaunchSettings={() => setSettingsHarness(h)}
                 />
               ))}
             </div>
@@ -283,6 +323,13 @@ export function HarnessPanel() {
           </div>
         </div>
       </div>
+
+      {settingsHarness && (
+        <HarnessLaunchSettingsModal
+          harness={settingsHarness}
+          onClose={() => setSettingsHarness(null)}
+        />
+      )}
     </div>
   );
 }

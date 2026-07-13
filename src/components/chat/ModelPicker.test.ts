@@ -5,6 +5,7 @@ import {
   filterOpenCodeModelsForQuery,
   formatCompactTokenLimit,
   formatOpenCodeProviderName,
+  getModelPickerSectionIds,
   getOpenCodeProviderId,
   groupOpenCodeModels,
   modelMetadataChips,
@@ -27,6 +28,32 @@ function makeModel(id: string, hidden = false): EngineModel {
 }
 
 describe("OpenCode model provider grouping", () => {
+  it("shows only runtime sections supported by the selected harness and model", () => {
+    const reasoningModel = {
+      ...makeModel("gpt-5"),
+      supportedReasoningEfforts: [
+        { reasoningEffort: "medium", description: "Balanced" },
+      ],
+    };
+
+    expect(getModelPickerSectionIds("codex", reasoningModel)).toEqual([
+      "harness",
+      "model",
+      "reasoning",
+      "speed",
+    ]);
+    expect(getModelPickerSectionIds("opencode", reasoningModel)).toEqual([
+      "harness",
+      "provider",
+      "model",
+      "reasoning",
+    ]);
+    expect(getModelPickerSectionIds("claude", makeModel("claude"))).toEqual([
+      "harness",
+      "model",
+    ]);
+  });
+
   it("uses compact labels when a model exposes five or more effort levels", () => {
     expect(shouldUseCompactEffortLabels(4)).toBe(false);
     expect(shouldUseCompactEffortLabels(5)).toBe(true);

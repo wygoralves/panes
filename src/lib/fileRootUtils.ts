@@ -1,10 +1,24 @@
-import type { Repo } from "../types";
+import type { Repo, Thread } from "../types";
 
 type RepoRoot = Pick<Repo, "id" | "path">;
 
 export interface RepoOwnership {
   repo: RepoRoot;
   filePath: string;
+}
+
+export function resolveThreadFileRootPath(
+  thread: Pick<Thread, "repoId"> | null,
+  repos: RepoRoot[],
+  workspaceRootPath: string | null,
+): string | null {
+  if (!thread) {
+    return null;
+  }
+  if (!thread.repoId) {
+    return workspaceRootPath;
+  }
+  return repos.find((repo) => repo.id === thread.repoId)?.path ?? null;
 }
 
 function isWindowsDrivePath(path: string): boolean {

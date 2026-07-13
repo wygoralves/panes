@@ -40,6 +40,7 @@
     "workspaceFallback": "Workspace",
     "noThreads": "Nenhuma thread",
     "untitledThread": "Thread sem título",
+    "needsApproval": "Precisa de aprovação",
     "archiveThread": "Arquivar thread",
     "showMore": "Mostrar mais {{count}}",
     "archived": "Arquivados",
@@ -384,6 +385,17 @@
     "detectedCount": "{{installed}} de {{total}} ferramentas detectadas",
     "loading": "Detectando harnesses instalados...",
     "footerHint": "Harnesses instalados aparecem como opções de abertura rápida no botão + do terminal",
+    "launchSettings": {
+      "title": "Opções de abertura",
+      "description": "Flags adicionadas sempre que {{name}} abre em um terminal",
+      "argsLabel": "Flags adicionais",
+      "argsPlaceholder": "--flag",
+      "preview": "Comando de abertura",
+      "save": "Salvar",
+      "cancel": "Cancelar",
+      "saved": "Opções de abertura salvas",
+      "saveFailed": "Não foi possível salvar. Use apenas letras, números, espaços e - _ . / : = , +"
+    },
     "descriptions": {
       "codex": "CLI de coding agent da OpenAI, integrado nativamente ao chat e aos fluxos de terminal do Panes",
       "claude-code": "CLI de coding da Anthropic, integrada nativamente ao Panes para fluxos em repo e no terminal",

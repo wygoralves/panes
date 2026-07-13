@@ -59,7 +59,11 @@ interface ChatState {
     },
   ) => Promise<boolean>;
   cancel: () => Promise<void>;
-  respondApproval: (approvalId: string, response: ApprovalResponse) => Promise<void>;
+  respondApproval: (
+    approvalId: string,
+    response: ApprovalResponse,
+    threadIdOverride?: string,
+  ) => Promise<boolean>;
   hydrateActionOutput: (messageId: string, actionId: string) => Promise<void>;
 }
 
@@ -389,6 +393,42 @@ function resolveApprovalInMessages(
       ...(responseData !== undefined ? { responseData } : {}),
     };
 
+    const nextMessages = [...messages];
+    nextMessages[messageIndex] = {
+      ...message,
+      blocks: nextBlocks,
+    };
+    return nextMessages;
+  }
+
+  return messages;
+}
+
+function restoreApprovalInMessages(
+  messages: Message[],
+  approvalId: string,
+  previousApproval: ApprovalBlock,
+): Message[] {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    const blocks = message.blocks;
+    if (!blocks || blocks.length === 0) {
+      continue;
+    }
+
+    const approvalIndex = blocks.findIndex(
+      (block) => block.type === "approval" && block.approvalId === approvalId,
+    );
+    if (approvalIndex < 0) {
+      continue;
+    }
+
+    if (blocks[approvalIndex] === previousApproval) {
+      return messages;
+    }
+
+    const nextBlocks = [...blocks];
+    nextBlocks[approvalIndex] = previousApproval;
     const nextMessages = [...messages];
     nextMessages[messageIndex] = {
       ...message,
@@ -2202,32 +2242,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: String(error) });
     }
   },
-  respondApproval: async (approvalId, response) => {
-    const threadId = get().threadId;
+  respondApproval: async (approvalId, response, threadIdOverride) => {
+    const threadId = threadIdOverride ?? get().threadId;
     if (!threadId) {
       set({ error: "No active thread selected" });
-      return;
+      return false;
     }
 
-    // Apply optimistic update BEFORE the IPC call
+    // Only mutate the visible transcript when it belongs to the target thread.
     const decision = resolveApprovalDecision(response);
     const responseData = typeof response === "object" && response !== null && !Array.isArray(response)
       ? response as Record<string, unknown>
       : undefined;
-    const previousMessages = get().messages;
-    set((state) => {
-      const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision, responseData);
-      if (nextMessages === state.messages) {
-        return state;
-      }
-      return { ...state, messages: nextMessages };
-    });
+    let previousApproval: ApprovalBlock | null = null;
+    if (get().threadId === threadId) {
+      set((state) => {
+        for (const message of state.messages) {
+          const approval = message.blocks?.find(
+            (block): block is ApprovalBlock =>
+              block.type === "approval" && block.approvalId === approvalId,
+          );
+          if (approval) {
+            previousApproval = approval;
+            break;
+          }
+        }
+        const nextMessages = resolveApprovalInMessages(state.messages, approvalId, decision, responseData);
+        if (nextMessages === state.messages) {
+          return state;
+        }
+        return { ...state, messages: nextMessages };
+      });
+    }
 
     try {
       await ipc.respondApproval(threadId, approvalId, response);
+      return true;
     } catch (error) {
-      // Roll back the optimistic update on failure
-      set({ messages: previousMessages, error: String(error) });
+      set((state) => ({
+        ...(previousApproval && state.threadId === threadId
+          ? { messages: restoreApprovalInMessages(state.messages, approvalId, previousApproval) }
+          : {}),
+        error: String(error),
+      }));
+      return false;
     }
   },
   hydrateActionOutput: async (messageId, actionId) => {

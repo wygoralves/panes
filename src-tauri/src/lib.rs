@@ -258,6 +258,8 @@ pub fn run() {
             commands::app::set_terminal_accelerated_rendering,
             commands::app::get_terminal_font_size,
             commands::app::set_terminal_font_size,
+            commands::app::get_default_autonomy_preset,
+            commands::app::set_default_autonomy_preset,
             commands::app::get_agent_notification_settings,
             commands::app::set_chat_notifications_enabled,
             commands::app::set_terminal_notifications_enabled,
@@ -278,6 +280,7 @@ pub fn run() {
             commands::git::watch_git_repo,
             commands::engines::list_engines,
             commands::engines::get_chat_provider_usage,
+            commands::engines::codex_uses_external_sandbox,
             commands::engines::engine_health,
             commands::engines::prewarm_engine,
             commands::engines::list_codex_skills,
@@ -322,6 +325,8 @@ pub fn run() {
             commands::harness::check_harnesses,
             commands::harness::install_harness,
             commands::harness::launch_harness,
+            commands::harness::get_harness_launch_args,
+            commands::harness::set_harness_launch_args,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
