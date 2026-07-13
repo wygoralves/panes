@@ -262,32 +262,37 @@ pub async fn launch_harness(harness_id: String) -> Result<String, String> {
     // Return the command line so the frontend can write it into a terminal session
     tokio::task::spawn_blocking(move || -> Result<String, String> {
         let config = AppConfig::load_or_create().map_err(err_to_string)?;
-        Ok(compose_launch_command(
-            base_command,
-            config.harness_launch_args(&harness_id),
-        ))
+        compose_launch_command(base_command, config.harness_launch_args(&harness_id))
     })
     .await
     .map_err(err_to_string)?
 }
 
-/// Launch args are written raw into a PTY, so strip control characters (a
-/// newline would submit extra shell commands) and collapse runs of whitespace.
-fn sanitize_launch_args(args: &str) -> String {
-    args.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+/// Launch args are submitted to the user's shell. Limit them to a portable
+/// argument grammar so the settings field cannot introduce shell operators.
+fn normalize_launch_args(args: &str) -> Result<String, String> {
+    if let Some(character) = args.chars().find(|character| {
+        !(character.is_alphanumeric()
+            || matches!(character, ' ' | '\t')
+            || matches!(character, '-' | '_' | '.' | '/' | ':' | '=' | ',' | '+'))
+    }) {
+        return Err(format!(
+            "launch arguments contain unsupported shell character: {character:?}"
+        ));
+    }
+
+    Ok(args.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
-fn compose_launch_command(base: &str, extra_args: Option<&str>) -> String {
-    let args = extra_args.map(sanitize_launch_args).unwrap_or_default();
+fn compose_launch_command(base: &str, extra_args: Option<&str>) -> Result<String, String> {
+    let args = extra_args
+        .map(normalize_launch_args)
+        .transpose()?
+        .unwrap_or_default();
     if args.is_empty() {
-        base.to_string()
+        Ok(base.to_string())
     } else {
-        format!("{base} {args}")
+        Ok(format!("{base} {args}"))
     }
 }
 
@@ -315,7 +320,7 @@ pub async fn set_harness_launch_args(
     let _guard = config_write_lock.lock_owned().await;
 
     tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let sanitized = sanitize_launch_args(&args);
+        let sanitized = normalize_launch_args(&args)?;
         AppConfig::mutate(|config| {
             if sanitized.is_empty() {
                 config.harnesses.launch_args.remove(&harness_id);
@@ -751,25 +756,45 @@ mod tests {
 
     #[test]
     fn compose_launch_command_appends_configured_args() {
-        assert_eq!(compose_launch_command("codex", None), "codex");
+        assert_eq!(compose_launch_command("codex", None).unwrap(), "codex");
         assert_eq!(
-            compose_launch_command("codex", Some("--yolo")),
+            compose_launch_command("codex", Some("--yolo")).unwrap(),
             "codex --yolo"
         );
         assert_eq!(
-            compose_launch_command("claude", Some("  --dangerously-skip-permissions  ")),
+            compose_launch_command("claude", Some("  --dangerously-skip-permissions  ")).unwrap(),
             "claude --dangerously-skip-permissions"
         );
-        assert_eq!(compose_launch_command("codex", Some("   ")), "codex");
+        assert_eq!(
+            compose_launch_command("codex", Some("   ")).unwrap(),
+            "codex"
+        );
     }
 
     #[test]
-    fn sanitize_launch_args_strips_control_characters() {
+    fn normalize_launch_args_accepts_portable_argument_characters() {
         assert_eq!(
-            sanitize_launch_args("--yolo\nwhoami\r--flag"),
-            "--yolo whoami --flag"
+            normalize_launch_args("--model=gpt-5 --config /Users/me/file.toml").unwrap(),
+            "--model=gpt-5 --config /Users/me/file.toml"
         );
-        assert_eq!(sanitize_launch_args("--a\t--b"), "--a --b");
-        assert_eq!(sanitize_launch_args("\u{1b}[31m--x"), "[31m--x");
+        assert_eq!(normalize_launch_args("--a\t--b").unwrap(), "--a --b");
+    }
+
+    #[test]
+    fn normalize_launch_args_rejects_shell_syntax() {
+        for args in [
+            "--yolo; whoami",
+            "--flag | whoami",
+            "--flag $(whoami)",
+            "--flag `whoami`",
+            "--flag > output.txt",
+            "--flag\nwhoami",
+            "--name \"two words\"",
+        ] {
+            assert!(
+                normalize_launch_args(args).is_err(),
+                "accepted unsafe args: {args}"
+            );
+        }
     }
 }
