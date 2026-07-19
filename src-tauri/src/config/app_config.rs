@@ -53,6 +53,9 @@ pub struct GeneralConfig {
     /// (`read-only` | `ask` | `auto` | `full`); `None` follows repo trust.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_autonomy_preset: Option<String>,
+    /// Sidebar chat-list layout (`projects` | `fleet`); `None` means `projects`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sidebar_list_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,11 +115,14 @@ impl Default for GeneralConfig {
             terminal_notifications: None,
             notification_sound: None,
             default_autonomy_preset: None,
+            sidebar_list_mode: None,
         }
     }
 }
 
 pub const VALID_THEME_PREFERENCES: [&str; 3] = ["dark", "light", "system"];
+
+pub const VALID_SIDEBAR_LIST_MODES: [&str; 2] = ["projects", "fleet"];
 
 impl AppConfig {
     /// Resolve the configured notification sound name.
@@ -137,6 +143,15 @@ impl AppConfig {
             &self.general.theme
         } else {
             "dark"
+        }
+    }
+
+    /// Resolve the configured sidebar chat-list mode, falling back to
+    /// `"projects"` for missing or unrecognized values.
+    pub fn sidebar_list_mode(&self) -> &str {
+        match self.general.sidebar_list_mode.as_deref() {
+            Some(mode) if VALID_SIDEBAR_LIST_MODES.contains(&mode) => mode,
+            _ => "projects",
         }
     }
 }
@@ -561,6 +576,24 @@ max_action_output_chars = 20000
         config.general.theme = "solarized".to_string();
 
         assert_eq!(config.theme_preference(), "dark");
+    }
+
+    #[test]
+    fn sidebar_list_mode_defaults_to_projects() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.sidebar_list_mode(), "projects");
+    }
+
+    #[test]
+    fn sidebar_list_mode_accepts_fleet_and_rejects_unknown_values() {
+        let mut config = AppConfig::default();
+
+        config.general.sidebar_list_mode = Some("fleet".to_string());
+        assert_eq!(config.sidebar_list_mode(), "fleet");
+
+        config.general.sidebar_list_mode = Some("kanban".to_string());
+        assert_eq!(config.sidebar_list_mode(), "projects");
     }
 
     #[test]

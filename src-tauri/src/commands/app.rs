@@ -183,6 +183,38 @@ pub async fn set_app_theme(state: State<'_, AppState>, theme: String) -> Result<
 }
 
 #[tauri::command]
+pub async fn get_sidebar_list_mode() -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.sidebar_list_mode().to_string())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_sidebar_list_mode(
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<String, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        if !crate::config::app_config::VALID_SIDEBAR_LIST_MODES.contains(&mode.as_str()) {
+            return Err(format!("unsupported sidebar list mode: {mode}"));
+        }
+        AppConfig::mutate(|config| {
+            config.general.sidebar_list_mode = Some(mode.clone());
+            Ok(mode)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
 pub async fn get_terminal_accelerated_rendering() -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
         let config = AppConfig::load_or_create().map_err(err_to_string)?;
