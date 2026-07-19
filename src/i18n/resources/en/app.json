@@ -83,7 +83,18 @@
     "archiveWorkspaceMessage": "Archive workspace \"{{name}}\" and hide its repos/threads/messages from the sidebar? You can reopen this folder later to restore it.",
     "archiveThreadTitle": "Archive thread",
     "archiveThreadMessage": "Archive thread \"{{name}}\"? It will be hidden from this project list.",
-    "archive": "Archive"
+    "archive": "Archive",
+    "threads": "Threads",
+    "fleetNeedsYou": "Needs you",
+    "fleetRunning": "Running",
+    "fleetReadyToReview": "Ready to review",
+    "fleetIdle": "Idle",
+    "fleetFailed": "Failed",
+    "fleetQuiet": "No agents running.",
+    "sidebarListMode": "Thread list",
+    "sidebarListMode_projects": "Projects",
+    "sidebarListMode_fleet": "Fleet",
+    "sidebarListModeFailed": "Failed to update the thread list."
   },
   "commandPalette": {
     "placeholder": "Search commands, threads, workspaces, or files...",
@@ -129,7 +140,6 @@
       "viewCommits": "Open History",
       "viewStash": "Open Stash",
       "viewFiles": "Open Files",
-      "toggleExplorer": "Toggle File Explorer",
       "viewWorktrees": "Open Worktrees",
       "viewHarnesses": "Open Agent Harnesses",
       "codexFork": "Fork Codex Thread",
@@ -604,7 +614,8 @@
       "interface": "Interface",
       "interfaceDescription": "Theme changes apply to chat, terminal, Git, and editor surfaces.",
       "themeDescription": "Use a fixed theme or follow the operating system.",
-      "languageDescription": "Used across navigation, dialogs, and status messages."
+      "languageDescription": "Used across navigation, dialogs, and status messages.",
+      "sidebarListModeDescription": "Group threads by project, or sort them by which agents need your attention."
     },
     "usage": {
       "providerLimits": "Connected provider limits",

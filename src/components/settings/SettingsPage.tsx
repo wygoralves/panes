@@ -21,8 +21,10 @@ import {
   Monitor,
   Moon,
   Palette,
+  PanelLeft,
   Play,
   Plus,
+  Radar,
   RefreshCw,
   Search,
   Sun,
@@ -49,8 +51,13 @@ import {
   SUPPORTED_APP_LOCALES,
   type AppLocale,
 } from "../../lib/locale";
+import {
+  SIDEBAR_LIST_MODES,
+  type SidebarListMode,
+} from "../../lib/sidebarListMode";
 import { THEME_PREFERENCES, type ThemePreference } from "../../lib/theme";
 import { useKeepAwakeStore, canToggleKeepAwake } from "../../stores/keepAwakeStore";
+import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
 import { useThemeStore } from "../../stores/themeStore";
 import { toast } from "../../stores/toastStore";
@@ -179,6 +186,13 @@ export function SettingsPage() {
   const activeRepos = useWorkspaceStore((state) => state.repos);
   const themePreference = useThemeStore((state) => state.preference);
   const setThemePreference = useThemeStore((state) => state.setPreference);
+  const sidebarListMode = useSidebarListModeStore((state) => state.mode);
+  const setSidebarListMode = useSidebarListModeStore((state) => state.setMode);
+  const loadSidebarListMode = useSidebarListModeStore((state) => state.load);
+
+  useEffect(() => {
+    void loadSidebarListMode();
+  }, [loadSidebarListMode]);
   const updateStatus = useUpdateStore((state) => state.status);
   const availableVersion = useUpdateStore((state) => state.version);
   const updateError = useUpdateStore((state) => state.error);
@@ -438,6 +452,12 @@ export function SettingsPage() {
     if (theme === themePreference) return;
     const saved = await setThemePreference(theme);
     if (!saved) toast.error(t("app:sidebar.themeFailed"));
+  }
+
+  async function changeSidebarListMode(mode: SidebarListMode) {
+    if (mode === sidebarListMode) return;
+    const saved = await setSidebarListMode(mode);
+    if (!saved) toast.error(t("app:sidebar.sidebarListModeFailed"));
   }
 
   async function toggleAcceleratedRendering(enabled: boolean) {
@@ -721,6 +741,28 @@ export function SettingsPage() {
                         >
                           <ThemeIcon size={13} />
                           {t(`app:sidebar.theme_${theme}`)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </SettingsRow>
+                <SettingsRow
+                  icon={<PanelLeft size={17} />}
+                  title={t("app:sidebar.sidebarListMode")}
+                  description={t("app:settingsPage.appearance.sidebarListModeDescription")}
+                >
+                  <div className="usp-segmented">
+                    {SIDEBAR_LIST_MODES.map((mode) => {
+                      const ModeIcon = mode === "fleet" ? Radar : FolderGit2;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={sidebarListMode === mode ? "usp-segment-active" : ""}
+                          onClick={() => void changeSidebarListMode(mode)}
+                        >
+                          <ModeIcon size={13} />
+                          {t(`app:sidebar.sidebarListMode_${mode}`)}
                         </button>
                       );
                     })}
