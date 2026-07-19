@@ -26,6 +26,7 @@ import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
+import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { formatRelativeTime } from "../../lib/formatters";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
@@ -33,6 +34,7 @@ import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { PanesMark } from "../shared/PanesBrand";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
+import { FleetList } from "./FleetList";
 import { normalizeSidebarCollapsedState } from "./sidebarCollapseState";
 import type { Thread, Workspace } from "../../types";
 
@@ -97,6 +99,12 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const updateStatus = useUpdateStore((s) => s.status);
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
+  const sidebarListMode = useSidebarListModeStore((s) => s.mode);
+  const loadSidebarListMode = useSidebarListModeStore((s) => s.load);
+
+  useEffect(() => {
+    void loadSidebarListMode();
+  }, [loadSidebarListMode]);
 
   const projects = useMemo<ProjectGroup[]>(
     () =>
@@ -336,7 +344,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       {/* ── Scrollable content ── */}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4, borderTop: "1px solid var(--wash-06)", marginTop: 4 }}>
         <div className="sb-section-label">
-          <span>{t("app:sidebar.workspaces")}</span>
+          <span>
+            {sidebarListMode === "fleet"
+              ? t("app:sidebar.threads")
+              : t("app:sidebar.workspaces")}
+          </span>
           <button
             type="button"
             className="sb-add-project-btn"
@@ -356,6 +368,16 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <br />
             {t("app:sidebar.openFolder")}
           </div>
+        ) : sidebarListMode === "fleet" ? (
+          <FleetList
+            threads={threads}
+            workspaces={workspaces}
+            activeThreadId={activeThreadId}
+            onSelectThread={(thread) => void onSelectThread(thread)}
+            onArchiveThread={onDeleteThread}
+            getThreadLabel={getThreadLabel}
+            getWorkspaceLabel={getWorkspaceLabel}
+          />
         ) : (
           projects.map((project) => {
             const isActiveProject = project.workspace.id === activeWorkspaceId;

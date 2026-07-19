@@ -83,7 +83,18 @@
     "archiveWorkspaceMessage": "Arquivar o workspace \"{{name}}\" e ocultar seus repositórios/threads/mensagens da sidebar? Você poderá reabrir esta pasta depois para restaurá-lo.",
     "archiveThreadTitle": "Arquivar thread",
     "archiveThreadMessage": "Arquivar a thread \"{{name}}\"? Ela ficará oculta desta lista de projetos.",
-    "archive": "Arquivar"
+    "archive": "Arquivar",
+    "threads": "Threads",
+    "fleetNeedsYou": "Precisa de você",
+    "fleetRunning": "Em execução",
+    "fleetReadyToReview": "Prontas para revisão",
+    "fleetIdle": "Inativas",
+    "fleetFailed": "Falhou",
+    "fleetQuiet": "Nenhum agente em execução.",
+    "sidebarListMode": "Lista de threads",
+    "sidebarListMode_projects": "Projetos",
+    "sidebarListMode_fleet": "Frota",
+    "sidebarListModeFailed": "Não foi possível atualizar a lista de threads."
   },
   "commandPalette": {
     "placeholder": "Busque comandos, threads, workspaces ou arquivos...",
@@ -129,7 +140,6 @@
       "viewCommits": "Abrir History",
       "viewStash": "Abrir Stash",
       "viewFiles": "Abrir Files",
-      "toggleExplorer": "Alternar Explorer de Arquivos",
       "viewWorktrees": "Abrir Worktrees",
       "viewHarnesses": "Abrir Agent Harnesses",
       "codexFork": "Criar fork da thread Codex",
@@ -604,7 +614,8 @@
       "interface": "Interface",
       "interfaceDescription": "Mudanças de tema se aplicam ao chat, terminal, Git e editor.",
       "themeDescription": "Use um tema fixo ou acompanhe o sistema operacional.",
-      "languageDescription": "Usado na navegação, diálogos e mensagens de status."
+      "languageDescription": "Usado na navegação, diálogos e mensagens de status.",
+      "sidebarListModeDescription": "Agrupe as threads por projeto ou ordene pelas que precisam da sua atenção."
     },
     "usage": {
       "providerLimits": "Limites dos provedores conectados",
