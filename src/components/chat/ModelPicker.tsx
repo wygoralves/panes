@@ -801,11 +801,15 @@ export function ModelPicker({
                     if (!holoHover) setHoloHover(true);
                   }}
                   onPointerLeave={() => {
+                    // The foil stays where the pointer left it.
                     if (holoFrameRef.current !== null) {
                       window.cancelAnimationFrame(holoFrameRef.current);
                       holoFrameRef.current = null;
+                      effortRef.current?.style.setProperty(
+                        "--mp-holo-x",
+                        `${(holoTargetRef.current * 100).toFixed(2)}%`,
+                      );
                     }
-                    effortRef.current?.style.removeProperty("--mp-holo-x");
                     setHoloHover(false);
                   }}
                 >
