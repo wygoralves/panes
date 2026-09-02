@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
 import { modelFavoriteKey, useModelFavoritesStore } from "../../stores/modelFavoritesStore";
 import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
+import { useModelPickerStore } from "../../stores/modelPickerStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { EngineHealth, EngineInfo, EngineModel } from "../../types";
 import type { CodexServiceTierValue } from "./CodexConfigPicker";
@@ -263,13 +264,6 @@ function modelMetadataIcon(icon: ModelMetadataChip["icon"]) {
   }
 }
 
-function shouldShowModelDescription(engineId: string, model: EngineModel): boolean {
-  if (!model.description) {
-    return false;
-  }
-  return !(engineKind(engineId) === "opencode" && model.description.trim() === "OpenCode model");
-}
-
 function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
   switch (effort) {
     case "none": return t("modelPicker.effort.noneShort");
@@ -322,9 +316,22 @@ export function getModelPickerSectionIds(
   return sections;
 }
 
-type PickerRow =
-  | { key: string; type: "model"; engineId: string; model: EngineModel }
-  | { key: string; type: "effort"; effort: string };
+type PickerRow = { key: string; engineId: string; model: EngineModel; legacy: boolean };
+
+interface PickerGroup {
+  key: string;
+  engineId: string;
+  label: string;
+  /** Secondary label, e.g. the upstream provider for OpenCode groups. */
+  detail: string | null;
+  available: boolean;
+  rows: PickerRow[];
+  totalCount: number;
+}
+
+function rowKey(engineId: string, modelId: string): string {
+  return `model:${engineId}:${modelId}`;
+}
 
 export function ModelPicker({
   engines,
@@ -341,7 +348,6 @@ export function ModelPicker({
   const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [legacyExpanded, setLegacyExpanded] = useState(false);
   const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -353,6 +359,8 @@ export function ModelPicker({
   const favoriteKeys = useModelFavoritesStore((state) => state.favorites);
   const toggleFavorite = useModelFavoritesStore((state) => state.toggleFavorite);
   const legacyModelsVisible = useComposerSettingsStore((state) => state.legacyModelsVisible);
+  const collapsedGroups = useModelPickerStore((state) => state.collapsedGroups);
+  const toggleGroup = useModelPickerStore((state) => state.toggleGroup);
 
   useEffect(() => {
     if (!open) {
@@ -379,7 +387,7 @@ export function ModelPicker({
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const popoverWidth = Math.min(320, window.innerWidth - 16);
+    const popoverWidth = Math.min(340, window.innerWidth - 16);
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
     setPos({
       bottom: window.innerHeight - rect.top + 6,
@@ -390,7 +398,6 @@ export function ModelPicker({
   useEffect(() => {
     if (!open) return;
     setQuery("");
-    setLegacyExpanded(false);
     setHighlightedKey(null);
     const timer = window.setTimeout(() => searchRef.current?.focus(), 20);
 
@@ -433,119 +440,83 @@ export function ModelPicker({
     currentEngine?.models.find((model) => model.isDefault && !model.hidden) ??
     currentEngine?.models.find((model) => !model.hidden) ??
     null;
-  const currentModels = currentEngine?.models ?? [];
   const currentEfforts = currentModel?.supportedReasoningEfforts ?? [];
-  const isOpenCode = engineKind(selectedEngineId) === "opencode";
   const isCodex = engineKind(selectedEngineId) === "codex";
-  const openCodeProviderGroups = useMemo(
-    () => groupOpenCodeModels(currentModels),
-    [currentModels],
+  const trimmedQuery = query.trim();
+  const searching = trimmedQuery.length > 0;
+
+  const isFavorite = useCallback(
+    (engineId: string, model: EngineModel) =>
+      favoriteKeys.includes(modelFavoriteKey(engineId, model.id)),
+    [favoriteKeys],
   );
-  const currentOpenCodeProviderId =
-    isOpenCode && currentModel ? getOpenCodeProviderId(currentModel.id) : null;
 
-  function defaultModelForEngine(engine: EngineInfo): EngineModel | null {
-    return (
-      engine.models.find((model) => !model.hidden && model.isDefault) ??
-      engine.models.find((model) => !model.hidden) ??
-      engine.models[0] ??
-      null
-    );
-  }
-
-  function handleEngineSelect(engine: EngineInfo) {
-    if (engine.id === selectedEngineId) return;
-    const nextModel = defaultModelForEngine(engine);
-    if (!nextModel) return;
-    onEngineModelChange(engine.id, nextModel.id);
-    setQuery("");
-    setLegacyExpanded(false);
-    setHighlightedKey(null);
-    searchRef.current?.focus();
-  }
-
-  function handleModelSelect(modelId: string) {
-    onEngineModelChange(selectedEngineId, modelId);
-    setOpen(false);
-    triggerRef.current?.focus();
-  }
-
-  function handleEffortSelect(effort: string) {
-    onEffortChange(effort);
-    setOpen(false);
-    triggerRef.current?.focus();
-  }
-
-  // Sections of models. Favorites for the current engine come first; OpenCode
-  // then groups by upstream provider with the current provider first, and
-  // other engines have a single group.
-  const { favoriteModels, modelSections } = useMemo(() => {
-    const trimmedQuery = query.trim();
-    const isFavorite = (model: EngineModel) =>
-      favoriteKeys.includes(modelFavoriteKey(selectedEngineId, model.id));
-    const favoriteModels = filterOpenCodeModelsForQuery(currentModels.filter(isFavorite), trimmedQuery);
-    const rest = (models: EngineModel[]) => models.filter((model) => !isFavorite(model));
-    const legacyOf = (models: EngineModel[]) => (legacyModelsVisible ? models : []);
-    if (isOpenCode) {
-      const ordered = [...openCodeProviderGroups].sort((left, right) => {
-        if (left.providerId === currentOpenCodeProviderId) return -1;
-        if (right.providerId === currentOpenCodeProviderId) return 1;
-        return 0;
-      });
-      const modelSections = ordered
-        .map((group) => ({
-          key: group.providerId,
-          label: group.providerLabel,
-          active: filterOpenCodeModelsForQuery(rest(group.activeModels), trimmedQuery),
-          legacy: filterOpenCodeModelsForQuery(legacyOf(rest(group.legacyModels)), trimmedQuery),
-        }))
-        .filter((group) => group.active.length > 0 || group.legacy.length > 0);
-      return { favoriteModels, modelSections };
-    }
-    const active = filterOpenCodeModelsForQuery(
-      rest(currentModels.filter((model) => !model.hidden)),
-      trimmedQuery,
-    );
-    const legacy = filterOpenCodeModelsForQuery(
-      legacyOf(rest(currentModels.filter((model) => model.hidden))),
-      trimmedQuery,
-    );
-    return {
-      favoriteModels,
-      modelSections:
-        active.length > 0 || legacy.length > 0
-          ? [{ key: "all", label: null as string | null, active, legacy }]
-          : [],
-    };
-  }, [currentModels, currentOpenCodeProviderId, favoriteKeys, isOpenCode, legacyModelsVisible, openCodeProviderGroups, query, selectedEngineId]);
-
-  const legacyCount = modelSections.reduce((total, section) => total + section.legacy.length, 0);
-  const showLegacy = legacyExpanded || query.trim().length > 0;
-
-  const filteredEfforts = useMemo(() => {
-    const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return currentEfforts;
-    return currentEfforts.filter((option) =>
-      effortDisplayLabel(t, option.reasoningEffort).toLowerCase().includes(trimmed),
-    );
-  }, [currentEfforts, query, t]);
-
-  const rows = useMemo<PickerRow[]>(() => {
-    const result: PickerRow[] = [];
-    for (const model of favoriteModels) {
-      result.push({ key: `model:${model.id}`, type: "model", engineId: selectedEngineId, model });
-    }
-    for (const section of modelSections) {
-      const models = showLegacy ? [...section.active, ...section.legacy] : section.active;
-      for (const model of models) {
-        result.push({ key: `model:${model.id}`, type: "model", engineId: selectedEngineId, model });
+  // Favorites across every account come first; then one group per account,
+  // with OpenCode split further by upstream provider.
+  const { favoriteRows, groups } = useMemo(() => {
+    const favoriteRows: PickerRow[] = [];
+    const groups: PickerGroup[] = [];
+    for (const engine of engines) {
+      const available = health[engine.id]?.available !== false;
+      const visibleModels = engine.models.filter((model) => !model.hidden || legacyModelsVisible);
+      for (const model of visibleModels) {
+        if (isFavorite(engine.id, model)) {
+          favoriteRows.push({ key: rowKey(engine.id, model.id), engineId: engine.id, model, legacy: model.hidden });
+        }
       }
+      const rest = visibleModels.filter((model) => !isFavorite(engine.id, model));
+      const toRows = (models: EngineModel[]) =>
+        filterOpenCodeModelsForQuery(models, trimmedQuery).map((model) => ({
+          key: rowKey(engine.id, model.id),
+          engineId: engine.id,
+          model,
+          legacy: model.hidden,
+        }));
+      if (engineKind(engine.id) === "opencode") {
+        for (const group of groupOpenCodeModels(rest)) {
+          const models = [...group.activeModels, ...group.legacyModels];
+          groups.push({
+            key: `${engine.id}:${group.providerId}`,
+            engineId: engine.id,
+            label: engine.name,
+            detail: group.providerLabel,
+            available,
+            rows: toRows(models),
+            totalCount: models.length,
+          });
+        }
+        continue;
+      }
+      const ordered = [...rest.filter((model) => !model.hidden), ...rest.filter((model) => model.hidden)];
+      groups.push({
+        key: engine.id,
+        engineId: engine.id,
+        label: engine.name,
+        detail: null,
+        available,
+        rows: toRows(ordered),
+        totalCount: ordered.length,
+      });
     }
-    for (const option of filteredEfforts) {
-      result.push({ key: `effort:${option.reasoningEffort}`, type: "effort", effort: option.reasoningEffort });
-    }
-    return result;
-  }, [favoriteModels, filteredEfforts, modelSections, selectedEngineId, showLegacy]);
+    return {
+      favoriteRows: favoriteRows.filter((row) =>
+        filterOpenCodeModelsForQuery([row.model], trimmedQuery).length > 0,
+      ),
+      groups: searching ? groups.filter((group) => group.rows.length > 0) : groups,
+    };
+  }, [engines, health, isFavorite, legacyModelsVisible, searching, trimmedQuery]);
+
+  const isGroupCollapsed = (group: PickerGroup) =>
+    !searching && (collapsedGroups[group.key] ?? !group.available);
+
+  const rows = useMemo<PickerRow[]>(
+    () => [
+      ...favoriteRows,
+      ...groups.flatMap((group) => (isGroupCollapsed(group) ? [] : group.rows)),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [favoriteRows, groups, collapsedGroups, searching],
+  );
 
   useEffect(() => {
     if (highlightedKey && !rows.some((row) => row.key === highlightedKey)) {
@@ -558,6 +529,12 @@ export function ModelPicker({
     const element = listRef.current.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(highlightedKey)}"]`);
     element?.scrollIntoView({ block: "nearest" });
   }, [highlightedKey]);
+
+  function handleModelSelect(engineId: string, modelId: string) {
+    onEngineModelChange(engineId, modelId);
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
 
   function moveHighlight(direction: 1 | -1) {
     if (rows.length === 0) return;
@@ -572,22 +549,8 @@ export function ModelPicker({
   }
 
   function activateHighlighted() {
-    const row = rows.find((candidate) => candidate.key === highlightedKey);
-    if (!row) {
-      const first = rows[0];
-      if (first?.type === "model") handleModelSelect(first.model.id);
-      else if (first?.type === "effort") handleEffortSelect(first.effort);
-      return;
-    }
-    if (row.type === "model") handleModelSelect(row.model.id);
-    else handleEffortSelect(row.effort);
-  }
-
-  function switchEngine(direction: 1 | -1) {
-    if (engines.length < 2) return;
-    const index = engines.findIndex((engine) => engine.id === selectedEngineId);
-    const next = engines[(index + direction + engines.length) % engines.length];
-    if (next) handleEngineSelect(next);
+    const row = rows.find((candidate) => candidate.key === highlightedKey) ?? rows[0];
+    if (row) handleModelSelect(row.engineId, row.model.id);
   }
 
   function onSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
@@ -600,12 +563,6 @@ export function ModelPicker({
     } else if (event.key === "Enter") {
       event.preventDefault();
       activateHighlighted();
-    } else if (event.key === "Tab" && !event.shiftKey && query.length === 0) {
-      event.preventDefault();
-      switchEngine(1);
-    } else if (event.key === "Tab" && event.shiftKey && query.length === 0) {
-      event.preventDefault();
-      switchEngine(-1);
     }
   }
 
@@ -615,7 +572,9 @@ export function ModelPicker({
   const triggerEffortLabel =
     selectedEffort && currentEfforts.length > 0 ? effortDisplayLabel(t, selectedEffort) : null;
   const fastMode = isCodex && selectedServiceTier === "fast";
-  const showEngineNames = engines.length <= 3 || engines.some((engine) => !isBuiltinKindName(engine));
+  const compactEfforts = shouldUseCompactEffortLabels(currentEfforts.length);
+  const selectedRowKey = currentModel ? rowKey(selectedEngineId, currentModel.id) : null;
+  const showTriggerAccount = engines.some((engine) => !isBuiltinKindName(engine));
 
   const trigger = (
     <button
@@ -624,7 +583,11 @@ export function ModelPicker({
       className={`mp-trigger${open ? " mp-trigger-open" : ""}`}
       onClick={toggle}
       disabled={disabled}
-      title={t("modelPicker.selectModel")}
+      title={
+        showTriggerAccount && currentEngine
+          ? `${currentEngine.name}: ${triggerModelLabel}`
+          : t("modelPicker.selectModel")
+      }
       aria-expanded={open}
       aria-haspopup="dialog"
     >
@@ -647,6 +610,21 @@ export function ModelPicker({
     </button>
   );
 
+  const renderRow = (row: PickerRow, favorite: boolean, groupAvailable = true) => (
+    <ModelRow
+      key={row.key}
+      row={row}
+      isSelected={row.key === selectedRowKey}
+      isHighlighted={highlightedKey === row.key}
+      isFavorite={favorite}
+      showIcon={favorite}
+      unavailable={!groupAvailable}
+      onSelect={() => handleModelSelect(row.engineId, row.model.id)}
+      onToggleFavorite={() => toggleFavorite(row.engineId, row.model.id)}
+      onHover={() => setHighlightedKey(row.key)}
+    />
+  );
+
   const popover = open
     ? createPortal(
         <div
@@ -660,32 +638,6 @@ export function ModelPicker({
           role="dialog"
           aria-label={t("modelPicker.runtimeConfiguration")}
         >
-          <div className="mp-tabs" role="tablist" aria-label={t("modelPicker.providers")}>
-            {engines.map((engine) => {
-              const selected = engine.id === selectedEngineId;
-              const available = health[engine.id]?.available !== false;
-              return (
-                <button
-                  key={engine.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  className={`mp-tab${selected ? " mp-tab-active" : ""}${available ? "" : " mp-tab-unavailable"}`}
-                  title={
-                    available
-                      ? engine.name
-                      : `${engine.name}: ${t("modelPicker.unavailable")}`
-                  }
-                  onClick={() => handleEngineSelect(engine)}
-                >
-                  <span className="mp-tab-icon">{getHarnessIcon(engineKind(engine.id), 14)}</span>
-                  {showEngineNames ? <span className="mp-tab-label">{engine.name}</span> : null}
-                  {!available ? <span className="mp-tab-dot" aria-hidden="true" /> : null}
-                </button>
-              );
-            })}
-          </div>
-
           <div className="mp-search">
             <Search size={13} className="mp-search-icon" aria-hidden="true" />
             <input
@@ -705,127 +657,93 @@ export function ModelPicker({
           </div>
 
           <div className="mp-scroll" ref={listRef}>
-            {favoriteModels.length === 0 && modelSections.length === 0 && filteredEfforts.length === 0 ? (
+            {favoriteRows.length === 0 && groups.length === 0 ? (
               <div className="mp-empty">{t("modelPicker.noModels")}</div>
             ) : null}
 
-            {favoriteModels.length > 0 ? (
-              <div className="mp-section" key="favorites">
+            {favoriteRows.length > 0 ? (
+              <div className="mp-section">
                 <div className="mp-section-title">{t("modelPicker.favorites")}</div>
-                {favoriteModels.map((model) => (
-                  <ModelRow
-                    key={model.id}
-                    model={model}
-                    isSelected={model.id === (selectedModelId ?? currentModel?.id)}
-                    isHighlighted={highlightedKey === `model:${model.id}`}
-                    isFavorite
-                    onSelect={handleModelSelect}
-                    onToggleFavorite={() => toggleFavorite(selectedEngineId, model.id)}
-                    onHover={() => setHighlightedKey(`model:${model.id}`)}
-                  />
-                ))}
+                {favoriteRows.map((row) => renderRow(row, true))}
               </div>
             ) : null}
 
-            {modelSections.map((section, sectionIndex) => (
-              <div className="mp-section" key={section.key}>
-                <div className="mp-section-title">
-                  {section.label
-                    ? section.label
-                    : sectionIndex === 0
-                      ? favoriteModels.length > 0
-                        ? t("modelPicker.models")
-                        : t("modelPicker.model")
-                      : null}
+            {groups.map((group) => {
+              const collapsed = isGroupCollapsed(group);
+              return (
+                <div className="mp-section" key={group.key}>
+                  <button
+                    type="button"
+                    className={`mp-group${collapsed ? " mp-group-collapsed" : ""}`}
+                    onClick={() => toggleGroup(group.key)}
+                    aria-expanded={!collapsed}
+                    disabled={searching}
+                  >
+                    <span className="mp-group-icon">{getHarnessIcon(engineKind(group.engineId), 13)}</span>
+                    <span className="mp-group-label">
+                      {group.label}
+                      {group.detail ? <span className="mp-group-detail">{group.detail}</span> : null}
+                    </span>
+                    {!group.available ? (
+                      <span className="mp-group-status">{t("modelPicker.unavailable")}</span>
+                    ) : collapsed ? (
+                      <span className="mp-group-count">{group.totalCount}</span>
+                    ) : null}
+                    <ChevronRight
+                      size={11}
+                      className={`mp-group-chevron${collapsed ? "" : " mp-group-chevron-open"}`}
+                    />
+                  </button>
+                  {collapsed ? null : group.rows.map((row) => renderRow(row, false, group.available))}
                 </div>
-                {section.active.map((model) => (
-                  <ModelRow
-                    key={model.id}
-                    model={model}
-                    isSelected={model.id === (selectedModelId ?? currentModel?.id)}
-                    isHighlighted={highlightedKey === `model:${model.id}`}
-                    isFavorite={false}
-                    onSelect={handleModelSelect}
-                    onToggleFavorite={() => toggleFavorite(selectedEngineId, model.id)}
-                    onHover={() => setHighlightedKey(`model:${model.id}`)}
-                  />
-                ))}
-                {showLegacy
-                  ? section.legacy.map((model) => (
-                      <ModelRow
-                        key={model.id}
-                        model={model}
-                        isSelected={model.id === (selectedModelId ?? currentModel?.id)}
-                        isHighlighted={highlightedKey === `model:${model.id}`}
-                        isFavorite={false}
-                        onSelect={handleModelSelect}
-                        onToggleFavorite={() => toggleFavorite(selectedEngineId, model.id)}
-                        onHover={() => setHighlightedKey(`model:${model.id}`)}
-                        legacy
-                      />
-                    ))
-                  : null}
-              </div>
-            ))}
-
-            {legacyCount > 0 && query.trim().length === 0 ? (
-              <button
-                type="button"
-                className="mp-legacy-toggle"
-                onClick={() => setLegacyExpanded((previous) => !previous)}
-                aria-expanded={legacyExpanded}
-              >
-                <span className="mp-legacy-toggle-label">
-                  {t("modelPicker.legacy", { count: legacyCount })}
-                </span>
-                <ChevronRight
-                  size={11}
-                  className={`mp-legacy-chevron${legacyExpanded ? " mp-legacy-chevron-open" : ""}`}
-                />
-              </button>
-            ) : null}
-
-            {filteredEfforts.length > 0 ? (
-              <div className="mp-section mp-section-divided">
-                <div className="mp-section-title">{t("modelPicker.reasoning")}</div>
-                {filteredEfforts.map((option) => {
-                  const selected = option.reasoningEffort === selectedEffort;
-                  const key = `effort:${option.reasoningEffort}`;
-                  return (
-                    <button
-                      key={option.reasoningEffort}
-                      type="button"
-                      data-row-key={key}
-                      className={`mp-row${selected ? " mp-row-selected" : ""}${highlightedKey === key ? " mp-row-highlighted" : ""}`}
-                      onClick={() => handleEffortSelect(option.reasoningEffort)}
-                      onPointerMove={() => setHighlightedKey(key)}
-                      title={option.description || undefined}
-                      aria-pressed={selected}
-                    >
-                      <span className="mp-row-label">{effortDisplayLabel(t, option.reasoningEffort)}</span>
-                      {selected ? <Check size={13} className="mp-row-check" /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
+              );
+            })}
           </div>
 
-          {isCodex ? (
-            <label className="mp-footer">
-              <Zap size={13} className="mp-footer-icon" aria-hidden="true" />
-              <span className="mp-footer-label">{t("modelPicker.fastMode")}</span>
-              <span className="ws-toggle">
-                <input
-                  type="checkbox"
-                  checked={fastMode}
-                  aria-label={t("modelPicker.fastMode")}
-                  onChange={(event) => onServiceTierChange(event.target.checked ? "fast" : "inherit")}
-                />
-                <span className="ws-toggle-track" />
-                <span className="ws-toggle-thumb" />
-              </span>
-            </label>
+          {currentEfforts.length > 0 || isCodex ? (
+            <div className="mp-footer">
+              {currentEfforts.length > 0 ? (
+                <div className="mp-footer-row">
+                  <span className="mp-footer-label">{t("modelPicker.reasoning")}</span>
+                  <div className="mp-chips" role="radiogroup" aria-label={t("modelPicker.reasoning")}>
+                    {currentEfforts.map((option) => {
+                      const selected = option.reasoningEffort === selectedEffort;
+                      return (
+                        <button
+                          key={option.reasoningEffort}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          className={`mp-chip${selected ? " mp-chip-selected" : ""}`}
+                          title={option.description || effortDisplayLabel(t, option.reasoningEffort)}
+                          onClick={() => onEffortChange(option.reasoningEffort)}
+                        >
+                          {compactEfforts
+                            ? shortEffortLabel(t, option.reasoningEffort)
+                            : effortDisplayLabel(t, option.reasoningEffort)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {isCodex ? (
+                <label className="mp-footer-row">
+                  <Zap size={13} className="mp-footer-icon" aria-hidden="true" />
+                  <span className="mp-footer-label mp-footer-label-grow">{t("modelPicker.fastMode")}</span>
+                  <span className="ws-toggle">
+                    <input
+                      type="checkbox"
+                      checked={fastMode}
+                      aria-label={t("modelPicker.fastMode")}
+                      onChange={(event) => onServiceTierChange(event.target.checked ? "fast" : "inherit")}
+                    />
+                    <span className="ws-toggle-track" />
+                    <span className="ws-toggle-thumb" />
+                  </span>
+                </label>
+              ) : null}
+            </div>
           ) : null}
         </div>,
         document.body,
@@ -845,36 +763,43 @@ function isBuiltinKindName(engine: EngineInfo): boolean {
 }
 
 function ModelRow({
-  model,
+  row,
   isSelected,
   isHighlighted,
   isFavorite,
+  showIcon,
+  unavailable,
   onSelect,
   onToggleFavorite,
   onHover,
-  legacy = false,
 }: {
-  model: EngineModel;
+  row: PickerRow;
   isSelected: boolean;
   isHighlighted: boolean;
   isFavorite: boolean;
-  onSelect: (modelId: string) => void;
+  showIcon: boolean;
+  unavailable: boolean;
+  onSelect: () => void;
   onToggleFavorite: () => void;
   onHover: () => void;
-  legacy?: boolean;
 }) {
   const { t } = useTranslation("chat");
+  const { model } = row;
 
   return (
     <div
       role="button"
       tabIndex={-1}
-      data-row-key={`model:${model.id}`}
-      className={`mp-row${isSelected ? " mp-row-selected" : ""}${isHighlighted ? " mp-row-highlighted" : ""}${legacy ? " mp-row-legacy" : ""}`}
-      onClick={() => onSelect(model.id)}
+      data-row-key={row.key}
+      className={`mp-row${isSelected ? " mp-row-selected" : ""}${isHighlighted ? " mp-row-highlighted" : ""}${row.legacy ? " mp-row-legacy" : ""}${unavailable ? " mp-row-unavailable" : ""}`}
+      onClick={onSelect}
       onPointerMove={onHover}
       aria-pressed={isSelected}
+      title={model.description || undefined}
     >
+      {showIcon ? (
+        <span className="mp-row-icon">{getHarnessIcon(engineKind(row.engineId), 13)}</span>
+      ) : null}
       <span className="mp-row-label">
         {formatModelName(model.displayName)}
         {model.isDefault ? (
