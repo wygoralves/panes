@@ -20,6 +20,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::instance::EngineInstanceSettings;
 use crate::models::{
     CodexAccountLoginCompletedDto, CodexAccountStateDto, CodexAppDto, CodexConfigLayerDto,
     CodexConfigStateDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
@@ -83,6 +84,9 @@ const MAX_TEXT_ATTACHMENT_CHARS: usize = 40_000;
 const PLAN_MODE_PROMPT_PREFIX: &str = "Plan the solution first. Do not execute commands or edit files until the plan is complete. Reply with a structured plan using one line per step in the exact format `- [pending] Step`.";
 
 pub struct CodexEngine {
+    id: String,
+    name: String,
+    instance: std::sync::Mutex<EngineInstanceSettings>,
     state: Arc<Mutex<CodexState>>,
     transport_spawn_lock: Arc<Mutex<()>>,
     runtime_events: broadcast::Sender<CodexRuntimeEvent>,
@@ -147,12 +151,62 @@ struct CodexState {
 
 impl Default for CodexEngine {
     fn default() -> Self {
+        Self::with_instance("codex", "Codex", EngineInstanceSettings::default())
+    }
+}
+
+impl CodexEngine {
+    pub fn with_instance(id: &str, name: &str, instance: EngineInstanceSettings) -> Self {
         let (runtime_events, _) = broadcast::channel(256);
         Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            instance: std::sync::Mutex::new(instance),
             state: Arc::new(Mutex::new(CodexState::default())),
             transport_spawn_lock: Arc::new(Mutex::new(())),
             runtime_events,
         }
+    }
+
+    pub fn instance_settings(&self) -> EngineInstanceSettings {
+        self.instance
+            .lock()
+            .map(|settings| settings.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn instance_settings_slot(&self) -> &std::sync::Mutex<EngineInstanceSettings> {
+        &self.instance
+    }
+
+    /// Replaces the instance runtime settings. A running app-server keeps
+    /// the old environment, so the transport is restarted lazily.
+    pub async fn update_instance_settings(&self, settings: EngineInstanceSettings) {
+        let changed = {
+            let mut current = self
+                .instance
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = *current != settings;
+            *current = settings;
+            changed
+        };
+        if changed {
+            self.invalidate_transport("codex instance settings changed")
+                .await;
+        }
+    }
+
+    async fn resolve_executable(&self) -> CodexExecutableResolution {
+        if let Some(executable) = self.instance_settings().executable_override() {
+            return CodexExecutableResolution {
+                executable: Some(executable),
+                source: "configured",
+                app_path: std::env::var("PATH").ok(),
+                login_shell_executable: None,
+            };
+        }
+        resolve_codex_executable().await
     }
 }
 
@@ -238,11 +292,11 @@ enum TurnCompletionRecoveryMode {
 #[async_trait]
 impl Engine for CodexEngine {
     fn id(&self) -> &str {
-        "codex"
+        &self.id
     }
 
     fn name(&self) -> &str {
-        "Codex"
+        &self.name
     }
 
     fn models(&self) -> Vec<ModelInfo> {
@@ -388,7 +442,7 @@ impl Engine for CodexEngine {
     }
 
     async fn is_available(&self) -> bool {
-        resolve_codex_executable().await.executable.is_some()
+        self.resolve_executable().await.executable.is_some()
     }
 
     async fn start_thread(
@@ -1751,7 +1805,7 @@ impl CodexEngine {
     }
 
     pub async fn health_report(&self) -> CodexHealthReport {
-        let resolution = resolve_codex_executable().await;
+        let resolution = self.resolve_executable().await;
         let version_result = self.probe_version_from_resolution(&resolution).await;
         let transport_result = if version_result.is_ok() {
             self.probe_transport_ready().await
@@ -2263,7 +2317,8 @@ impl CodexEngine {
     }
 
     async fn spawn_transport_with_backoff(&self) -> anyhow::Result<Arc<CodexTransport>> {
-        let resolution = resolve_codex_executable().await;
+        let resolution = self.resolve_executable().await;
+        let instance = self.instance_settings();
         let codex_executable = resolution.executable.as_ref().ok_or_else(|| {
             anyhow::anyhow!(codex_unavailable_details(&resolution)
                 .unwrap_or_else(|| CODEX_MISSING_DEFAULT_DETAILS.to_string()))
@@ -2273,7 +2328,9 @@ impl CodexEngine {
         let mut last_error: Option<anyhow::Error> = None;
 
         for attempt in 0..TRANSPORT_RESTART_MAX_ATTEMPTS {
-            match CodexTransport::spawn(codex_executable.to_string_lossy().as_ref()).await {
+            match CodexTransport::spawn(codex_executable.to_string_lossy().as_ref(), &instance)
+                .await
+            {
                 Ok(transport) => return Ok(Arc::new(transport)),
                 Err(error) => {
                     log::warn!(

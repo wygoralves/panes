@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use tauri::State;
 
+use crate::engines::engine_kind;
 use crate::{
     config::app_config::AppConfig,
     db,
@@ -671,7 +672,7 @@ const AUTONOMY_PRESET_IDS: [&str; 5] = ["inherit", "read-only", "ask", "auto", "
 fn available_autonomy_presets(engine_id: &str) -> &'static [&'static str] {
     // OpenCode exposes approvals only, and its `allow` mode never asks, so a
     // sandboxed "auto in workspace" rung does not exist there.
-    if engine_id == "opencode" {
+    if engine_kind(&engine_id) == "opencode" {
         &["inherit", "read-only", "ask", "full"]
     } else {
         &AUTONOMY_PRESET_IDS
@@ -708,7 +709,7 @@ fn autonomy_policy_for_preset(
     codex_external_sandbox: bool,
 ) -> Result<AutonomyPresetPolicy, String> {
     let preset = resolve_autonomy_preset_for_engine(engine_id, requested_preset);
-    let policy = match engine_id {
+    let policy = match engine_kind(engine_id) {
         "opencode" => AutonomyPresetPolicy {
             approval_policy: json!(match preset {
                 "read-only" => "deny",
@@ -819,7 +820,7 @@ async fn create_thread_inner(
     service_tier: Option<String>,
     initial_autonomy_preset: Option<String>,
 ) -> Result<ThreadDto, String> {
-    let normalized_service_tier = if engine_id == "codex" {
+    let normalized_service_tier = if engine_kind(&engine_id) == "codex" {
         normalize_thread_service_tier(service_tier)?
     } else {
         let candidate = service_tier
@@ -870,7 +871,7 @@ async fn create_thread_inner(
 
     if let Some(preset) = initial_autonomy_preset.as_deref() {
         let codex_external_sandbox =
-            engine_id == "codex" && state.engines.codex_uses_external_sandbox().await;
+            engine_kind(&engine_id) == "codex" && state.engines.codex_uses_external_sandbox().await;
         let policy = autonomy_policy_for_preset(&engine_id, preset, codex_external_sandbox)?;
         metadata.insert(
             approval_policy_metadata_key(&engine_id).to_string(),
@@ -1142,7 +1143,7 @@ pub async fn delete_thread(state: State<'_, AppState>, thread_id: String) -> Res
         if let Err(error) = state.engines.interrupt(&thread).await {
             log::warn!("failed to interrupt thread before deletion: {error}");
         }
-        if thread.engine_id == "opencode" {
+        if engine_kind(&thread.engine_id) == "opencode" {
             if let Some(engine_thread_id) = thread.engine_thread_id.as_deref() {
                 state
                     .engines
@@ -1181,7 +1182,7 @@ pub async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Re
             log::warn!("failed to interrupt thread before archive: {error}");
         }
 
-        if thread.engine_id == "opencode" {
+        if engine_kind(&thread.engine_id) == "opencode" {
             if let Some(engine_thread_id) = thread.engine_thread_id.as_deref() {
                 let cwd = resolve_thread_cwd(state.inner(), &thread).await?;
                 state
@@ -1225,7 +1226,7 @@ pub async fn restore_thread(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id == "opencode" {
+    if engine_kind(&thread.engine_id) == "opencode" {
         if let Some(engine_thread_id) = thread.engine_thread_id.as_deref() {
             let cwd = resolve_thread_cwd(state.inner(), &thread).await?;
             state
@@ -1260,7 +1261,7 @@ pub async fn sync_thread_from_engine(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id == "opencode" {
+    if engine_kind(&thread.engine_id) == "opencode" {
         let Some(engine_thread_id) = thread.engine_thread_id.as_deref() else {
             return Ok(thread);
         };
@@ -1294,7 +1295,7 @@ pub async fn sync_thread_from_engine(
         .await;
     }
 
-    if thread.engine_id != "codex" {
+    if engine_kind(&thread.engine_id) != "codex" {
         return Ok(thread);
     }
 
@@ -1408,7 +1409,7 @@ pub async fn fork_codex_thread(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "codex" {
+    if engine_kind(&thread.engine_id) != "codex" {
         return Err("native fork is only available for Codex threads".to_string());
     }
     let engine_thread_id = thread
@@ -1419,7 +1420,13 @@ pub async fn fork_codex_thread(
 
     let forked = state
         .engines
-        .fork_codex_thread(&engine_thread_id, &cwd, &model_id, sandbox)
+        .fork_codex_thread(
+            &thread.engine_id,
+            &engine_thread_id,
+            &cwd,
+            &model_id,
+            sandbox,
+        )
         .await
         .map_err(err_to_string)?;
 
@@ -1458,7 +1465,7 @@ pub async fn rollback_codex_thread(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "codex" {
+    if engine_kind(&thread.engine_id) != "codex" {
         return Err("native rollback is only available for Codex threads".to_string());
     }
     let engine_thread_id = thread
@@ -1469,19 +1476,25 @@ pub async fn rollback_codex_thread(
 
     let forked = state
         .engines
-        .fork_codex_thread(&engine_thread_id, &cwd, &model_id, sandbox)
+        .fork_codex_thread(
+            &thread.engine_id,
+            &engine_thread_id,
+            &cwd,
+            &model_id,
+            sandbox,
+        )
         .await
         .map_err(err_to_string)?;
     let rollback_snapshot = match state
         .engines
-        .rollback_codex_thread(&forked.engine_thread_id, num_turns)
+        .rollback_codex_thread(&thread.engine_id, &forked.engine_thread_id, num_turns)
         .await
     {
         Ok(snapshot) => snapshot,
         Err(rollback_error) => {
             if let Err(cleanup_error) = state
                 .engines
-                .archive_codex_thread(&forked.engine_thread_id)
+                .archive_codex_thread(&thread.engine_id, &forked.engine_thread_id)
                 .await
             {
                 log::warn!(
@@ -1533,7 +1546,7 @@ pub async fn compact_codex_thread(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "codex" {
+    if engine_kind(&thread.engine_id) != "codex" {
         return Err("native compact is only available for Codex threads".to_string());
     }
     let engine_thread_id = thread
@@ -1543,7 +1556,7 @@ pub async fn compact_codex_thread(
 
     state
         .engines
-        .compact_codex_thread(&engine_thread_id)
+        .compact_codex_thread(&thread.engine_id, &engine_thread_id)
         .await
         .map_err(err_to_string)?;
 
@@ -1617,7 +1630,7 @@ async fn set_thread_execution_policy_inner(
         None
     };
     let normalized_permission_profile = if update_permission_profile {
-        if thread.engine_id != "codex" {
+        if engine_kind(&thread.engine_id) != "codex" {
             return Err("Codex permission profile is only available for Codex threads".to_string());
         }
         normalize_thread_permission_profile(permission_profile)?
@@ -1625,7 +1638,7 @@ async fn set_thread_execution_policy_inner(
         None
     };
     let normalized_approvals_reviewer = if update_approvals_reviewer {
-        if thread.engine_id != "codex" {
+        if engine_kind(&thread.engine_id) != "codex" {
             return Err("Codex approvals reviewer is only available for Codex threads".to_string());
         }
         normalize_thread_approvals_reviewer(approvals_reviewer)?
@@ -1635,7 +1648,7 @@ async fn set_thread_execution_policy_inner(
     let external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
 
     if external_sandbox_active
-        && thread.engine_id == "codex"
+        && engine_kind(&thread.engine_id) == "codex"
         && matches!(
             normalized_sandbox_mode.as_deref(),
             Some("read-only" | "workspace-write")
@@ -1773,7 +1786,7 @@ async fn set_thread_codex_config_inner(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "codex" {
+    if engine_kind(&thread.engine_id) != "codex" {
         return Err("Codex thread config is only available for Codex threads".to_string());
     }
 
@@ -1872,7 +1885,7 @@ async fn set_thread_opencode_config_inner(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "opencode" {
+    if engine_kind(&thread.engine_id) != "opencode" {
         return Err("OpenCode thread config is only available for OpenCode threads".to_string());
     }
 
@@ -2308,7 +2321,7 @@ fn approval_policy_for_engine_and_trust_level(
     engine_id: &str,
     trust_level: &TrustLevelDto,
 ) -> &'static str {
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => match trust_level {
             TrustLevelDto::Trusted => "trusted",
             TrustLevelDto::Standard => "standard",
@@ -2333,7 +2346,7 @@ fn thread_approval_policy_override_value(
     engine_id: &str,
     metadata: Option<&Value>,
 ) -> Result<Option<Value>, String> {
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
@@ -2598,7 +2611,7 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 }
 
 fn approval_policy_metadata_key(engine_id: &str) -> &'static str {
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => "claudePermissionMode",
         "opencode" => "opencodePermissionMode",
         _ => "sandboxApprovalPolicy",
@@ -2613,7 +2626,7 @@ fn normalize_thread_approval_policy_for_engine(
         return Ok(None);
     };
 
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => {
             let normalized = value
                 .as_str()

@@ -74,6 +74,39 @@ const pendingApprovals = new Map();
 const taskSnapshotsBySessionId = new Map();
 let shuttingDown = false;
 const claudeCodeExecutable = process.env.PANES_CLAUDE_CODE_EXECUTABLE?.trim() || null;
+// Extra CLI flags configured for this provider instance, as a JSON array of
+// tokens. They are mapped onto the SDK `extraArgs` option: `--flag value`
+// pairs become { flag: value } and bare flags become { flag: null }.
+const claudeExtraArgs = parseExtraArgs(process.env.PANES_CLAUDE_EXTRA_ARGS);
+
+function parseExtraArgs(raw) {
+  if (!raw) return null;
+  let tokens;
+  try {
+    tokens = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(tokens)) return null;
+  const extraArgs = {};
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = String(tokens[index] ?? "");
+    if (!token.startsWith("--")) continue;
+    const equals = token.indexOf("=");
+    if (equals > 2) {
+      extraArgs[token.slice(2, equals)] = token.slice(equals + 1);
+      continue;
+    }
+    const next = tokens[index + 1];
+    if (typeof next === "string" && !next.startsWith("--")) {
+      extraArgs[token.slice(2)] = next;
+      index += 1;
+    } else {
+      extraArgs[token.slice(2)] = null;
+    }
+  }
+  return Object.keys(extraArgs).length > 0 ? extraArgs : null;
+}
 const execFileAsync = promisify(execFile);
 const claudeUsageUrl =
   process.env.PANES_CLAUDE_USAGE_URL?.trim() || "https://api.anthropic.com/api/oauth/usage";
@@ -1829,6 +1862,7 @@ async function handleQuery(req) {
     });
 
     if (model) options.model = model;
+    if (claudeExtraArgs) options.extraArgs = claudeExtraArgs;
     // Without a systemPrompt option the SDK runs with an empty system prompt.
     // Use the Claude Code preset so results match the Claude Code app, and
     // append any caller-supplied instructions on top of it.
