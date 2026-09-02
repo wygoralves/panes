@@ -1,3 +1,4 @@
+import { engineKind } from "./engineKind";
 import type {
   DependencyReport,
   EngineHealth,
@@ -72,7 +73,7 @@ const INTERACTIVE_ONBOARDING_ROLES: ReadonlySet<string> = new Set([
 ] as const);
 
 export function normalizeOnboardingHarnessInstallId(targetId: string): string {
-  if (targetId === "claude") {
+  if (engineKind(targetId) === "claude") {
     return CHAT_ENGINE_INSTALL_HARNESS_IDS.claude;
   }
 
@@ -162,7 +163,7 @@ export function isChatEngineReady(
   dependencyReport: DependencyReport | null,
   engineHealth: Partial<Record<OnboardingChatEngineId, EngineHealth>>,
 ): boolean {
-  if (engineId === "codex") {
+  if (engineKind(engineId) === "codex") {
     return Boolean(
       dependencyReport?.node.found &&
         dependencyReport.codex.found &&

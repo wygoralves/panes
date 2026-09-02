@@ -1,3 +1,4 @@
+import { engineKind } from "../lib/engineKind";
 import { create } from "zustand";
 import { ipc, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
@@ -1794,7 +1795,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const threadState = useThreadStore.getState();
       let activeThread = threadState.threads.find((thread) => thread.id === threadId);
-      if (activeThread?.engineId === "codex" && isCodexThreadSyncRequired(activeThread.engineMetadata)) {
+      if (
+        activeThread &&
+        engineKind(activeThread.engineId) === "codex" &&
+        isCodexThreadSyncRequired(activeThread.engineMetadata)
+      ) {
         try {
           const syncedThread = await ipc.syncThreadFromEngine(threadId);
           threadState.applyThreadUpdateLocal(syncedThread);
@@ -2017,7 +2022,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         null;
       const shouldRefreshUsageLimits =
         messages.some((message) => message.role === "user") &&
-        (restoredEngineId === "codex" || restoredEngineId === "claude");
+        (engineKind(restoredEngineId) === "codex" || engineKind(restoredEngineId) === "claude");
 
       set({
         threadId,

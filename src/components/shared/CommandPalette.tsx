@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { TFunction } from "i18next";
@@ -781,7 +782,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: async ({ close }) => {
       close();
@@ -808,7 +809,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: async ({ close }) => {
       close();
@@ -832,7 +833,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "codex-rollback" as SubFlow["type"], value: "1" } as SubFlow);
@@ -848,7 +849,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: async ({ close }) => {
       close();

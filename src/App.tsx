@@ -1,3 +1,4 @@
+import { engineKind } from "./lib/engineKind";
 import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { CommandPalette } from "./components/shared/CommandPalette";
@@ -101,7 +102,9 @@ function toggleActiveThreadSettlement() {
 }
 
 function isCodexSyncRequired(thread: Thread | null | undefined): boolean {
-  return thread?.engineId === "codex" && thread.engineMetadata?.codexSyncRequired === true;
+  return (
+    !!thread && engineKind(thread.engineId) === "codex" && thread.engineMetadata?.codexSyncRequired === true
+  );
 }
 
 function showRuntimeToast(runtimeToast?: RuntimeToast) {

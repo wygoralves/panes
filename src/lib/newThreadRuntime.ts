@@ -1,3 +1,4 @@
+import { engineKind } from "./engineKind";
 import type { EngineInfo, Thread } from "../types";
 import type { OnboardingPreferredChatSelection } from "./onboarding";
 
@@ -53,7 +54,7 @@ function runtimeFromThread(thread: Thread): NewThreadRuntimeSelection {
       : null,
   );
   const serviceTier =
-    thread.engineId === "codex"
+    engineKind(thread.engineId) === "codex"
       ? normalizeServiceTier(
           typeof thread.engineMetadata?.serviceTier === "string"
             ? thread.engineMetadata.serviceTier
@@ -89,7 +90,7 @@ function resolveRuntimeCandidate(
       engineId,
       modelId,
       reasoningEffort: normalizeString(candidate.reasoningEffort),
-      serviceTier: engineId === "codex" ? normalizeServiceTier(candidate.serviceTier) : null,
+      serviceTier: engineKind(engineId) === "codex" ? normalizeServiceTier(candidate.serviceTier) : null,
     };
   }
 
@@ -111,7 +112,7 @@ function resolveRuntimeCandidate(
     engineId: engine.id,
     modelId: model.id,
     reasoningEffort: supportedEffort,
-    serviceTier: engine.id === "codex" ? normalizeServiceTier(candidate.serviceTier) : null,
+    serviceTier: engineKind(engine.id) === "codex" ? normalizeServiceTier(candidate.serviceTier) : null,
   };
 }
 

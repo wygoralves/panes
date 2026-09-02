@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import {
   memo,
   useCallback,
@@ -1225,7 +1226,7 @@ function ApprovalCard({
 }) {
   const { t } = useTranslation("chat");
   const isPending = block.status === "pending";
-  const isClaudeThread = engineId === "claude";
+  const isClaudeThread = engineKind(engineId) === "claude";
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
   const isDynamicToolCall = isDynamicToolCallApproval(details);

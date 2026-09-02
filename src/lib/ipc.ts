@@ -6,6 +6,7 @@ import type { SidebarListMode } from "./sidebarListMode";
 import type { ThemePreference } from "./theme";
 import type {
   ApprovalResponse,
+  ChatProviderInstance,
   ActionOutputPayload,
   AttachmentPreview,
   ChatAttachment,
@@ -354,6 +355,11 @@ export const ipc = {
     invoke<Thread>("compact_codex_thread", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
+  listChatProviders: () => invoke<ChatProviderInstance[]>("list_chat_providers"),
+  saveChatProvider: (provider: ChatProviderInstance) =>
+    invoke<ChatProviderInstance[]>("save_chat_provider", { provider }),
+  removeChatProvider: (providerId: string) =>
+    invoke<ChatProviderInstance[]>("remove_chat_provider", { providerId }),
   getChatProviderUsage: () =>
     invoke<ChatProviderUsage[]>("get_chat_provider_usage"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),

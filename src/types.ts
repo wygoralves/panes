@@ -474,9 +474,24 @@ export type ContentBlock =
 
 export interface EngineInfo {
   id: string;
+  /** Engine kind behind this id: codex, claude, or opencode. */
+  kind: string;
   name: string;
   models: EngineModel[];
   capabilities: EngineCapabilities;
+}
+
+/** A configured install or account of a chat provider kind. */
+export interface ChatProviderInstance {
+  id: string;
+  kind: string;
+  displayName: string;
+  binaryPath: string | null;
+  homePath: string | null;
+  launchArgs: string | null;
+  env: Record<string, string>;
+  enabled: boolean;
+  builtIn: boolean;
 }
 
 export interface ChatProviderUsage {

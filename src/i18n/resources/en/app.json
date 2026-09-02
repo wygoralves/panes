@@ -565,6 +565,7 @@
     "nav": {
       "overview": "Overview",
       "appearance": "Appearance",
+      "chat": "Chat",
       "terminal": "Terminal",
       "notifications": "Notifications",
       "usage": "Usage limits",
@@ -579,6 +580,10 @@
       "appearance": {
         "title": "Appearance",
         "description": "Choose how Panes looks and which language it uses."
+      },
+      "chat": {
+        "title": "Chat",
+        "description": "Manage chat providers and composer defaults."
       },
       "terminal": {
         "title": "Terminal",
@@ -635,10 +640,55 @@
       "interfaceDescription": "Theme changes apply to chat, terminal, Git, and editor surfaces.",
       "themeDescription": "Use a fixed theme or follow the operating system.",
       "languageDescription": "Used across navigation, dialogs, and status messages.",
-      "sidebarListModeDescription": "Group threads by project or status.",
+      "sidebarListModeDescription": "Group threads by project or status."
+    },
+    "chat": {
+      "providers": "Providers",
+      "providersDescription": "Each provider is an install or account of Codex or Claude. Add one to run a second account side by side.",
+      "addProvider": "Add provider",
+      "defaultInstall": "Default install from your PATH",
+      "sharedInstall": "Shares the default install and login",
+      "envCount": "{{count}} environment variable",
+      "envCount_other": "{{count}} environment variables",
+      "edit": "Edit provider",
+      "remove": "Remove provider",
+      "removeTitle": "Remove {{name}}?",
+      "removeMessage": "Threads that used this provider keep their history but cannot send new messages until it is added again.",
+      "saveFailed": "Failed to save the provider.",
+      "removeFailed": "Failed to remove the provider.",
+      "removed": "{{name}} removed.",
+      "composer": "Composer",
+      "composerDescription": "Defaults for the message composer.",
       "composerPlanMode": "Plan mode in composer",
       "composerPlanModeDescription": "Show the Plan toggle next to the model picker.",
-      "composerPlanModeFailed": "Failed to update the composer setting."
+      "composerPlanModeFailed": "Failed to update the composer setting.",
+      "dialog": {
+        "addTitle": "Add provider",
+        "editTitle": "Edit {{name}}",
+        "description": "A separate login and config directory lets a second account run alongside the default one.",
+        "builtInDescription": "Overrides for the default install. Leave fields empty to keep the defaults.",
+        "kind": "Kind",
+        "displayName": "Name",
+        "displayNamePlaceholder": "Claude (work)",
+        "id": "Provider id",
+        "idHint": "Used in config and thread history. Lowercase letters, digits and dashes.",
+        "homePath": "Home directory",
+        "homePathHintCodex": "Sets CODEX_HOME so this instance keeps its own login and config.",
+        "homePathHintClaude": "Sets CLAUDE_CONFIG_DIR so this instance keeps its own login and settings.",
+        "binaryPath": "Binary path",
+        "binaryPathHint": "Leave empty to use the {{binary}} found on your PATH.",
+        "launchArgs": "Launch arguments",
+        "launchArgsHint": "Extra flags passed when the provider starts.",
+        "env": "Environment variables",
+        "addVariable": "Add variable",
+        "variableName": "NAME",
+        "variableValue": "value",
+        "enabled": "Enabled",
+        "nameRequired": "Name is required.",
+        "invalidSlug": "Provider id must start with a letter and use only lowercase letters, digits and dashes.",
+        "duplicateId": "A provider with id {{id}} already exists.",
+        "invalidVariable": "{{name}} is not a valid environment variable name."
+      }
     },
     "usage": {
       "providerLimits": "Connected provider limits",

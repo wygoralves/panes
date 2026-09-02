@@ -12090,3 +12090,101 @@ button.chat-context-section:hover {
     transition: none;
   }
 }
+
+/* ── Settings forms (shared text fields for settings dialogs) ── */
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-field-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.settings-field-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.settings-input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-1);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-input:disabled {
+  color: var(--text-3);
+}
+
+.settings-input::placeholder {
+  color: var(--text-3);
+}
+
+.settings-input-group {
+  display: flex;
+  align-items: stretch;
+}
+
+.settings-input-group .settings-input {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.settings-input-prefix {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.settings-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.settings-form-error {
+  font-size: 11.5px;
+  color: var(--danger);
+}
+
+.usp-provider-row-disabled .usp-row-title,
+.usp-provider-row-disabled .usp-row-icon {
+  opacity: 0.55;
+}
+
+.usp-group-footer {
+  display: flex;
+  justify-content: flex-start;
+  padding: 10px 15px;
+  border-top: 1px solid var(--border);
+}
