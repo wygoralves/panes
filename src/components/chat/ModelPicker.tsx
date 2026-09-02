@@ -458,7 +458,11 @@ export function ModelPicker({
     const groups: PickerGroup[] = [];
     for (const engine of engines) {
       const available = health[engine.id]?.available !== false;
-      const visibleModels = engine.models.filter((model) => !model.hidden || legacyModelsVisible);
+      // Legacy models stay out of the list unless the setting is on, but a
+      // search can always reach them.
+      const visibleModels = engine.models.filter(
+        (model) => !model.hidden || legacyModelsVisible || searching,
+      );
       for (const model of visibleModels) {
         if (isFavorite(engine.id, model)) {
           favoriteRows.push({ key: rowKey(engine.id, model.id), engineId: engine.id, model, legacy: model.hidden });
