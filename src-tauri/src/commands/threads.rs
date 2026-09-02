@@ -2669,10 +2669,11 @@ fn normalize_codex_approval_policy(value: Value) -> Result<Value, String> {
         }
         Value::Object(object) => {
             let reject = object
-                .get("reject")
+                .get("granular")
+                .or_else(|| object.get("reject"))
                 .and_then(Value::as_object)
                 .ok_or_else(|| {
-                    "invalid structured approval policy. expected a `reject` object".to_string()
+                    "invalid structured approval policy. expected a `granular` object".to_string()
                 })?;
 
             for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
@@ -3638,7 +3639,10 @@ mod tests {
 
     #[test]
     fn autonomy_preset_steps_down_to_the_rung_the_engine_exposes() {
-        assert_eq!(resolve_autonomy_preset_for_engine("opencode", "auto"), "ask");
+        assert_eq!(
+            resolve_autonomy_preset_for_engine("opencode", "auto"),
+            "ask"
+        );
         assert_eq!(resolve_autonomy_preset_for_engine("codex", "auto"), "auto");
         assert_eq!(resolve_autonomy_preset_for_engine("claude", "auto"), "auto");
 

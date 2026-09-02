@@ -20,7 +20,9 @@ use super::trim_action_output_delta_content;
 // This channel is only a live fan-out for active Codex subscribers. Tokio's
 // broadcast ring retains every slot until it is overwritten, so keeping a large
 // history here can pin already-delivered protocol payloads while Panes is idle.
-const INCOMING_EVENT_BUFFER_CAPACITY: usize = 64;
+// A lagged subscriber tears the transport down and fails the turn, so the ring
+// must also absorb a burst of streamed deltas without dropping any.
+const INCOMING_EVENT_BUFFER_CAPACITY: usize = 256;
 const TRANSPORT_ERROR_LINE_MAX_CHARS: usize = 16 * 1024;
 const TRANSPORT_ERROR_LINE_TRUNCATED_PREFIX: &str = "... [protocol line truncated; showing tail]\n";
 
@@ -386,7 +388,7 @@ mod tests {
     #[test]
     fn incoming_event_buffer_capacity_bounds_idle_retention() {
         assert!(
-            INCOMING_EVENT_BUFFER_CAPACITY <= 64,
+            INCOMING_EVENT_BUFFER_CAPACITY <= 256,
             "Codex incoming events are live fan-out only; raising this can retain large protocol payloads while idle"
         );
     }
