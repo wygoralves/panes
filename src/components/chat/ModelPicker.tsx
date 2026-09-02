@@ -10,12 +10,14 @@ import {
   Image as ImageIcon,
   Paperclip,
   Search,
+  Star,
   Zap,
 } from "lucide-react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
+import { modelFavoriteKey, useModelFavoritesStore } from "../../stores/modelFavoritesStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { EngineHealth, EngineInfo, EngineModel } from "../../types";
 import type { CodexServiceTierValue } from "./CodexConfigPicker";
@@ -260,21 +262,35 @@ function modelMetadataIcon(icon: ModelMetadataChip["icon"]) {
   }
 }
 
-function ModelMetadata({ chips }: { chips: ModelMetadataChip[] }) {
+function ModelDetail({ model, chips }: { model: EngineModel; chips: ModelMetadataChip[] }) {
   return (
-    <span className="mp-model-meta">
-      {chips.map((chip) => (
-        <span
-          key={chip.label}
-          className={`mp-model-meta-chip${chip.icon ? " mp-model-meta-icon" : ""}`}
-          title={chip.title ?? chip.label}
-          role={chip.icon ? "img" : undefined}
-          aria-label={chip.icon ? chip.label : undefined}
-        >
-          {chip.icon ? modelMetadataIcon(chip.icon) : chip.label}
+    <div className="mp-detail" aria-live="polite">
+      <span className="mp-detail-name">{formatModelName(model.displayName)}</span>
+      {chips.some((chip) => chip.icon) ? (
+        <span className="mp-detail-icons">
+          {chips
+            .filter((chip) => chip.icon)
+            .map((chip) => (
+              <span
+                key={chip.label}
+                className="mp-detail-icon"
+                role="img"
+                aria-label={chip.label}
+                title={chip.title ?? chip.label}
+              >
+                {modelMetadataIcon(chip.icon)}
+              </span>
+            ))}
         </span>
-      ))}
-    </span>
+      ) : null}
+      {chips
+        .filter((chip) => !chip.icon)
+        .map((chip) => (
+          <span key={chip.label} className="mp-detail-chip" title={chip.title ?? chip.label}>
+            {chip.label}
+          </span>
+        ))}
+    </div>
   );
 }
 
@@ -365,6 +381,8 @@ export function ModelPicker({
   const wasOpenRef = useRef(false);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
   const ensureEngineHealth = useEngineStore((state) => state.ensureHealth);
+  const favoriteKeys = useModelFavoritesStore((state) => state.favorites);
+  const toggleFavorite = useModelFavoritesStore((state) => state.toggleFavorite);
 
   useEffect(() => {
     if (!open) {
@@ -488,37 +506,47 @@ export function ModelPicker({
     triggerRef.current?.focus();
   }
 
-  // Sections of models. OpenCode groups by upstream provider with the current
-  // provider first; other engines have a single unlabeled group.
-  const modelSections = useMemo(() => {
+  // Sections of models. Favorites for the current engine come first; OpenCode
+  // then groups by upstream provider with the current provider first, and
+  // other engines have a single group.
+  const { favoriteModels, modelSections } = useMemo(() => {
     const trimmedQuery = query.trim();
+    const isFavorite = (model: EngineModel) =>
+      favoriteKeys.includes(modelFavoriteKey(selectedEngineId, model.id));
+    const favoriteModels = filterOpenCodeModelsForQuery(currentModels.filter(isFavorite), trimmedQuery);
+    const rest = (models: EngineModel[]) => models.filter((model) => !isFavorite(model));
     if (isOpenCode) {
       const ordered = [...openCodeProviderGroups].sort((left, right) => {
         if (left.providerId === currentOpenCodeProviderId) return -1;
         if (right.providerId === currentOpenCodeProviderId) return 1;
         return 0;
       });
-      return ordered
+      const modelSections = ordered
         .map((group) => ({
           key: group.providerId,
           label: group.providerLabel,
-          active: filterOpenCodeModelsForQuery(group.activeModels, trimmedQuery),
-          legacy: filterOpenCodeModelsForQuery(group.legacyModels, trimmedQuery),
+          active: filterOpenCodeModelsForQuery(rest(group.activeModels), trimmedQuery),
+          legacy: filterOpenCodeModelsForQuery(rest(group.legacyModels), trimmedQuery),
         }))
         .filter((group) => group.active.length > 0 || group.legacy.length > 0);
+      return { favoriteModels, modelSections };
     }
     const active = filterOpenCodeModelsForQuery(
-      currentModels.filter((model) => !model.hidden),
+      rest(currentModels.filter((model) => !model.hidden)),
       trimmedQuery,
     );
     const legacy = filterOpenCodeModelsForQuery(
-      currentModels.filter((model) => model.hidden),
+      rest(currentModels.filter((model) => model.hidden)),
       trimmedQuery,
     );
-    return active.length > 0 || legacy.length > 0
-      ? [{ key: "all", label: null as string | null, active, legacy }]
-      : [];
-  }, [currentModels, currentOpenCodeProviderId, isOpenCode, openCodeProviderGroups, query]);
+    return {
+      favoriteModels,
+      modelSections:
+        active.length > 0 || legacy.length > 0
+          ? [{ key: "all", label: null as string | null, active, legacy }]
+          : [],
+    };
+  }, [currentModels, currentOpenCodeProviderId, favoriteKeys, isOpenCode, openCodeProviderGroups, query, selectedEngineId]);
 
   const legacyCount = modelSections.reduce((total, section) => total + section.legacy.length, 0);
   const showLegacy = legacyExpanded || query.trim().length > 0;
@@ -533,6 +561,9 @@ export function ModelPicker({
 
   const rows = useMemo<PickerRow[]>(() => {
     const result: PickerRow[] = [];
+    for (const model of favoriteModels) {
+      result.push({ key: `model:${model.id}`, type: "model", engineId: selectedEngineId, model });
+    }
     for (const section of modelSections) {
       const models = showLegacy ? [...section.active, ...section.legacy] : section.active;
       for (const model of models) {
@@ -543,7 +574,7 @@ export function ModelPicker({
       result.push({ key: `effort:${option.reasoningEffort}`, type: "effort", effort: option.reasoningEffort });
     }
     return result;
-  }, [filteredEfforts, modelSections, selectedEngineId, showLegacy]);
+  }, [favoriteModels, filteredEfforts, modelSections, selectedEngineId, showLegacy]);
 
   useEffect(() => {
     if (highlightedKey && !rows.some((row) => row.key === highlightedKey)) {
@@ -613,6 +644,9 @@ export function ModelPicker({
   const triggerEffortLabel =
     selectedEffort && currentEfforts.length > 0 ? effortDisplayLabel(t, selectedEffort) : null;
   const fastMode = isCodex && selectedServiceTier === "fast";
+  const highlightedRow = rows.find((row) => row.key === highlightedKey);
+  const detailModel = highlightedRow?.type === "model" ? highlightedRow.model : currentModel;
+  const detailChips = detailModel ? modelMetadataChips(t, detailModel) : [];
   const showEngineNames = engines.length <= 3 || engines.some((engine) => !isBuiltinKindName(engine));
 
   const trigger = (
@@ -703,8 +737,26 @@ export function ModelPicker({
           </div>
 
           <div className="mp-scroll" ref={listRef}>
-            {modelSections.length === 0 && filteredEfforts.length === 0 ? (
+            {favoriteModels.length === 0 && modelSections.length === 0 && filteredEfforts.length === 0 ? (
               <div className="mp-empty">{t("modelPicker.noModels")}</div>
+            ) : null}
+
+            {favoriteModels.length > 0 ? (
+              <div className="mp-section" key="favorites">
+                <div className="mp-section-title">{t("modelPicker.favorites")}</div>
+                {favoriteModels.map((model) => (
+                  <ModelRow
+                    key={model.id}
+                    model={model}
+                    isSelected={model.id === (selectedModelId ?? currentModel?.id)}
+                    isHighlighted={highlightedKey === `model:${model.id}`}
+                    isFavorite
+                    onSelect={handleModelSelect}
+                    onToggleFavorite={() => toggleFavorite(selectedEngineId, model.id)}
+                    onHover={() => setHighlightedKey(`model:${model.id}`)}
+                  />
+                ))}
+              </div>
             ) : null}
 
             {modelSections.map((section, sectionIndex) => (
@@ -713,17 +765,20 @@ export function ModelPicker({
                   {section.label
                     ? section.label
                     : sectionIndex === 0
-                      ? t("modelPicker.model")
+                      ? favoriteModels.length > 0
+                        ? t("modelPicker.models")
+                        : t("modelPicker.model")
                       : null}
                 </div>
                 {section.active.map((model) => (
                   <ModelRow
                     key={model.id}
                     model={model}
-                    engineId={selectedEngineId}
                     isSelected={model.id === (selectedModelId ?? currentModel?.id)}
                     isHighlighted={highlightedKey === `model:${model.id}`}
+                    isFavorite={false}
                     onSelect={handleModelSelect}
+                    onToggleFavorite={() => toggleFavorite(selectedEngineId, model.id)}
                     onHover={() => setHighlightedKey(`model:${model.id}`)}
                   />
                 ))}
@@ -732,10 +787,11 @@ export function ModelPicker({
                       <ModelRow
                         key={model.id}
                         model={model}
-                        engineId={selectedEngineId}
                         isSelected={model.id === (selectedModelId ?? currentModel?.id)}
                         isHighlighted={highlightedKey === `model:${model.id}`}
+                        isFavorite={false}
                         onSelect={handleModelSelect}
+                        onToggleFavorite={() => toggleFavorite(selectedEngineId, model.id)}
                         onHover={() => setHighlightedKey(`model:${model.id}`)}
                         legacy
                       />
@@ -787,6 +843,10 @@ export function ModelPicker({
             ) : null}
           </div>
 
+          {detailModel && detailChips.length > 0 ? (
+            <ModelDetail model={detailModel} chips={detailChips} />
+          ) : null}
+
           {isCodex ? (
             <label className="mp-footer">
               <Zap size={13} className="mp-footer-icon" aria-hidden="true" />
@@ -822,47 +882,54 @@ function isBuiltinKindName(engine: EngineInfo): boolean {
 
 function ModelRow({
   model,
-  engineId,
   isSelected,
   isHighlighted,
+  isFavorite,
   onSelect,
+  onToggleFavorite,
   onHover,
   legacy = false,
 }: {
   model: EngineModel;
-  engineId: string;
   isSelected: boolean;
   isHighlighted: boolean;
+  isFavorite: boolean;
   onSelect: (modelId: string) => void;
+  onToggleFavorite: () => void;
   onHover: () => void;
   legacy?: boolean;
 }) {
   const { t } = useTranslation("chat");
-  const metadataChips = modelMetadataChips(t, model);
-  const description = shouldShowModelDescription(engineId, model) ? model.description : "";
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={-1}
       data-row-key={`model:${model.id}`}
       className={`mp-row${isSelected ? " mp-row-selected" : ""}${isHighlighted ? " mp-row-highlighted" : ""}${legacy ? " mp-row-legacy" : ""}`}
       onClick={() => onSelect(model.id)}
       onPointerMove={onHover}
-      title={description || undefined}
       aria-pressed={isSelected}
     >
-      <span className="mp-row-copy">
-        <span className="mp-row-label">
-          {formatModelName(model.displayName)}
-          {model.isDefault ? (
-            <span className="mp-row-default">{t("modelPicker.default")}</span>
-          ) : null}
-        </span>
-        {isSelected && metadataChips.length > 0 ? (
-          <ModelMetadata chips={metadataChips} />
+      <span className="mp-row-label">
+        {formatModelName(model.displayName)}
+        {model.isDefault ? (
+          <span className="mp-row-default">{t("modelPicker.default")}</span>
         ) : null}
       </span>
-      {isSelected ? <Check size={13} className="mp-row-check" /> : null}
-    </button>
+      <button
+        type="button"
+        className={`mp-row-star${isFavorite ? " mp-row-star-active" : ""}`}
+        aria-label={isFavorite ? t("modelPicker.removeFavorite") : t("modelPicker.addFavorite")}
+        aria-pressed={isFavorite}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleFavorite();
+        }}
+      >
+        <Star size={12} />
+      </button>
+      {isSelected ? <Check size={13} className="mp-row-check" /> : <span className="mp-row-check-slot" />}
+    </div>
   );
 }
