@@ -1,5 +1,30 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.64.0...vnull) (2026-09-02)
+
+### Features
+
+* **chat:** add a shared working indicator with a pixel loader and live timer ([970f15b](https://github.com/wygoralves/panes/commit/970f15bb0470260580a9753c17e30dfedbc88ad4))
+* **chat:** keep the composer text per thread across switches ([fed5efd](https://github.com/wygoralves/panes/commit/fed5efd375dbed807692621754202d940a051922))
+* **chat:** lift pending approvals into a deck above the composer ([9791074](https://github.com/wygoralves/panes/commit/979107436261fe766945da9d448d18dc9dcb599c))
+* **chat:** move task lists onto the block grammar with a progress ring ([a5a5fb3](https://github.com/wygoralves/panes/commit/a5a5fb312a306485a39f9ca8c2cfd15883a42009))
+* **chat:** open thinking blocks while they stream with a clamped tail and live timer ([5c565d2](https://github.com/wygoralves/panes/commit/5c565d203c2adf3a075bb34fbfb20c03cd9102e1))
+* **chat:** render actions as a verb plus chip with diff stats ([a26e8f8](https://github.com/wygoralves/panes/commit/a26e8f851dc3d4f4c33a866f922b753c7c93d54f))
+* **chat:** show a caret at the streaming write head and highlight open code fences ([475ebdd](https://github.com/wygoralves/panes/commit/475ebdda5552d2b9741ae2183e21fd9b956d1d6f))
+* **sidebar:** group threads as an inbox with card rows, state glyphs, and empty states ([37bba48](https://github.com/wygoralves/panes/commit/37bba48d972c6509acdc305ec5d9c83fb09caac4))
+* **sidebar:** show unsent threads as drafts instead of done ([09afd89](https://github.com/wygoralves/panes/commit/09afd897904d19818ba2ed9f167c9b1866779fc9))
+* **sidebar:** surface typed drafts as rows with discard, hide empty ones ([f5268f0](https://github.com/wygoralves/panes/commit/f5268f0b87e1951df9ed5d0b4decd34645afaee7))
+
+### Bug Fixes
+
+* **chat:** classify diff headers by position so +++ and --- content lines count ([f8e2acd](https://github.com/wygoralves/panes/commit/f8e2acd2801f3344d53267efce176a843a06f8ee))
+* **chat:** hide generic deny and cancel for custom-payload approvals ([20e205e](https://github.com/wygoralves/panes/commit/20e205ed12bb44c91bbbf3230a2e5b020b629a6a))
+* **chat:** keep the model picker inside the viewport on the new thread page ([a7094ed](https://github.com/wygoralves/panes/commit/a7094edc2eaa6d2543cdcadf2188be2da71659ba))
+* **chat:** open the model picker below the composer when the list fits ([fc99308](https://github.com/wygoralves/panes/commit/fc99308acf3db258d7f38dcb2c2bd2d70dcfb96a))
+* **chat:** show a first-turn placeholder on an empty thread ([ce0e102](https://github.com/wygoralves/panes/commit/ce0e102b75b418cfbe4bf6753d19d6e0ef7d4cd3))
+* **db:** count every stored message so interrupted first turns never read as empty threads ([c5cfea4](https://github.com/wygoralves/panes/commit/c5cfea490a0649c121d2082d89409cbc2a63244b))
+* **sidebar:** let the settled shelf collapse even when it is the whole list ([79c0aec](https://github.com/wygoralves/panes/commit/79c0aec78d8b81988a95e88aeb84de23d265ff98))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.9.0...vnull) (2026-09-02)
 
 ### Features
