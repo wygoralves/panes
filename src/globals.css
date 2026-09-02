@@ -10345,13 +10345,6 @@ label.mp-footer-row {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.mp-effort-ends {
-  display: flex;
-  justify-content: space-between;
-  color: var(--text-3);
-  font-size: 11px;
-}
-
 .mp-slider {
   position: relative;
   height: 26px;
@@ -10407,6 +10400,7 @@ label.mp-footer-row {
 }
 
 .mp-slider-holo .mp-slider-fill {
+  width: 100%;
   background: transparent;
 }
 
