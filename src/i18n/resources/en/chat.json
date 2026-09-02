@@ -76,9 +76,7 @@
     "fastMode": "Fast mode",
     "favorites": "Favorites",
     "addFavorite": "Add to favorites",
-    "removeFavorite": "Remove from favorites",
-    "faster": "Faster",
-    "smarter": "Smarter"
+    "removeFavorite": "Remove from favorites"
   },
   "attachments": {
     "codexTitle": "Attach files (images and text)",

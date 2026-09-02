@@ -784,10 +784,6 @@ export function ModelPicker({
                   </div>
                   {currentEfforts.length > 1 ? (
                     <>
-                      <div className="mp-effort-ends" aria-hidden="true">
-                        <span>{t("modelPicker.faster")}</span>
-                        <span>{t("modelPicker.smarter")}</span>
-                      </div>
                       <div
                         className={`mp-slider${holo ? " mp-slider-holo" : ""}${dragging ? " mp-slider-dragging" : ""}`}
                         style={{ "--mp-slider-pos": trackPosition(effortPercent) } as CSSProperties}
