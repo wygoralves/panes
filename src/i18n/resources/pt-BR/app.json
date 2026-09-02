@@ -635,7 +635,10 @@
       "interfaceDescription": "Mudanças de tema se aplicam ao chat, terminal, Git e editor.",
       "themeDescription": "Use um tema fixo ou acompanhe o sistema operacional.",
       "languageDescription": "Usado na navegação, diálogos e mensagens de status.",
-      "sidebarListModeDescription": "Agrupe as threads por projeto ou status."
+      "sidebarListModeDescription": "Agrupe as threads por projeto ou status.",
+      "composerPlanMode": "Modo plano no compositor",
+      "composerPlanModeDescription": "Mostra o botão Plano ao lado do seletor de modelo.",
+      "composerPlanModeFailed": "Não foi possível atualizar a configuração do compositor."
     },
     "usage": {
       "providerLimits": "Limites dos provedores conectados",

@@ -635,7 +635,10 @@
       "interfaceDescription": "Theme changes apply to chat, terminal, Git, and editor surfaces.",
       "themeDescription": "Use a fixed theme or follow the operating system.",
       "languageDescription": "Used across navigation, dialogs, and status messages.",
-      "sidebarListModeDescription": "Group threads by project or status."
+      "sidebarListModeDescription": "Group threads by project or status.",
+      "composerPlanMode": "Plan mode in composer",
+      "composerPlanModeDescription": "Show the Plan toggle next to the model picker.",
+      "composerPlanModeFailed": "Failed to update the composer setting."
     },
     "usage": {
       "providerLimits": "Connected provider limits",

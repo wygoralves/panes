@@ -183,6 +183,8 @@ pub fn run() {
             commands::app::set_app_theme,
             commands::app::get_sidebar_list_mode,
             commands::app::set_sidebar_list_mode,
+            commands::app::get_composer_plan_mode_visible,
+            commands::app::set_composer_plan_mode_visible,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::power::get_power_settings,

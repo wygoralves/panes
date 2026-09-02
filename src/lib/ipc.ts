@@ -80,6 +80,9 @@ export const ipc = {
   getSidebarListMode: () => invoke<SidebarListMode>("get_sidebar_list_mode"),
   setSidebarListMode: (mode: SidebarListMode) =>
     invoke<SidebarListMode>("set_sidebar_list_mode", { mode }),
+  getComposerPlanModeVisible: () => invoke<boolean>("get_composer_plan_mode_visible"),
+  setComposerPlanModeVisible: (visible: boolean) =>
+    invoke<boolean>("set_composer_plan_mode_visible", { visible }),
   getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
   setKeepAwakeEnabled: (enabled: boolean) =>
     invoke<KeepAwakeState>("set_keep_awake_enabled", { enabled }),

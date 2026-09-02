@@ -53,6 +53,7 @@ import { DraftScopePicker } from "./DraftScopePicker";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useChatComposerStore } from "../../stores/chatComposerStore";
+import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
@@ -1667,6 +1668,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isFileDropOver, setIsFileDropOver] = useState(false);
   const [planMode, setPlanMode] = useState(false);
+  const planModeVisible = useComposerSettingsStore((state) => state.planModeVisible);
+  const loadComposerSettings = useComposerSettingsStore((state) => state.load);
+  useEffect(() => {
+    void loadComposerSettings();
+  }, [loadComposerSettings]);
+  useEffect(() => {
+    if (!planModeVisible && planMode) {
+      setPlanMode(false);
+    }
+  }, [planMode, planModeVisible]);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashMenuQuery, setSlashMenuQuery] = useState("");
   const [slashMenuActiveIndex, setSlashMenuActiveIndex] = useState(0);
@@ -6068,7 +6079,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     }
                     if (e.shiftKey && e.key === "Tab") {
                       e.preventDefault();
-                      if (activeWorkspaceId && !isOpenCodeEngine) {
+                      if (activeWorkspaceId && !isOpenCodeEngine && planModeVisible) {
                         setPlanMode((prev) => !prev);
                       }
                     }
@@ -6140,7 +6151,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     onAgentChange={(agent) => void onOpenCodeAgentChange(agent)}
                     disabled={!openCodeCatalogLoaded && openCodeSelectableAgents.length === 0}
                   />
-                ) : (
+                ) : planModeVisible ? (
                   <button
                     type="button"
                     className={`chat-toolbar-btn chat-toolbar-btn-bordered ${activePlanMode ? "chat-toolbar-btn-active" : ""}`}
@@ -6159,7 +6170,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     <ListChecks size={12} />
                     <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
                   </button>
-                )
+                ) : null
               )}
 
               {!showSpecialInputComposer && <div className="chat-toolbar-divider" />}

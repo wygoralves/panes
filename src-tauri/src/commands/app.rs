@@ -215,6 +215,35 @@ pub async fn set_sidebar_list_mode(
 }
 
 #[tauri::command]
+pub async fn get_composer_plan_mode_visible() -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.composer_plan_mode_visible())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_composer_plan_mode_visible(
+    state: State<'_, AppState>,
+    visible: bool,
+) -> Result<bool, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        AppConfig::mutate(|config| {
+            config.general.composer_plan_mode_visible = Some(visible);
+            Ok(visible)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
 pub async fn get_terminal_accelerated_rendering() -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
         let config = AppConfig::load_or_create().map_err(err_to_string)?;

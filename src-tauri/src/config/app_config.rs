@@ -56,6 +56,9 @@ pub struct GeneralConfig {
     /// Sidebar chat-list layout (`projects` | `status`); `None` means `projects`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sidebar_list_mode: Option<String>,
+    /// Whether the chat composer shows the Plan mode toggle; `None` means shown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composer_plan_mode_visible: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +119,7 @@ impl Default for GeneralConfig {
             notification_sound: None,
             default_autonomy_preset: None,
             sidebar_list_mode: None,
+            composer_plan_mode_visible: None,
         }
     }
 }
@@ -154,6 +158,11 @@ impl AppConfig {
             Some("fleet") => "status",
             _ => "projects",
         }
+    }
+
+    /// Whether the chat composer should show the Plan mode toggle.
+    pub fn composer_plan_mode_visible(&self) -> bool {
+        self.general.composer_plan_mode_visible.unwrap_or(true)
     }
 }
 
@@ -598,6 +607,15 @@ max_action_output_chars = 20000
 
         config.general.sidebar_list_mode = Some("kanban".to_string());
         assert_eq!(config.sidebar_list_mode(), "projects");
+    }
+
+    #[test]
+    fn composer_plan_mode_defaults_to_visible() {
+        let mut config = AppConfig::default();
+        assert!(config.composer_plan_mode_visible());
+
+        config.general.composer_plan_mode_visible = Some(false);
+        assert!(!config.composer_plan_mode_visible());
     }
 
     #[test]
