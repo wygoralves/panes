@@ -10387,14 +10387,14 @@ label.mp-footer-row {
   --mp-holo-x: 50%;
   --mp-holo-foil: linear-gradient(
     108deg,
-    #ffb3e6 0%,
-    #ffd9a8 14%,
-    #fff6a8 28%,
-    #b8ffd6 42%,
-    #a8e6ff 56%,
-    #c9b3ff 70%,
-    #ffb3e6 84%,
-    #ffd9a8 100%
+    #c98bb8 0%,
+    #c9a37e 14%,
+    #c2bb7a 28%,
+    #83bf9e 42%,
+    #78a9c4 56%,
+    #9a8ccc 70%,
+    #c98bb8 84%,
+    #c9a37e 100%
   );
   transition: --mp-holo-x 480ms var(--ease-out);
 }
@@ -10430,17 +10430,17 @@ label.mp-footer-row {
 .mp-slider-fill::after {
   background:
     radial-gradient(
-      42% 170% at var(--mp-holo-x) 50%,
-      rgba(255, 255, 255, 0.85),
-      rgba(255, 255, 255, 0.25) 38%,
+      40% 170% at var(--mp-holo-x) 50%,
+      rgba(255, 255, 255, 0.42),
+      rgba(255, 255, 255, 0.12) 38%,
       rgba(255, 255, 255, 0) 70%
     ),
     linear-gradient(
       90deg,
-      rgba(0, 0, 0, 0.42),
-      rgba(0, 0, 0, 0) 32%,
-      rgba(0, 0, 0, 0) 68%,
-      rgba(0, 0, 0, 0.42)
+      rgba(0, 0, 0, 0.5),
+      rgba(0, 0, 0, 0.08) 32%,
+      rgba(0, 0, 0, 0.08) 68%,
+      rgba(0, 0, 0, 0.5)
     );
   mix-blend-mode: overlay;
 }
@@ -10451,7 +10451,7 @@ label.mp-footer-row {
 }
 
 .mp-slider-holo .mp-slider-fill::before {
-  opacity: 0.92;
+  opacity: 0.8;
 }
 
 .mp-slider-holo .mp-slider-fill::after {
@@ -10460,7 +10460,7 @@ label.mp-footer-row {
 
 .mp-slider-holo .mp-slider-stop-filled,
 .mp-slider-holo .mp-slider-stop-active {
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .mp-slider-holo .mp-slider-thumb {
