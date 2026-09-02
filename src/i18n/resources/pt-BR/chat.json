@@ -504,7 +504,8 @@
     "parsing": "Analisando...",
     "parsingDiff": "Analisando diff...",
     "noChanges": "Sem alterações",
-    "thinking": "Raciocínio",
+    "thinking": "Pensando",
+    "thoughtFor": "Pensou por {{seconds}}s",
     "actionStatus": {
       "done": "Concluído",
       "running": "Em andamento",
@@ -586,7 +587,6 @@
       "sendAnswers": "Enviar respostas"
     },
     "thought": "Pensou",
-    "thinkingDuration": "{{seconds}}s",
     "output": "saída",
     "copyOutput": "Copiar saída",
     "expandOutput": "Expandir saída",

@@ -1189,6 +1189,19 @@ button, input, textarea, select {
   min-width: 0;
 }
 
+/* Live thinking: show the last few lines under a top fade instead of the whole stream */
+.msg-thinking-tail {
+  position: relative;
+  max-height: 64px; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+.msg-thinking-tail::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 26px; z-index: 1;
+  background: linear-gradient(180deg, var(--content-bg), transparent);
+  pointer-events: none;
+}
+.msg-thinking-settled { color: var(--text-2); }
+
 .msg-shimmer {
   background: linear-gradient(90deg, var(--text-3) 0%, var(--text-1) 50%, var(--text-3) 100%);
   background-size: 200% 100%;

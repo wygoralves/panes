@@ -513,41 +513,49 @@ function MessageDiffBlock({
 
 function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStreaming: boolean }) {
   const { t } = useTranslation("chat");
-  const [expanded, setExpanded] = useState(false);
+  // Open while the thought streams, collapsed once it settles; a manual toggle wins.
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const expanded = manualExpanded ?? isStreaming;
   const content = String(block.content ?? "");
+  const elapsed = useElapsed(block.startedAt, isStreaming);
 
   const durationSec = block.durationMs != null ? Math.round(block.durationMs / 1000) : null;
-  const thinkingLabel = isStreaming
-    ? `${t("messageBlocks.thinking")}\u2026`
-    : t("messageBlocks.thought");
-  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
+  const settledLabel =
+    durationSec != null && durationSec > 0
+      ? t("messageBlocks.thoughtFor", { seconds: durationSec })
+      : t("messageBlocks.thought");
+  const toggleExpanded = useCallback(() => setManualExpanded((v) => !(v ?? isStreaming)), [isStreaming]);
 
   return (
     <div>
       <MessageBlockHeader
-        icon={<Brain size={11} />}
-        label={<span className={isStreaming ? "msg-shimmer" : undefined}>{thinkingLabel}</span>}
+        icon={isStreaming ? <PixelGrid tone="violet" /> : <Brain size={11} />}
+        label={
+          isStreaming ? (
+            <span className="msg-shimmer">{t("messageBlocks.thinking")}</span>
+          ) : (
+            <span className="msg-thinking-settled">{settledLabel}</span>
+          )
+        }
         tileTone="violet"
         expanded={expanded}
         onToggle={toggleExpanded}
-        meta={
-          !isStreaming && durationSec != null && durationSec > 0
-            ? t("messageBlocks.thinkingDuration", { seconds: durationSec })
-            : undefined
-        }
+        meta={isStreaming && elapsed != null ? formatElapsed(elapsed) : undefined}
       />
       {expanded && (
         <div className="msg-block-body">
-          <MarkdownContent
-            content={content}
-            streaming={isStreaming}
-            className="prose"
-            style={{
-              fontSize: 12.5,
-              color: "var(--text-2)",
-              minWidth: 0,
-            }}
-          />
+          <div className={isStreaming ? "msg-thinking-tail" : undefined}>
+            <MarkdownContent
+              content={content}
+              streaming={isStreaming}
+              className="prose"
+              style={{
+                fontSize: 12.5,
+                color: "var(--text-2)",
+                minWidth: 0,
+              }}
+            />
+          </div>
         </div>
       )}
     </div>

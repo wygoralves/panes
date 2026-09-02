@@ -505,6 +505,7 @@
     "parsingDiff": "Parsing diff...",
     "noChanges": "No changes",
     "thinking": "Thinking",
+    "thoughtFor": "Thought for {{seconds}}s",
     "actionStatus": {
       "done": "Done",
       "running": "Running",
@@ -586,7 +587,6 @@
       "sendAnswers": "Send answers"
     },
     "thought": "Thought",
-    "thinkingDuration": "{{seconds}}s",
     "output": "output",
     "copyOutput": "Copy output",
     "expandOutput": "Expand output",
