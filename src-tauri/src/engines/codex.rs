@@ -547,7 +547,7 @@ impl Engine for CodexEngine {
             request_with_fallback(
                 transport_for_rate_limits.as_ref(),
                 ACCOUNT_RATE_LIMITS_READ_METHODS,
-                serde_json::Value::Null,
+                serde_json::json!({}),
                 Duration::from_secs(5),
             )
             .await
@@ -597,7 +597,22 @@ impl Engine for CodexEngine {
                 }
               }
               _ = cancellation.cancelled() => {
-                turn_task.abort();
+                if !turn_request_done {
+                  // turn/interrupt needs the turn id, which only arrives with the
+                  // turn/start result. Wait briefly for it so a cancel issued
+                  // before that result actually stops the Codex turn.
+                  match tokio::time::timeout(Duration::from_secs(10), &mut turn_task).await {
+                    Ok(Ok(Ok(outcome))) => {
+                      if let Some(turn_id) = extract_turn_id(&outcome.result) {
+                        self.set_active_turn(&thread_id, &turn_id).await;
+                      }
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                      turn_task.abort();
+                    }
+                  }
+                }
                 self
                   .interrupt(&thread_id)
                   .await
@@ -1082,7 +1097,7 @@ impl CodexEngine {
         let snapshot = request_with_fallback(
             transport.as_ref(),
             ACCOUNT_RATE_LIMITS_READ_METHODS,
-            serde_json::Value::Null,
+            serde_json::json!({}),
             Duration::from_secs(5),
         )
         .await?;
@@ -1276,7 +1291,7 @@ impl CodexEngine {
             request_with_fallback(
                 transport_for_rate_limits.as_ref(),
                 ACCOUNT_RATE_LIMITS_READ_METHODS,
-                serde_json::Value::Null,
+                serde_json::json!({}),
                 Duration::from_secs(5),
             )
             .await
@@ -2106,6 +2121,23 @@ impl CodexEngine {
                 cursor = Some(next_cursor);
             } else {
                 break;
+            }
+        }
+
+        // model/list reports the model's built-in default effort, not the
+        // effort the user configured in config.toml. The Codex CLI runs with
+        // the configured value, so seed the catalog default from it.
+        match request_with_fallback(
+            transport.as_ref(),
+            CONFIG_READ_METHODS,
+            serde_json::json!({}),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        {
+            Ok(response) => apply_configured_reasoning_effort(&mut output, &response),
+            Err(error) => {
+                log::debug!("config/read unavailable while seeding model defaults: {error}");
             }
         }
 
@@ -3490,13 +3522,14 @@ async fn build_turn_start_params(
             );
             params.insert(
                 "approvalPolicy".to_string(),
-                runtime.approval_policy.clone(),
+                codex_wire_approval_policy(&runtime.approval_policy),
             );
-            if let Some(permission_profile) = runtime.permission_profile.as_ref() {
-                params.insert("permissionProfile".to_string(), permission_profile.clone());
-            } else {
-                params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
+            if runtime.permission_profile.is_some() {
+                log::warn!(
+                    "ignoring thread permission profile for turn/start: current Codex app-server versions reject `permissionProfile`"
+                );
             }
+            params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
             if let Some(approvals_reviewer) = runtime.approvals_reviewer.as_ref() {
                 params.insert(
                     "approvalsReviewer".to_string(),
@@ -3960,7 +3993,10 @@ fn build_thread_resume_params(
         "cwd".to_string(),
         serde_json::Value::String(cwd.to_string()),
     );
-    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    params.insert(
+        "approvalPolicy".to_string(),
+        codex_wire_approval_policy(approval_policy),
+    );
     insert_permission_or_sandbox(&mut params, permission_profile, sandbox_mode);
     insert_optional_string(&mut params, "approvalsReviewer", approvals_reviewer);
     insert_optional_string(&mut params, "serviceTier", service_tier);
@@ -3988,7 +4024,10 @@ fn build_thread_start_params(
         "cwd".to_string(),
         serde_json::Value::String(cwd.to_string()),
     );
-    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    params.insert(
+        "approvalPolicy".to_string(),
+        codex_wire_approval_policy(approval_policy),
+    );
     insert_permission_or_sandbox(
         &mut params,
         sandbox.permission_profile.as_ref(),
@@ -4033,7 +4072,10 @@ fn build_thread_fork_params(
         "model".to_string(),
         serde_json::Value::String(model.to_string()),
     );
-    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    params.insert(
+        "approvalPolicy".to_string(),
+        codex_wire_approval_policy(approval_policy),
+    );
     insert_permission_or_sandbox(
         &mut params,
         sandbox.permission_profile.as_ref(),
@@ -4049,19 +4091,86 @@ fn build_thread_fork_params(
     serde_json::Value::Object(params)
 }
 
+/// Applies `model_reasoning_effort` from config/read to the catalog model it
+/// targets (the configured model, else the server default), so a fresh thread
+/// starts at the same effort the Codex CLI would use.
+fn apply_configured_reasoning_effort(
+    models: &mut [ModelInfo],
+    config_response: &serde_json::Value,
+) {
+    let config = config_response.get("config").unwrap_or(config_response);
+    let Some(effort) = config
+        .get("model_reasoning_effort")
+        .and_then(serde_json::Value::as_str)
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let configured_model = config
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let target_index = configured_model
+        .and_then(|model_id| models.iter().position(|model| model.id == model_id))
+        .or_else(|| models.iter().position(|model| model.is_default));
+    let Some(index) = target_index else {
+        return;
+    };
+    let model = &mut models[index];
+    let supported = model
+        .supported_reasoning_efforts
+        .iter()
+        .any(|option| option.reasoning_effort == effort);
+    if supported {
+        model.default_reasoning_effort = effort;
+    } else {
+        log::debug!(
+            "configured reasoning effort `{effort}` is not supported by model `{}`; keeping `{}`",
+            model.id,
+            model.default_reasoning_effort
+        );
+    }
+}
+
+/// Codex removed the `on-failure` approval policy in favor of the structured
+/// `granular` form. Panes keeps `on-failure` as its internal name for the
+/// "auto" rung and translates it on the wire so older stored threads keep
+/// working.
+fn codex_wire_approval_policy(value: &serde_json::Value) -> serde_json::Value {
+    match value.as_str() {
+        Some("on-failure") => serde_json::json!({
+            "granular": {
+                "mcp_elicitations": true,
+                "rules": false,
+                "sandbox_approval": true,
+                "request_permissions": false,
+                "skill_approval": false,
+            }
+        }),
+        _ => value.clone(),
+    }
+}
+
 fn insert_permission_or_sandbox(
     params: &mut serde_json::Map<String, serde_json::Value>,
     permission_profile: Option<&serde_json::Value>,
     sandbox_mode: &str,
 ) {
-    if let Some(permission_profile) = permission_profile.filter(|value| !value.is_null()) {
-        params.insert("permissionProfile".to_string(), permission_profile.clone());
-    } else {
-        params.insert(
-            "sandbox".to_string(),
-            serde_json::Value::String(sandbox_mode.to_string()),
+    if permission_profile
+        .filter(|value| !value.is_null())
+        .is_some()
+    {
+        log::warn!(
+            "ignoring thread permission profile: current Codex app-server versions reject `permissionProfile` on thread/start"
         );
     }
+    params.insert(
+        "sandbox".to_string(),
+        serde_json::Value::String(sandbox_mode.to_string()),
+    );
 }
 
 fn insert_optional_string(
@@ -4104,11 +4213,6 @@ fn sandbox_policy_to_json(
         match sandbox.sandbox_mode.as_deref().unwrap_or("workspace-write") {
             "read-only" => serde_json::json!({
               "type": "readOnly",
-              "access": {
-                "type": "restricted",
-                "includePlatformDefaults": true,
-                "readableRoots": sandbox.writable_roots.clone(),
-              },
               "networkAccess": sandbox.allow_network,
             }),
             "danger-full-access" => serde_json::json!({
@@ -4117,11 +4221,6 @@ fn sandbox_policy_to_json(
             _ => serde_json::json!({
               "type": "workspaceWrite",
               "writableRoots": sandbox.writable_roots.clone(),
-              "readOnlyAccess": {
-                "type": "restricted",
-                "includePlatformDefaults": true,
-                "readableRoots": sandbox.writable_roots.clone(),
-              },
               "networkAccess": sandbox.allow_network,
               "excludeTmpdirEnvVar": false,
               "excludeSlashTmp": false,
@@ -5347,7 +5446,7 @@ async fn fetch_collaboration_modes(transport: &CodexTransport) -> MethodCallOutc
     let response = match request_with_fallback(
         transport,
         COLLABORATION_MODE_LIST_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await
@@ -5570,7 +5669,7 @@ async fn fetch_plugin_marketplaces(
     let response = match request_with_fallback(
         transport,
         PLUGIN_LIST_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await
@@ -5650,7 +5749,7 @@ async fn fetch_account_state(
     let response = match request_with_fallback(
         transport,
         ACCOUNT_READ_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await
@@ -5766,7 +5865,7 @@ async fn fetch_config_state(transport: &CodexTransport) -> MethodCallOutcome<Cod
     let response = match request_with_fallback(
         transport,
         CONFIG_READ_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await

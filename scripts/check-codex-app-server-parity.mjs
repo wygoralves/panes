@@ -83,6 +83,39 @@ function assertDefinitionEnum(schemaRoot, file, definitionName, expectedValues) 
   }
 }
 
+function assertNoProperties(schemaRoot, file, properties) {
+  const schema = loadJson(requireFile(schemaRoot, file));
+  for (const property of properties) {
+    assert(
+      !(property in (schema.properties ?? {})),
+      `v2/${file} still exposes removed property ${property}`,
+    );
+  }
+}
+
+function assertGranularApprovalPolicy(schemaRoot, file) {
+  const schema = loadJson(requireFile(schemaRoot, file));
+  const variants = schema.definitions?.AskForApproval?.oneOf;
+  assert(Array.isArray(variants), `v2/${file} is missing AskForApproval variants`);
+  const stringVariant = variants.find((variant) => Array.isArray(variant.enum));
+  assert(stringVariant, `v2/${file} AskForApproval is missing the string variant`);
+  for (const value of ["untrusted", "on-request", "never"]) {
+    assert(stringVariant.enum.includes(value), `v2/${file} AskForApproval is missing ${value}`);
+  }
+  assert(
+    !stringVariant.enum.includes("on-failure"),
+    `v2/${file} AskForApproval still exposes on-failure; the granular translation is stale`,
+  );
+  const granular = variants.find((variant) => variant.properties?.granular);
+  assert(granular, `v2/${file} AskForApproval is missing the granular variant`);
+  for (const required of ["mcp_elicitations", "rules", "sandbox_approval"]) {
+    assert(
+      granular.properties.granular.required?.includes(required),
+      `v2/${file} granular AskForApproval is missing required ${required}`,
+    );
+  }
+}
+
 function assertPermissionProfileShape(schemaRoot, file) {
   const schema = loadJson(requireFile(schemaRoot, file));
   const variants = schema.definitions?.PermissionProfile?.oneOf;
@@ -187,13 +220,14 @@ try {
     "ThreadForkParams.json",
     "TurnStartParams.json",
   ]) {
-    assertProperties(schemaRoot, file, ["permissionProfile", "approvalsReviewer"]);
+    assertProperties(schemaRoot, file, ["approvalsReviewer"]);
     assertDefinitionEnum(schemaRoot, file, "ApprovalsReviewer", [
       "user",
       "auto_review",
       "guardian_subagent",
     ]);
-    assertPermissionProfileShape(schemaRoot, file);
+    assertNoProperties(schemaRoot, file, ["permissionProfile"]);
+    assertGranularApprovalPolicy(schemaRoot, file);
   }
 
   assertRootRequestMethods(schemaRoot, [
@@ -207,7 +241,7 @@ try {
   assertSourceContains("src-tauri/src/engines/codex.rs", [
     "THREAD_TURNS_LIST_METHODS",
     "thread/turns/list",
-    '"permissionProfile"',
+    "codex_wire_approval_policy",
     '"approvalsReviewer"',
     "account/chatgptAuthTokens/refresh",
     "thread/realtime/transcriptdone",

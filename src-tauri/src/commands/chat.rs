@@ -4276,10 +4276,11 @@ fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String>
         }
         Value::Object(object) => {
             let reject = object
-                .get("reject")
+                .get("granular")
+                .or_else(|| object.get("reject"))
                 .and_then(Value::as_object)
                 .ok_or_else(|| {
-                    "invalid structured approval policy. expected a `reject` object".to_string()
+                    "invalid structured approval policy. expected a `granular` object".to_string()
                 })?;
 
             for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {

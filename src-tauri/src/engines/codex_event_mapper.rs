@@ -217,9 +217,9 @@ impl TurnEventMapper {
             }
             "threadrealtimeitemadded" => self.map_realtime_item_added(params),
             "deprecationnotice" => map_deprecation_notice(params).into_iter().collect(),
-            "hookstarted" | "hookcompleted" => map_hook_failure_notice(params)
-                .into_iter()
-                .collect(),
+            "hookstarted" | "hookcompleted" => {
+                map_hook_failure_notice(params).into_iter().collect()
+            }
             "itemstarted" => self.map_item_started(params),
             "itemcompleted" => self.map_item_completed(params),
             "itemcommandexecutionoutputdelta"
@@ -1387,10 +1387,21 @@ fn select_rate_limit_window(
         .collect();
 
     if !with_durations.is_empty() {
-        return with_durations.into_iter().min_by_key(|window| {
-            (window.window_duration_mins.unwrap_or(target_duration_mins) - target_duration_mins)
-                .abs()
-        });
+        // Only accept a window whose duration is in the same order of magnitude
+        // as the target. Otherwise a weekly-only snapshot would be shown as the
+        // five-hour window.
+        let tolerance = target_duration_mins / 2;
+        return with_durations
+            .into_iter()
+            .filter(|window| {
+                (window.window_duration_mins.unwrap_or(target_duration_mins) - target_duration_mins)
+                    .abs()
+                    <= tolerance
+            })
+            .min_by_key(|window| {
+                (window.window_duration_mins.unwrap_or(target_duration_mins) - target_duration_mins)
+                    .abs()
+            });
     }
 
     if prefer_shorter_when_unknown {

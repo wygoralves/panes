@@ -3132,17 +3132,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
     effortSyncKeyRef.current = syncKey;
 
+    // Until the user picks an effort, follow the model default (which the
+    // engine seeds from its own config) instead of Panes' composer fallback.
     const nextEffort = resolveReasoningEffortForModel(
       selectedModel,
-      activeThreadReasoningEffort ?? selectedEffort,
+      activeThreadReasoningEffort ?? (hasExplicitComposerRuntime ? selectedEffort : null),
     );
 
     if (nextEffort && selectedEffort !== nextEffort) {
+      selectedEffortRef.current = nextEffort;
       setSelectedEffort(nextEffort);
     }
   }, [
     activeThread?.id,
     activeThreadReasoningEffort,
+    hasExplicitComposerRuntime,
     selectedModel?.id,
     selectedModel?.defaultReasoningEffort,
     selectedEffort,
