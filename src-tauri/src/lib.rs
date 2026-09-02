@@ -186,6 +186,8 @@ pub fn run() {
             commands::app::set_sidebar_list_mode,
             commands::app::get_composer_plan_mode_visible,
             commands::app::set_composer_plan_mode_visible,
+            commands::app::get_composer_legacy_models_visible,
+            commands::app::set_composer_legacy_models_visible,
             commands::app::get_ui_zoom_percent,
             commands::app::set_ui_zoom_percent,
             commands::power::get_keep_awake_state,

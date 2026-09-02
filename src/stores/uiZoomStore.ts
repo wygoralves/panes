@@ -23,7 +23,7 @@ export const useUiZoomStore = create<UiZoomState>((set, get) => ({
   load: async () => {
     try {
       const saved = clampUiZoomPercent(await ipc.getUiZoomPercent());
-      applyUiZoomPercent(saved);
+      await applyUiZoomPercent(saved);
       set({ percent: saved, loaded: true });
       return saved;
     } catch {
@@ -38,15 +38,15 @@ export const useUiZoomStore = create<UiZoomState>((set, get) => ({
     const next = clampUiZoomPercent(percent);
     if (next === previous) return true;
     set({ percent: next });
-    applyUiZoomPercent(next);
+    void applyUiZoomPercent(next);
     try {
       const saved = clampUiZoomPercent(await ipc.setUiZoomPercent(next));
       set({ percent: saved });
-      applyUiZoomPercent(saved);
+      if (saved !== next) void applyUiZoomPercent(saved);
       return true;
     } catch {
       set({ percent: previous });
-      applyUiZoomPercent(previous);
+      void applyUiZoomPercent(previous);
       return false;
     }
   },

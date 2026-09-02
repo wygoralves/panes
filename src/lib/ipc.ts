@@ -84,6 +84,9 @@ export const ipc = {
   getComposerPlanModeVisible: () => invoke<boolean>("get_composer_plan_mode_visible"),
   setComposerPlanModeVisible: (visible: boolean) =>
     invoke<boolean>("set_composer_plan_mode_visible", { visible }),
+  getComposerLegacyModelsVisible: () => invoke<boolean>("get_composer_legacy_models_visible"),
+  setComposerLegacyModelsVisible: (visible: boolean) =>
+    invoke<boolean>("set_composer_legacy_models_visible", { visible }),
   getUiZoomPercent: () => invoke<number>("get_ui_zoom_percent"),
   setUiZoomPercent: (zoomPercent: number) =>
     invoke<number>("set_ui_zoom_percent", { zoomPercent }),

@@ -705,7 +705,10 @@
       "signInConfirm": "Abrir terminal",
       "signInLater": "Depois",
       "signInNoWorkspace": "Abra um workspace para executar o login em um terminal.",
-      "signInFailed": "Não foi possível abrir um terminal para o login."
+      "signInFailed": "Não foi possível abrir um terminal para o login.",
+      "composerLegacyModels": "Mostrar modelos antigos",
+      "composerLegacyModelsDescription": "Lista modelos antigos no seletor de modelo.",
+      "composerLegacyModelsFailed": "Falha ao salvar a configuração de modelos antigos."
     },
     "usage": {
       "providerLimits": "Limites dos provedores conectados",

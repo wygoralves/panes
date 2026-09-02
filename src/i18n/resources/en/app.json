@@ -705,7 +705,10 @@
       "signInConfirm": "Open terminal",
       "signInLater": "Later",
       "signInNoWorkspace": "Open a workspace to run the sign-in in a terminal.",
-      "signInFailed": "Could not open a terminal for the sign-in."
+      "signInFailed": "Could not open a terminal for the sign-in.",
+      "composerLegacyModels": "Show legacy models",
+      "composerLegacyModelsDescription": "List older models in the model picker.",
+      "composerLegacyModelsFailed": "Failed to save the legacy models setting."
     },
     "usage": {
       "providerLimits": "Connected provider limits",
