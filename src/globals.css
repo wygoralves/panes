@@ -10340,6 +10340,25 @@ label.mp-footer-row {
   animation: mp-value-in var(--duration-normal) var(--ease-out) both;
 }
 
+.mp-effort-value-holo {
+  background: linear-gradient(
+    100deg,
+    var(--brand-mint-400) 0%,
+    var(--brand-blue) 18%,
+    var(--brand-violet) 36%,
+    var(--brand-coral) 54%,
+    var(--brand-amber) 72%,
+    var(--brand-mint-400) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    mp-value-in var(--duration-normal) var(--ease-out) both,
+    mp-holo-drift 14s ease-in-out infinite alternate;
+}
+
 @keyframes mp-value-in {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: translateY(0); }
@@ -10368,11 +10387,10 @@ label.mp-footer-row {
 
 /* Top level: the fill becomes a holographic foil, two soft layers of
    iridescent bands drifting against each other, no sweeps or flashes */
-.mp-slider-fill::before,
-.mp-slider-fill::after {
+.mp-slider-fill::before {
   content: "";
   position: absolute;
-  inset: -40% 0;
+  inset: 0;
   opacity: 0;
   transition: opacity var(--duration-slow) var(--ease-out);
 }
@@ -10390,17 +10408,6 @@ label.mp-footer-row {
   background-size: 220% 100%;
 }
 
-.mp-slider-fill::after {
-  background: repeating-linear-gradient(
-    -60deg,
-    rgba(255, 255, 255, 0) 0 5px,
-    rgba(255, 255, 255, 0.14) 5px 7px,
-    rgba(255, 255, 255, 0) 7px 13px
-  );
-  background-size: 200% 100%;
-  mix-blend-mode: soft-light;
-}
-
 .mp-slider-holo .mp-slider-fill {
   width: 100%;
   background: transparent;
@@ -10411,19 +10418,9 @@ label.mp-footer-row {
   animation: mp-holo-drift 14s ease-in-out infinite alternate;
 }
 
-.mp-slider-holo .mp-slider-fill::after {
-  opacity: 1;
-  animation: mp-holo-grain 22s linear infinite;
-}
-
 @keyframes mp-holo-drift {
   from { background-position: 0% 50%; }
   to { background-position: 100% 50%; }
-}
-
-@keyframes mp-holo-grain {
-  from { background-position: 0 0; }
-  to { background-position: -200% 0; }
 }
 
 .mp-slider-stop {
@@ -10543,7 +10540,7 @@ label.mp-footer-row {
   }
 
   .mp-slider-holo .mp-slider-fill::before,
-  .mp-slider-holo .mp-slider-fill::after {
+  .mp-effort-value-holo {
     animation: none;
   }
 }
