@@ -7,6 +7,7 @@ import { initializeI18n } from "./i18n";
 import { ipc } from "./lib/ipc";
 import { getBrowserLocaleFallback } from "./lib/locale";
 import { useThemeStore } from "./stores/themeStore";
+import { useUiZoomStore } from "./stores/uiZoomStore";
 import "./globals.css";
 
 async function bootstrap() {
@@ -21,6 +22,7 @@ async function bootstrap() {
   // Stamp data-theme before first paint so returning users never see a flash
   // of the wrong theme.
   await useThemeStore.getState().load();
+  await useUiZoomStore.getState().load();
 
   await initializeI18n(locale);
 
