@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Check, FolderGit2, FolderPlus, ListFilter, MoreHorizontal } from "lucide-react";
+import { Archive, Check, FolderGit2, FolderPlus, ListFilter, MoreHorizontal } from "lucide-react";
 import type { SidebarListMode } from "../../lib/sidebarListMode";
 
 interface Props {
   mode: SidebarListMode;
+  showArchived: boolean;
   onNewProject: () => void;
   onChangeMode: (mode: SidebarListMode) => void;
+  onToggleArchived: (show: boolean) => void;
 }
 
-export function SidebarListMenu({ mode, onNewProject, onChangeMode }: Props) {
+export function SidebarListMenu({
+  mode,
+  showArchived,
+  onNewProject,
+  onChangeMode,
+  onToggleArchived,
+}: Props) {
   const { t } = useTranslation("app");
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -129,6 +137,21 @@ export function SidebarListMenu({ mode, onNewProject, onChangeMode }: Props) {
               <ListFilter size={13} />
               <span className="sb-list-menu-label">{t("sidebar.sidebarListMode_status")}</span>
               {mode === "status" && <Check size={12} />}
+            </button>
+            <div className="git-action-menu-divider" />
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={showArchived}
+              className="git-action-menu-item"
+              onClick={() => {
+                closeMenu();
+                onToggleArchived(!showArchived);
+              }}
+            >
+              <Archive size={13} />
+              <span className="sb-list-menu-label">{t("sidebar.showArchived")}</span>
+              {showArchived && <Check size={12} />}
             </button>
           </div>,
           document.body,
