@@ -355,6 +355,8 @@ export function ModelPicker({
   const [dragPercent, setDragPercent] = useState<number | null>(null);
   const [holoHover, setHoloHover] = useState(false);
   const effortRef = useRef<HTMLDivElement>(null);
+  const holoTargetRef = useRef(0.5);
+  const holoFrameRef = useRef<number | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -781,16 +783,28 @@ export function ModelPicker({
                   ref={effortRef}
                   className={`mp-effort${holo ? " mp-effort-holo" : ""}${holoHover ? " mp-effort-holo-hover" : ""}`}
                   onPointerMove={(event) => {
-                    if (!holo || !effortRef.current) return;
+                    if (!holo) return;
                     const rect = event.currentTarget.getBoundingClientRect();
                     const fraction = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0.5;
-                    effortRef.current.style.setProperty(
-                      "--mp-holo-x",
-                      `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`,
-                    );
+                    holoTargetRef.current = Math.min(1, Math.max(0, fraction));
+                    // One style write per frame keeps the highlight smooth
+                    // under a stream of pointer events.
+                    if (holoFrameRef.current === null) {
+                      holoFrameRef.current = window.requestAnimationFrame(() => {
+                        holoFrameRef.current = null;
+                        effortRef.current?.style.setProperty(
+                          "--mp-holo-x",
+                          `${(holoTargetRef.current * 100).toFixed(2)}%`,
+                        );
+                      });
+                    }
                     if (!holoHover) setHoloHover(true);
                   }}
                   onPointerLeave={() => {
+                    if (holoFrameRef.current !== null) {
+                      window.cancelAnimationFrame(holoFrameRef.current);
+                      holoFrameRef.current = null;
+                    }
                     effortRef.current?.style.removeProperty("--mp-holo-x");
                     setHoloHover(false);
                   }}
