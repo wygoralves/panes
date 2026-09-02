@@ -922,14 +922,12 @@ export function SettingsPage() {
                         title={provider.displayName}
                         description={describeChatProvider(provider)}
                       >
-                        {!provider.builtIn ? (
-                          <Toggle
-                            checked={provider.enabled}
-                            disabled={chatProvidersSaving}
-                            label={t("app:settingsPage.chat.dialog.enabled")}
-                            onChange={(checked) => void toggleChatProviderEnabled(provider, checked)}
-                          />
-                        ) : null}
+                        <Toggle
+                          checked={provider.enabled}
+                          disabled={chatProvidersSaving}
+                          label={t("app:settingsPage.chat.dialog.enabled")}
+                          onChange={(checked) => void toggleChatProviderEnabled(provider, checked)}
+                        />
                         {!provider.builtIn ? (
                           <button
                             type="button"
@@ -940,6 +938,7 @@ export function SettingsPage() {
                             {t("app:settingsPage.chat.signIn")}
                           </button>
                         ) : null}
+                        {provider.kind !== "opencode" ? (
                         <button
                           type="button"
                           className="usp-icon-button"
@@ -949,6 +948,7 @@ export function SettingsPage() {
                         >
                           <Pencil size={13} />
                         </button>
+                        ) : null}
                         {!provider.builtIn ? (
                           <button
                             type="button"

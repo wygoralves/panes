@@ -574,6 +574,14 @@ export function ModelPicker({
   const fastMode = isCodex && selectedServiceTier === "fast";
   const compactEfforts = shouldUseCompactEffortLabels(currentEfforts.length);
   const selectedRowKey = currentModel ? rowKey(selectedEngineId, currentModel.id) : null;
+  // When two accounts share a provider kind, the model name alone is
+  // ambiguous, so favorites and the trigger carry the account name.
+  const accountLabelFor = (engineId: string): string | null => {
+    const kind = engineKind(engineId);
+    if (engines.filter((engine) => engineKind(engine.id) === kind).length < 2) return null;
+    return engines.find((engine) => engine.id === engineId)?.name ?? null;
+  };
+  const triggerAccountLabel = accountLabelFor(selectedEngineId);
   const showTriggerAccount = engines.some((engine) => !isBuiltinKindName(engine));
 
   const trigger = (
@@ -594,6 +602,9 @@ export function ModelPicker({
       <span className="mp-trigger-icon">
         {getHarnessIcon(engineKind(selectedEngineId), 12)}
       </span>
+      {triggerAccountLabel ? (
+        <span className="mp-trigger-account">{triggerAccountLabel}</span>
+      ) : null}
       <span className="mp-trigger-label">{triggerModelLabel}</span>
       {triggerEffortLabel ? (
         <span className="mp-trigger-effort">{triggerEffortLabel}</span>
@@ -618,6 +629,7 @@ export function ModelPicker({
       isHighlighted={highlightedKey === row.key}
       isFavorite={favorite}
       showIcon={favorite}
+      accountLabel={favorite ? accountLabelFor(row.engineId) : null}
       unavailable={!groupAvailable}
       onSelect={() => handleModelSelect(row.engineId, row.model.id)}
       onToggleFavorite={() => toggleFavorite(row.engineId, row.model.id)}
@@ -768,6 +780,7 @@ function ModelRow({
   isHighlighted,
   isFavorite,
   showIcon,
+  accountLabel,
   unavailable,
   onSelect,
   onToggleFavorite,
@@ -778,6 +791,7 @@ function ModelRow({
   isHighlighted: boolean;
   isFavorite: boolean;
   showIcon: boolean;
+  accountLabel: string | null;
   unavailable: boolean;
   onSelect: () => void;
   onToggleFavorite: () => void;
@@ -802,6 +816,7 @@ function ModelRow({
       ) : null}
       <span className="mp-row-label">
         {formatModelName(model.displayName)}
+        {accountLabel ? <span className="mp-row-account">{accountLabel}</span> : null}
         {model.isDefault ? (
           <span className="mp-row-default">{t("modelPicker.default")}</span>
         ) : null}

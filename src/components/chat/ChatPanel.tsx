@@ -55,6 +55,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useChatComposerStore } from "../../stores/chatComposerStore";
 import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
+import { useChatProvidersStore } from "../../stores/chatProvidersStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
@@ -1765,8 +1766,24 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const customWindowFrame = usesCustomWindowFrame();
   const useTitlebarSafeInset = !embedded && isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
+  const chatProviders = useChatProvidersStore((s) => s.providers);
+  const loadChatProviders = useChatProvidersStore((s) => s.load);
   const health = useEngineStore((s) => s.health);
   const ensureEngineHealth = useEngineStore((s) => s.ensureHealth);
+  useEffect(() => {
+    void loadChatProviders();
+  }, [loadChatProviders]);
+  // Providers switched off in settings stay out of the picker, except the
+  // one this thread already runs on.
+  const composerEngines = useMemo(
+    () =>
+      engines.filter(
+        (engine) =>
+          engine.id === selectedEngineId ||
+          !chatProviders.some((provider) => provider.id === engine.id && !provider.enabled),
+      ),
+    [chatProviders, engines, selectedEngineId],
+  );
   const onboardingOpen = useOnboardingStore((s) => s.open);
   const onboardingSelectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
   // The health warning is only a heuristic; the backend answer is what
@@ -6181,7 +6198,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               {!showSpecialInputComposer && (
                 <>
                   <ModelPicker
-                    engines={engines}
+                    engines={composerEngines}
                     health={health}
                     selectedEngineId={selectedEngineId}
                     selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
