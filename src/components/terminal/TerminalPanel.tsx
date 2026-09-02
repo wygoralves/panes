@@ -204,6 +204,7 @@ interface SessionTerminal {
   flushStallCount: number;
   flushTimer?: number;
   fitTimer?: number;
+  ptyResizeTimer?: number;
   evictionTimer?: number;
   isAttached: boolean;
   lastAccessedAt: number;
@@ -245,6 +246,12 @@ interface InternalTerminal {
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 36;
 const FIT_DEBOUNCE_MS = 80;
+// A drag resizes the pane many times a second. xterm refits on each step so
+// the view stays correct, but the PTY only hears the final size once it has
+// held for this long: every PTY resize is a SIGWINCH that makes the shell
+// redraw its prompt over lines xterm has already reflowed, and a burst of
+// them leaves prompt fragments behind.
+const PTY_RESIZE_SETTLE_MS = 160;
 const INPUT_FLUSH_DELAY_MS = 4;
 const INPUT_BATCH_CHAR_LIMIT = 4096;
 const INPUT_QUEUE_MAX_CHARS = 256 * 1024;
@@ -910,6 +917,10 @@ function clearSessionTimers(session: SessionTerminal) {
     window.clearTimeout(session.fitTimer);
     session.fitTimer = undefined;
   }
+  if (session.ptyResizeTimer !== undefined) {
+    window.clearTimeout(session.ptyResizeTimer);
+    session.ptyResizeTimer = undefined;
+  }
   if (session.resumeRetryTimer !== undefined) {
     window.clearTimeout(session.resumeRetryTimer);
     session.resumeRetryTimer = undefined;
@@ -997,6 +1008,34 @@ function sendResizeIfNeeded(
       cellHeight * next.rows,
     )
     .catch(() => undefined);
+}
+
+/** Sends the PTY size once it has stopped changing for PTY_RESIZE_SETTLE_MS. */
+function schedulePtyResize(
+  workspaceId: string,
+  sessionId: string,
+  session: SessionTerminal,
+  cols: number,
+  rows: number,
+) {
+  const next = normalizeSize(cols, rows);
+  if (sameSize(session.lastResizeSent, next)) {
+    if (session.ptyResizeTimer !== undefined) {
+      window.clearTimeout(session.ptyResizeTimer);
+      session.ptyResizeTimer = undefined;
+    }
+    return;
+  }
+  if (session.ptyResizeTimer !== undefined) {
+    window.clearTimeout(session.ptyResizeTimer);
+  }
+  const cacheKey = terminalCacheKey(workspaceId, sessionId);
+  session.ptyResizeTimer = window.setTimeout(() => {
+    const latest = cachedTerminals.get(cacheKey);
+    if (!latest) return;
+    latest.ptyResizeTimer = undefined;
+    sendResizeIfNeeded(workspaceId, sessionId, latest, latest.terminal.cols, latest.terminal.rows);
+  }, PTY_RESIZE_SETTLE_MS);
 }
 
 function pullInputBatch(
@@ -1960,7 +1999,7 @@ function runTerminalFit(workspaceId: string, sessionId: string) {
     session.terminal.refresh(0, after.rows - 1);
   }
 
-  sendResizeIfNeeded(workspaceId, sessionId, session, after.cols, after.rows);
+  schedulePtyResize(workspaceId, sessionId, session, after.cols, after.rows);
 
   if (session.outputQueue.length > 0) {
     scheduleOutputFlush(cacheKey, session, 0);
@@ -2033,6 +2072,10 @@ function markWorkspaceTerminalsDetached(workspaceId: string) {
       window.clearTimeout(session.fitTimer);
       session.fitTimer = undefined;
     }
+    if (session.ptyResizeTimer !== undefined) {
+      window.clearTimeout(session.ptyResizeTimer);
+      session.ptyResizeTimer = undefined;
+    }
     if (session.flushTimer !== undefined) {
       window.clearTimeout(session.flushTimer);
       session.flushTimer = undefined;
@@ -2053,6 +2096,10 @@ function markCachedTerminalDetached(cacheKey: string, session: SessionTerminal) 
   if (session.fitTimer !== undefined) {
     window.clearTimeout(session.fitTimer);
     session.fitTimer = undefined;
+  }
+  if (session.ptyResizeTimer !== undefined) {
+    window.clearTimeout(session.ptyResizeTimer);
+    session.ptyResizeTimer = undefined;
   }
   if (session.flushTimer !== undefined) {
     window.clearTimeout(session.flushTimer);
@@ -2294,7 +2341,7 @@ function createCachedTerminal(
     if (!current) {
       return;
     }
-    sendResizeIfNeeded(workspaceId, sessionId, current, cols, rows);
+    schedulePtyResize(workspaceId, sessionId, current, cols, rows);
   });
 
   let disposed = false;
