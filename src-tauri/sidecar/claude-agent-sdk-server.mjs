@@ -1416,6 +1416,27 @@ function formatAssistantMessageError(message) {
         message: "Claude stopped because it reached the maximum output token limit.",
         recoverable: true,
       };
+    case "overloaded":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude is temporarily overloaded. Retry in a moment.",
+        recoverable: true,
+      };
+    case "model_not_found":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "The selected Claude model is not available for this account.",
+        recoverable: false,
+      };
+    case "oauth_org_not_allowed":
+      return {
+        errorType,
+        isAuthError: true,
+        message: "This Claude organization does not allow this sign-in. Switch accounts or sign in again.",
+        recoverable: false,
+      };
     default:
       return {
         errorType,
@@ -1619,7 +1640,11 @@ async function handleQuery(req) {
         normalizedWritableRoots,
       ),
       permissionMode: planMode ? "plan" : "default",
-      allowedTools: toolList,
+      // Never pass `allowedTools` to the SDK: bare tool names there auto-approve
+      // the tool and shadow `canUseTool`, so Panes' approval flow would be
+      // skipped (warning CLAUDE_SDK_CAN_USE_TOOL_SHADOWED). An explicit
+      // allowlist restricts the tool set through `tools` instead.
+      ...(Array.isArray(allowedTools) ? { tools: toolList } : {}),
       env: {
         ...process.env,
         CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
@@ -1633,9 +1658,11 @@ async function handleQuery(req) {
         approvalPolicy,
         allowedTools: toolList,
       }),
-      settingSources: ["project"],
+      // settingSources is intentionally omitted so user, project and local
+      // settings all load, matching the Claude Code CLI default.
       sandbox: {
         enabled: true,
+        failIfUnavailable: false,
         autoAllowBashIfSandboxed: true,
         allowUnsandboxedCommands: false,
         filesystem: {
@@ -1802,7 +1829,14 @@ async function handleQuery(req) {
     });
 
     if (model) options.model = model;
-    if (systemPrompt) options.systemPrompt = systemPrompt;
+    // Without a systemPrompt option the SDK runs with an empty system prompt.
+    // Use the Claude Code preset so results match the Claude Code app, and
+    // append any caller-supplied instructions on top of it.
+    options.systemPrompt = {
+      type: "preset",
+      preset: "claude_code",
+      ...(systemPrompt ? { append: systemPrompt } : {}),
+    };
     if (resume) options.resume = resume;
     if (sessionId) options.sessionId = sessionId;
     if (maxTurns) options.maxTurns = maxTurns;
@@ -1864,6 +1898,22 @@ async function handleQuery(req) {
             ...notice,
           });
         }
+      } else if (message.type === "system" && message.subtype === "api_retry") {
+        const attempt = Number(message.attempt) || 0;
+        const maxRetries = Number(message.max_retries) || 0;
+        const delayMs = Number(message.retry_delay_ms) || 0;
+        emit({
+          id,
+          type: "notice",
+          kind: "claude_status",
+          level: "info",
+          title: "Claude status",
+          message:
+            `Claude API request failed${message.error ? ` (${message.error})` : ""}; ` +
+            `retrying ${attempt}/${maxRetries}` +
+            (delayMs > 0 ? ` in ${Math.round(delayMs / 1000)}s` : "") +
+            ".",
+        });
       } else if (message.type === "result") {
         actualSessionId = message.session_id || actualSessionId;
         setContextSessionId(context, actualSessionId);
