@@ -13,12 +13,13 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::engines::engine_kind;
 use crate::{
     db,
     engines::{
         approval_response_route_for_engine, normalize_approval_response_for_engine,
         trim_action_output_delta_content, validate_engine_sandbox_mode, ApprovalRequestRoute,
-        EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnAttachment,
+        EngineEvent, OutputStream, SandboxPolicy, TaskItem, ThreadScope, TurnAttachment,
         TurnCompletionStatus, TurnInput, TurnInputItem, STREAMED_DIFF_MAX_CHARS,
     },
     models::{
@@ -112,6 +113,14 @@ enum ContentBlock {
         started_at: Option<f64>,
         #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
         duration_ms: Option<f64>,
+    },
+
+    #[serde(rename = "taskList")]
+    TaskList {
+        source: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        explanation: Option<String>,
+        tasks: Vec<TaskItem>,
     },
 
     #[serde(rename = "notice")]
@@ -503,7 +512,7 @@ pub async fn send_message(
         configured_reasoning_effort.clone()
     };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
-    let supports_panes_sandbox = thread.engine_id != "opencode";
+    let supports_panes_sandbox = engine_kind(&thread.engine_id) != "opencode";
     let sandbox_mode = if supports_panes_sandbox {
         Some(
             sandbox_mode_override
@@ -546,12 +555,12 @@ pub async fn send_message(
         .as_ref()
         .map(|repo| repo.trust_level.clone())
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
-    let codex_external_sandbox_active = if thread.engine_id == "codex" {
+    let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
         state.engines.codex_uses_external_sandbox().await
     } else {
         false
     };
-    let permission_profile = if thread.engine_id == "codex" {
+    let permission_profile = if engine_kind(&thread.engine_id) == "codex" {
         thread_permission_profile(thread.engine_metadata.as_ref())
     } else {
         None
@@ -629,14 +638,15 @@ pub async fn send_message(
         }
     };
 
-    let allow_network =
-        if thread.engine_id == "codex" && sandbox_mode.as_deref() == Some("danger-full-access") {
-            true
-        } else {
-            thread_allow_network_override(thread.engine_metadata.as_ref())
-                .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
-        };
-    let personality = if thread.engine_id == "codex"
+    let allow_network = if engine_kind(&thread.engine_id) == "codex"
+        && sandbox_mode.as_deref() == Some("danger-full-access")
+    {
+        true
+    } else {
+        thread_allow_network_override(thread.engine_metadata.as_ref())
+            .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
+    };
+    let personality = if engine_kind(&thread.engine_id) == "codex"
         && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
     {
         thread_personality(thread.engine_metadata.as_ref())
@@ -659,7 +669,7 @@ pub async fn send_message(
             )
         })),
         permission_profile,
-        approvals_reviewer: if thread.engine_id == "codex" {
+        approvals_reviewer: if engine_kind(&thread.engine_id) == "codex" {
             thread_approvals_reviewer(thread.engine_metadata.as_ref())
         } else {
             None
@@ -733,7 +743,7 @@ pub async fn send_message(
                 Some(model_id.as_str()),
                 reasoning_effort.as_deref(),
             )?;
-            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+            db::threads::start_thread_turn(db, &thread_id)?;
             Ok(assistant_message)
         }
     })
@@ -747,6 +757,23 @@ pub async fn send_message(
     };
 
     let state_cloned = state.inner().clone();
+
+    if let Ok(Some(updated_thread)) = run_db(db.clone(), {
+        let thread_id = thread.id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await
+    {
+        let _ = app.emit(
+            "thread-updated",
+            ThreadUpdatedEvent {
+                thread_id: updated_thread.id.clone(),
+                workspace_id: updated_thread.workspace_id.clone(),
+                thread: Some(updated_thread),
+            },
+        );
+    }
+
     let app_handle = app.clone();
     let assistant_message_id = assistant_message.id.clone();
     let turn_input_for_task = turn_input.clone();
@@ -794,7 +821,7 @@ pub async fn start_codex_review(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if source_thread.engine_id != "codex" {
+    if engine_kind(&source_thread.engine_id) != "codex" {
         return Err("Native review is only available for Codex threads.".to_string());
     }
 
@@ -865,7 +892,7 @@ pub async fn start_codex_review(
                 Some(initial_turn_model_id.as_str()),
                 reasoning_effort.as_deref(),
             )?;
-            db::threads::update_thread_status(db, &review_thread.id, ThreadStatusDto::Streaming)?;
+            db::threads::start_thread_turn(db, &review_thread.id)?;
             let updated_thread = db::threads::get_thread(db, &review_thread.id)?
                 .ok_or_else(|| anyhow::anyhow!("review thread not found after setup"))?;
             Ok((updated_thread, assistant_message.id))
@@ -947,7 +974,7 @@ pub async fn steer_message(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "codex" {
+    if engine_kind(&thread.engine_id) != "codex" {
         return Err("Mid-turn steering is only available for Codex threads.".to_string());
     }
 
@@ -2108,6 +2135,7 @@ async fn run_codex_review_turn(
     let (started_tx, started_rx) = oneshot::channel();
 
     let engines = state.engines.clone();
+    let source_engine_id_for_engine = source_thread.engine_id.clone();
     let source_engine_thread_id_for_engine = source_engine_thread_id.clone();
     let target_for_engine = target.clone();
     let delivery_for_engine = delivery.clone();
@@ -2116,6 +2144,7 @@ async fn run_codex_review_turn(
     let engine_task = tokio::spawn(async move {
         engines
             .start_codex_review(
+                &source_engine_id_for_engine,
                 &source_engine_thread_id_for_engine,
                 target_for_engine,
                 Some(delivery_for_engine.as_str()),
@@ -3300,6 +3329,21 @@ fn apply_event_to_blocks(
         EngineEvent::ThinkingDelta { content } => {
             progress.blocks_changed = append_thinking_delta(blocks, content);
         }
+        EngineEvent::TaskListUpdated {
+            source,
+            explanation,
+            tasks,
+        } => {
+            progress.blocks_changed = upsert_task_list_block(
+                blocks,
+                action_index,
+                approval_index,
+                source,
+                explanation.clone(),
+                tasks.clone(),
+            );
+            progress.force_persist = true;
+        }
         EngineEvent::ActionStarted {
             action_id,
             engine_action_id,
@@ -3658,6 +3702,49 @@ fn upsert_notice_block(
     true
 }
 
+fn upsert_task_list_block(
+    blocks: &mut Vec<ContentBlock>,
+    action_index: &mut HashMap<String, usize>,
+    approval_index: &mut HashMap<String, usize>,
+    source: &str,
+    explanation: Option<String>,
+    tasks: Vec<TaskItem>,
+) -> bool {
+    let existing_index = blocks.iter().position(|existing| {
+        matches!(
+            existing,
+            ContentBlock::TaskList {
+                source: existing_source,
+                ..
+            } if existing_source == source
+        )
+    });
+
+    if tasks.is_empty() {
+        if let Some(index) = existing_index {
+            blocks.remove(index);
+            rebuild_block_indexes(blocks, action_index, approval_index);
+            return true;
+        }
+        return false;
+    }
+
+    let block = ContentBlock::TaskList {
+        source: source.to_string(),
+        explanation,
+        tasks,
+    };
+
+    if let Some(index) = existing_index {
+        blocks[index] = block;
+        return true;
+    }
+
+    blocks.insert(0, block);
+    rebuild_block_indexes(blocks, action_index, approval_index);
+    true
+}
+
 fn rebuild_block_indexes(
     blocks: &[ContentBlock],
     action_index: &mut HashMap<String, usize>,
@@ -3850,7 +3937,7 @@ fn approval_policy_for_engine_and_trust_level(
     engine_id: &str,
     trust_level: &TrustLevelDto,
 ) -> &'static str {
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => match trust_level {
             TrustLevelDto::Trusted => "trusted",
             TrustLevelDto::Standard => "standard",
@@ -3876,7 +3963,7 @@ fn thread_approval_policy_override_value(
     engine_id: &str,
     metadata: Option<&Value>,
 ) -> Result<Option<Value>, String> {
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
@@ -4193,10 +4280,11 @@ fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String>
         }
         Value::Object(object) => {
             let reject = object
-                .get("reject")
+                .get("granular")
+                .or_else(|| object.get("reject"))
                 .and_then(Value::as_object)
                 .ok_or_else(|| {
-                    "invalid structured approval policy. expected a `reject` object".to_string()
+                    "invalid structured approval policy. expected a `granular` object".to_string()
                 })?;
 
             for required_key in ["mcp_elicitations", "rules", "sandbox_approval"] {
@@ -4290,6 +4378,7 @@ mod tests {
     fn attachment_validation_catalog(attachment_modalities: Vec<&str>) -> Vec<EngineInfoDto> {
         vec![EngineInfoDto {
             id: "opencode".to_string(),
+            kind: "opencode".to_string(),
             name: "OpenCode".to_string(),
             models: vec![EngineModelDto {
                 id: "opencode/test".to_string(),
@@ -5028,6 +5117,55 @@ mod tests {
     }
 
     #[test]
+    fn task_list_snapshots_replace_by_source_and_clear_when_empty() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let task = TaskItem {
+            id: "codex-plan-0".to_string(),
+            title: "Inspect the UI".to_string(),
+            status: "in_progress".to_string(),
+            active_form: None,
+            description: None,
+            owner: None,
+            blocked_by: Vec::new(),
+        };
+
+        let added = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::TaskListUpdated {
+                source: "codex".to_string(),
+                explanation: None,
+                tasks: vec![task],
+            },
+            1000,
+        );
+        assert!(added.blocks_changed);
+        assert!(added.force_persist);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::TaskList { source, tasks, .. }
+                if source == "codex" && tasks.len() == 1
+        ));
+
+        let cleared = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::TaskListUpdated {
+                source: "codex".to_string(),
+                explanation: None,
+                tasks: Vec::new(),
+            },
+            1000,
+        );
+        assert!(cleared.blocks_changed);
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
     fn approval_response_persistence_tracks_permissions_session_scope() {
         let response = serde_json::json!({
             "permissions": {
@@ -5234,6 +5372,7 @@ mod tests {
     fn resolve_reasoning_effort_from_catalog_falls_back_to_model_default() {
         let engines = vec![EngineInfoDto {
             id: "codex".to_string(),
+            kind: "codex".to_string(),
             name: "Codex".to_string(),
             models: vec![EngineModelDto {
                 id: "gpt-5.1-codex-mini".to_string(),
@@ -5282,6 +5421,7 @@ mod tests {
     fn resolve_reasoning_effort_from_catalog_keeps_supported_effort() {
         let engines = vec![EngineInfoDto {
             id: "codex".to_string(),
+            kind: "codex".to_string(),
             name: "Codex".to_string(),
             models: vec![EngineModelDto {
                 id: "gpt-5.1-codex-mini".to_string(),

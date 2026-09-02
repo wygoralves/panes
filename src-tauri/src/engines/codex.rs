@@ -20,6 +20,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::instance::EngineInstanceSettings;
 use crate::models::{
     CodexAccountLoginCompletedDto, CodexAccountStateDto, CodexAppDto, CodexConfigLayerDto,
     CodexConfigStateDto, CodexConfigWarningDto, CodexExperimentalFeatureDto,
@@ -31,7 +32,7 @@ use crate::models::{
 use crate::{process_utils, runtime_env};
 
 use super::{
-    codex_event_mapper::TurnEventMapper,
+    codex_event_mapper::{ApprovalRequest, TurnEventMapper},
     codex_protocol::{raw_value_to_value, IncomingMessage},
     codex_transport::CodexTransport,
     ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent, EngineThread,
@@ -83,6 +84,9 @@ const MAX_TEXT_ATTACHMENT_CHARS: usize = 40_000;
 const PLAN_MODE_PROMPT_PREFIX: &str = "Plan the solution first. Do not execute commands or edit files until the plan is complete. Reply with a structured plan using one line per step in the exact format `- [pending] Step`.";
 
 pub struct CodexEngine {
+    id: String,
+    name: String,
+    instance: std::sync::Mutex<EngineInstanceSettings>,
     state: Arc<Mutex<CodexState>>,
     transport_spawn_lock: Arc<Mutex<()>>,
     runtime_events: broadcast::Sender<CodexRuntimeEvent>,
@@ -121,12 +125,22 @@ struct TurnStartOutcome {
     native_plan_mode_active: bool,
 }
 
+/// A Codex sub-agent thread spawned (directly or transitively) by a root
+/// thread that Panes owns. Approval requests raised on the child are routed to
+/// the root thread's turn so the user can answer them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SubAgentLink {
+    root_thread_id: String,
+    agent_path: String,
+}
+
 #[derive(Default)]
 struct CodexState {
     transport: Option<Arc<CodexTransport>>,
     initialized: bool,
     approval_requests: HashMap<String, PendingApproval>,
     active_turn_ids: HashMap<String, String>,
+    sub_agent_threads: HashMap<String, SubAgentLink>,
     thread_runtimes: HashMap<String, ThreadRuntime>,
     runtime_model_cache: Option<Vec<ModelInfo>>,
     sandbox_probe_completed: bool,
@@ -137,12 +151,62 @@ struct CodexState {
 
 impl Default for CodexEngine {
     fn default() -> Self {
+        Self::with_instance("codex", "Codex", EngineInstanceSettings::default())
+    }
+}
+
+impl CodexEngine {
+    pub fn with_instance(id: &str, name: &str, instance: EngineInstanceSettings) -> Self {
         let (runtime_events, _) = broadcast::channel(256);
         Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            instance: std::sync::Mutex::new(instance),
             state: Arc::new(Mutex::new(CodexState::default())),
             transport_spawn_lock: Arc::new(Mutex::new(())),
             runtime_events,
         }
+    }
+
+    pub fn instance_settings(&self) -> EngineInstanceSettings {
+        self.instance
+            .lock()
+            .map(|settings| settings.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn instance_settings_slot(&self) -> &std::sync::Mutex<EngineInstanceSettings> {
+        &self.instance
+    }
+
+    /// Replaces the instance runtime settings. A running app-server keeps
+    /// the old environment, so the transport is restarted lazily.
+    pub async fn update_instance_settings(&self, settings: EngineInstanceSettings) {
+        let changed = {
+            let mut current = self
+                .instance
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = *current != settings;
+            *current = settings;
+            changed
+        };
+        if changed {
+            self.invalidate_transport("codex instance settings changed")
+                .await;
+        }
+    }
+
+    async fn resolve_executable(&self) -> CodexExecutableResolution {
+        if let Some(executable) = self.instance_settings().executable_override() {
+            return CodexExecutableResolution {
+                executable: Some(executable),
+                source: "configured",
+                app_path: std::env::var("PATH").ok(),
+                login_shell_executable: None,
+            };
+        }
+        resolve_codex_executable().await
     }
 }
 
@@ -228,11 +292,11 @@ enum TurnCompletionRecoveryMode {
 #[async_trait]
 impl Engine for CodexEngine {
     fn id(&self) -> &str {
-        "codex"
+        &self.id
     }
 
     fn name(&self) -> &str {
-        "Codex"
+        &self.name
     }
 
     fn models(&self) -> Vec<ModelInfo> {
@@ -378,7 +442,7 @@ impl Engine for CodexEngine {
     }
 
     async fn is_available(&self) -> bool {
-        resolve_codex_executable().await.executable.is_some()
+        self.resolve_executable().await.executable.is_some()
     }
 
     async fn start_thread(
@@ -547,7 +611,7 @@ impl Engine for CodexEngine {
             request_with_fallback(
                 transport_for_rate_limits.as_ref(),
                 ACCOUNT_RATE_LIMITS_READ_METHODS,
-                serde_json::Value::Null,
+                serde_json::json!({}),
                 Duration::from_secs(5),
             )
             .await
@@ -597,7 +661,22 @@ impl Engine for CodexEngine {
                 }
               }
               _ = cancellation.cancelled() => {
-                turn_task.abort();
+                if !turn_request_done {
+                  // turn/interrupt needs the turn id, which only arrives with the
+                  // turn/start result. Wait briefly for it so a cancel issued
+                  // before that result actually stops the Codex turn.
+                  match tokio::time::timeout(Duration::from_secs(10), &mut turn_task).await {
+                    Ok(Ok(Ok(outcome))) => {
+                      if let Some(turn_id) = extract_turn_id(&outcome.result) {
+                        self.set_active_turn(&thread_id, &turn_id).await;
+                      }
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                      turn_task.abort();
+                    }
+                  }
+                }
                 self
                   .interrupt(&thread_id)
                   .await
@@ -689,8 +768,20 @@ impl Engine for CodexEngine {
                       return Err(anyhow::anyhow!(error_message));
                     }
 
+                    if normalized_method == "thread/started" {
+                      if let Some((child, parent)) = extract_spawned_thread_link(&params) {
+                        self.record_sub_agent_thread(&child, &parent, None).await;
+                      }
+                    }
                     if !belongs_to_thread(&params, &thread_id) {
                       continue;
+                    }
+                    if let Some((agent_thread_id, agent_path)) =
+                      extract_sub_agent_activity(&params)
+                    {
+                      self
+                        .record_sub_agent_thread(&agent_thread_id, &thread_id, Some(&agent_path))
+                        .await;
                     }
                     if normalized_method == "turn/started" {
                       if let Some(turn_id) = extract_turn_id(&params) {
@@ -747,11 +838,32 @@ impl Engine for CodexEngine {
                       "codex server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
                       params.as_object().map(|o| o.keys().collect::<Vec<_>>())
                     );
-                    if !belongs_to_thread(&params, &thread_id) {
-                      log::warn!("codex server request dropped by belongs_to_thread: method={method}");
-                      continue;
-                    }
-                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                    // Requests raised by a sub-agent thread carry the child's
+                    // thread and turn ids. Route them to the root thread's turn
+                    // instead of dropping them, which would hang the child.
+                    let sub_agent = if belongs_to_thread(&params, &thread_id) {
+                      None
+                    } else {
+                      let child_thread_id = extract_request_thread_id(&params);
+                      let link = match child_thread_id.as_deref() {
+                        Some(child) => self.sub_agent_link(child).await,
+                        None => None,
+                      };
+                      match (child_thread_id, link) {
+                        (Some(child), Some(link)) if link.root_thread_id == thread_id => {
+                          Some((child, link))
+                        }
+                        _ => {
+                          log::warn!(
+                            "codex server request dropped by belongs_to_thread: method={method}"
+                          );
+                          continue;
+                        }
+                      }
+                    };
+                    if sub_agent.is_none()
+                      && !belongs_to_turn(&params, expected_turn_id.as_deref())
+                    {
                       log::warn!("codex server request dropped by belongs_to_turn: method={method}");
                       continue;
                     }
@@ -795,12 +907,16 @@ impl Engine for CodexEngine {
                       continue;
                     }
 
-                    if let Some(approval) =
+                    if let Some(mut approval) =
                         mapper.map_server_request(&id, &raw_id, &method, &params)
                     {
+                      if let Some((child_thread_id, link)) = sub_agent.as_ref() {
+                        decorate_sub_agent_approval(&mut approval, child_thread_id, link);
+                      }
                       log::info!(
-                        "codex approval request mapped: approval_id={}, method={method}",
-                        approval.approval_id
+                        "codex approval request mapped: approval_id={}, method={method}, sub_agent={}",
+                        approval.approval_id,
+                        sub_agent.as_ref().map(|(_, link)| link.agent_path.as_str()).unwrap_or("-")
                       );
                       if turn_request_done && !completion_seen {
                         completion_last_progress_at = Some(Instant::now());
@@ -1082,7 +1198,7 @@ impl CodexEngine {
         let snapshot = request_with_fallback(
             transport.as_ref(),
             ACCOUNT_RATE_LIMITS_READ_METHODS,
-            serde_json::Value::Null,
+            serde_json::json!({}),
             Duration::from_secs(5),
         )
         .await?;
@@ -1276,7 +1392,7 @@ impl CodexEngine {
             request_with_fallback(
                 transport_for_rate_limits.as_ref(),
                 ACCOUNT_RATE_LIMITS_READ_METHODS,
-                serde_json::Value::Null,
+                serde_json::json!({}),
                 Duration::from_secs(5),
             )
             .await
@@ -1689,7 +1805,7 @@ impl CodexEngine {
     }
 
     pub async fn health_report(&self) -> CodexHealthReport {
-        let resolution = resolve_codex_executable().await;
+        let resolution = self.resolve_executable().await;
         let version_result = self.probe_version_from_resolution(&resolution).await;
         let transport_result = if version_result.is_ok() {
             self.probe_transport_ready().await
@@ -2109,6 +2225,23 @@ impl CodexEngine {
             }
         }
 
+        // model/list reports the model's built-in default effort, not the
+        // effort the user configured in config.toml. The Codex CLI runs with
+        // the configured value, so seed the catalog default from it.
+        match request_with_fallback(
+            transport.as_ref(),
+            CONFIG_READ_METHODS,
+            serde_json::json!({}),
+            DEFAULT_TIMEOUT,
+        )
+        .await
+        {
+            Ok(response) => apply_configured_reasoning_effort(&mut output, &response),
+            Err(error) => {
+                log::debug!("config/read unavailable while seeding model defaults: {error}");
+            }
+        }
+
         Ok(output)
     }
 
@@ -2184,7 +2317,8 @@ impl CodexEngine {
     }
 
     async fn spawn_transport_with_backoff(&self) -> anyhow::Result<Arc<CodexTransport>> {
-        let resolution = resolve_codex_executable().await;
+        let resolution = self.resolve_executable().await;
+        let instance = self.instance_settings();
         let codex_executable = resolution.executable.as_ref().ok_or_else(|| {
             anyhow::anyhow!(codex_unavailable_details(&resolution)
                 .unwrap_or_else(|| CODEX_MISSING_DEFAULT_DETAILS.to_string()))
@@ -2194,7 +2328,9 @@ impl CodexEngine {
         let mut last_error: Option<anyhow::Error> = None;
 
         for attempt in 0..TRANSPORT_RESTART_MAX_ATTEMPTS {
-            match CodexTransport::spawn(codex_executable.to_string_lossy().as_ref()).await {
+            match CodexTransport::spawn(codex_executable.to_string_lossy().as_ref(), &instance)
+                .await
+            {
                 Ok(transport) => return Ok(Arc::new(transport)),
                 Err(error) => {
                     log::warn!(
@@ -2438,6 +2574,16 @@ impl CodexEngine {
                                 break;
                             }
                             "thread/started" => {
+                                if let Some((child, parent)) = extract_spawned_thread_link(&params)
+                                {
+                                    let mut state = state.lock().await;
+                                    record_sub_agent_thread(
+                                        &mut state.sub_agent_threads,
+                                        &child,
+                                        &parent,
+                                        None,
+                                    );
+                                }
                                 let thread = params.get("thread").unwrap_or(&params);
                                 if let Some(engine_thread_id) =
                                     extract_any_string(thread, &["id", "threadId", "thread_id"])
@@ -2893,6 +3039,26 @@ impl CodexEngine {
     async fn clear_active_turn(&self, engine_thread_id: &str) {
         let mut state = self.state.lock().await;
         state.active_turn_ids.remove(engine_thread_id);
+    }
+
+    async fn record_sub_agent_thread(
+        &self,
+        child_thread_id: &str,
+        parent_thread_id: &str,
+        agent_path: Option<&str>,
+    ) {
+        let mut state = self.state.lock().await;
+        record_sub_agent_thread(
+            &mut state.sub_agent_threads,
+            child_thread_id,
+            parent_thread_id,
+            agent_path,
+        );
+    }
+
+    async fn sub_agent_link(&self, child_thread_id: &str) -> Option<SubAgentLink> {
+        let state = self.state.lock().await;
+        state.sub_agent_threads.get(child_thread_id).cloned()
     }
 
     async fn active_turn_id(&self, engine_thread_id: &str) -> Option<String> {
@@ -3490,13 +3656,14 @@ async fn build_turn_start_params(
             );
             params.insert(
                 "approvalPolicy".to_string(),
-                runtime.approval_policy.clone(),
+                codex_wire_approval_policy(&runtime.approval_policy),
             );
-            if let Some(permission_profile) = runtime.permission_profile.as_ref() {
-                params.insert("permissionProfile".to_string(), permission_profile.clone());
-            } else {
-                params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
+            if runtime.permission_profile.is_some() {
+                log::warn!(
+                    "ignoring thread permission profile for turn/start: current Codex app-server versions reject `permissionProfile`"
+                );
             }
+            params.insert("sandboxPolicy".to_string(), runtime.sandbox_policy.clone());
             if let Some(approvals_reviewer) = runtime.approvals_reviewer.as_ref() {
                 params.insert(
                     "approvalsReviewer".to_string(),
@@ -3960,7 +4127,10 @@ fn build_thread_resume_params(
         "cwd".to_string(),
         serde_json::Value::String(cwd.to_string()),
     );
-    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    params.insert(
+        "approvalPolicy".to_string(),
+        codex_wire_approval_policy(approval_policy),
+    );
     insert_permission_or_sandbox(&mut params, permission_profile, sandbox_mode);
     insert_optional_string(&mut params, "approvalsReviewer", approvals_reviewer);
     insert_optional_string(&mut params, "serviceTier", service_tier);
@@ -3988,7 +4158,10 @@ fn build_thread_start_params(
         "cwd".to_string(),
         serde_json::Value::String(cwd.to_string()),
     );
-    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    params.insert(
+        "approvalPolicy".to_string(),
+        codex_wire_approval_policy(approval_policy),
+    );
     insert_permission_or_sandbox(
         &mut params,
         sandbox.permission_profile.as_ref(),
@@ -4033,7 +4206,10 @@ fn build_thread_fork_params(
         "model".to_string(),
         serde_json::Value::String(model.to_string()),
     );
-    params.insert("approvalPolicy".to_string(), approval_policy.clone());
+    params.insert(
+        "approvalPolicy".to_string(),
+        codex_wire_approval_policy(approval_policy),
+    );
     insert_permission_or_sandbox(
         &mut params,
         sandbox.permission_profile.as_ref(),
@@ -4049,19 +4225,86 @@ fn build_thread_fork_params(
     serde_json::Value::Object(params)
 }
 
+/// Applies `model_reasoning_effort` from config/read to the catalog model it
+/// targets (the configured model, else the server default), so a fresh thread
+/// starts at the same effort the Codex CLI would use.
+fn apply_configured_reasoning_effort(
+    models: &mut [ModelInfo],
+    config_response: &serde_json::Value,
+) {
+    let config = config_response.get("config").unwrap_or(config_response);
+    let Some(effort) = config
+        .get("model_reasoning_effort")
+        .and_then(serde_json::Value::as_str)
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let configured_model = config
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let target_index = configured_model
+        .and_then(|model_id| models.iter().position(|model| model.id == model_id))
+        .or_else(|| models.iter().position(|model| model.is_default));
+    let Some(index) = target_index else {
+        return;
+    };
+    let model = &mut models[index];
+    let supported = model
+        .supported_reasoning_efforts
+        .iter()
+        .any(|option| option.reasoning_effort == effort);
+    if supported {
+        model.default_reasoning_effort = effort;
+    } else {
+        log::debug!(
+            "configured reasoning effort `{effort}` is not supported by model `{}`; keeping `{}`",
+            model.id,
+            model.default_reasoning_effort
+        );
+    }
+}
+
+/// Codex removed the `on-failure` approval policy in favor of the structured
+/// `granular` form. Panes keeps `on-failure` as its internal name for the
+/// "auto" rung and translates it on the wire so older stored threads keep
+/// working.
+fn codex_wire_approval_policy(value: &serde_json::Value) -> serde_json::Value {
+    match value.as_str() {
+        Some("on-failure") => serde_json::json!({
+            "granular": {
+                "mcp_elicitations": true,
+                "rules": false,
+                "sandbox_approval": true,
+                "request_permissions": false,
+                "skill_approval": false,
+            }
+        }),
+        _ => value.clone(),
+    }
+}
+
 fn insert_permission_or_sandbox(
     params: &mut serde_json::Map<String, serde_json::Value>,
     permission_profile: Option<&serde_json::Value>,
     sandbox_mode: &str,
 ) {
-    if let Some(permission_profile) = permission_profile.filter(|value| !value.is_null()) {
-        params.insert("permissionProfile".to_string(), permission_profile.clone());
-    } else {
-        params.insert(
-            "sandbox".to_string(),
-            serde_json::Value::String(sandbox_mode.to_string()),
+    if permission_profile
+        .filter(|value| !value.is_null())
+        .is_some()
+    {
+        log::warn!(
+            "ignoring thread permission profile: current Codex app-server versions reject `permissionProfile` on thread/start"
         );
     }
+    params.insert(
+        "sandbox".to_string(),
+        serde_json::Value::String(sandbox_mode.to_string()),
+    );
 }
 
 fn insert_optional_string(
@@ -4104,11 +4347,6 @@ fn sandbox_policy_to_json(
         match sandbox.sandbox_mode.as_deref().unwrap_or("workspace-write") {
             "read-only" => serde_json::json!({
               "type": "readOnly",
-              "access": {
-                "type": "restricted",
-                "includePlatformDefaults": true,
-                "readableRoots": sandbox.writable_roots.clone(),
-              },
               "networkAccess": sandbox.allow_network,
             }),
             "danger-full-access" => serde_json::json!({
@@ -4117,11 +4355,6 @@ fn sandbox_policy_to_json(
             _ => serde_json::json!({
               "type": "workspaceWrite",
               "writableRoots": sandbox.writable_roots.clone(),
-              "readOnlyAccess": {
-                "type": "restricted",
-                "includePlatformDefaults": true,
-                "readableRoots": sandbox.writable_roots.clone(),
-              },
               "networkAccess": sandbox.allow_network,
               "excludeTmpdirEnvVar": false,
               "excludeSlashTmp": false,
@@ -5347,7 +5580,7 @@ async fn fetch_collaboration_modes(transport: &CodexTransport) -> MethodCallOutc
     let response = match request_with_fallback(
         transport,
         COLLABORATION_MODE_LIST_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await
@@ -5570,7 +5803,7 @@ async fn fetch_plugin_marketplaces(
     let response = match request_with_fallback(
         transport,
         PLUGIN_LIST_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await
@@ -5650,7 +5883,7 @@ async fn fetch_account_state(
     let response = match request_with_fallback(
         transport,
         ACCOUNT_READ_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await
@@ -5766,7 +5999,7 @@ async fn fetch_config_state(transport: &CodexTransport) -> MethodCallOutcome<Cod
     let response = match request_with_fallback(
         transport,
         CONFIG_READ_METHODS,
-        serde_json::Value::Null,
+        serde_json::json!({}),
         DEFAULT_TIMEOUT,
     )
     .await
@@ -6390,6 +6623,99 @@ fn approval_response_target_error_message(
         ),
         ApprovalResponseTargetError::MissingRequestMetadata => {
             format!("Codex approval `{approval_id}` is no longer active.")
+        }
+    }
+}
+
+fn record_sub_agent_thread(
+    sub_agent_threads: &mut HashMap<String, SubAgentLink>,
+    child_thread_id: &str,
+    parent_thread_id: &str,
+    agent_path: Option<&str>,
+) {
+    if child_thread_id.is_empty() || child_thread_id == parent_thread_id {
+        return;
+    }
+    let (root_thread_id, parent_path) = match sub_agent_threads.get(parent_thread_id) {
+        Some(parent) => (
+            parent.root_thread_id.clone(),
+            Some(parent.agent_path.clone()),
+        ),
+        None => (parent_thread_id.to_string(), None),
+    };
+    let agent_path = agent_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            sub_agent_threads
+                .get(child_thread_id)
+                .map(|existing| existing.agent_path.clone())
+        })
+        .unwrap_or_else(|| match parent_path {
+            Some(parent_path) => format!("{parent_path}/{child_thread_id}"),
+            None => child_thread_id.to_string(),
+        });
+    sub_agent_threads.insert(
+        child_thread_id.to_string(),
+        SubAgentLink {
+            root_thread_id,
+            agent_path,
+        },
+    );
+}
+
+/// `thread/started` for a sub-agent carries the spawning thread in
+/// `thread.parentThreadId`.
+fn extract_spawned_thread_link(params: &serde_json::Value) -> Option<(String, String)> {
+    let thread = params.get("thread").unwrap_or(params);
+    let parent = extract_any_string(thread, &["parentThreadId", "parent_thread_id"])?;
+    let child = extract_any_string(thread, &["id", "threadId", "thread_id"])?;
+    Some((child, parent))
+}
+
+/// Parent-side `subAgentActivity` items name the child thread and its agent
+/// path, which is the label users see in the Codex CLI.
+fn extract_sub_agent_activity(params: &serde_json::Value) -> Option<(String, String)> {
+    let item = params.get("item")?;
+    if extract_any_string(item, &["type"])?.as_str() != "subAgentActivity" {
+        return None;
+    }
+    let agent_thread_id = extract_any_string(item, &["agentThreadId", "agent_thread_id"])?;
+    let agent_path = extract_any_string(item, &["agentPath", "agent_path"])
+        .unwrap_or_else(|| agent_thread_id.clone());
+    Some((agent_thread_id, agent_path))
+}
+
+fn extract_request_thread_id(params: &serde_json::Value) -> Option<String> {
+    extract_any_string(
+        params,
+        &["threadId", "thread_id", "conversationId", "conversation_id"],
+    )
+}
+
+const APPROVAL_DETAIL_SUB_AGENT_PATH_KEY: &str = "_subAgentPath";
+const APPROVAL_DETAIL_SUB_AGENT_THREAD_ID_KEY: &str = "_subAgentThreadId";
+
+fn decorate_sub_agent_approval(
+    approval: &mut ApprovalRequest,
+    child_thread_id: &str,
+    link: &SubAgentLink,
+) {
+    if let EngineEvent::ApprovalRequested {
+        summary, details, ..
+    } = &mut approval.event
+    {
+        *summary = format!("Sub-agent {}: {}", link.agent_path, summary);
+        if let Some(object) = details.as_object_mut() {
+            object.insert(
+                APPROVAL_DETAIL_SUB_AGENT_PATH_KEY.to_string(),
+                serde_json::Value::String(link.agent_path.clone()),
+            );
+            object.insert(
+                APPROVAL_DETAIL_SUB_AGENT_THREAD_ID_KEY.to_string(),
+                serde_json::Value::String(child_thread_id.to_string()),
+            );
         }
     }
 }
@@ -8224,5 +8550,108 @@ mod tests {
         );
         assert_eq!(mapped.layers[0].version, "v2");
         assert!(mapped.approval_policy.is_some());
+    }
+}
+
+#[cfg(test)]
+mod sub_agent_routing_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn records_nested_sub_agents_under_the_root_thread() {
+        let mut threads = HashMap::new();
+        record_sub_agent_thread(&mut threads, "child", "root", Some("explorer"));
+        record_sub_agent_thread(&mut threads, "grandchild", "child", None);
+
+        assert_eq!(
+            threads.get("child"),
+            Some(&SubAgentLink {
+                root_thread_id: "root".to_string(),
+                agent_path: "explorer".to_string(),
+            })
+        );
+        assert_eq!(
+            threads.get("grandchild"),
+            Some(&SubAgentLink {
+                root_thread_id: "root".to_string(),
+                agent_path: "explorer/grandchild".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn activity_items_refine_the_agent_path_without_losing_the_root() {
+        let mut threads = HashMap::new();
+        record_sub_agent_thread(&mut threads, "child", "root", None);
+        record_sub_agent_thread(&mut threads, "child", "root", Some("reviewer"));
+        assert_eq!(threads["child"].agent_path, "reviewer");
+        assert_eq!(threads["child"].root_thread_id, "root");
+    }
+
+    #[test]
+    fn extracts_child_links_from_thread_started_and_activity_items() {
+        let started = json!({ "thread": { "id": "child", "parentThreadId": "root" } });
+        assert_eq!(
+            extract_spawned_thread_link(&started),
+            Some(("child".to_string(), "root".to_string()))
+        );
+        assert_eq!(
+            extract_spawned_thread_link(&json!({ "thread": { "id": "root" } })),
+            None
+        );
+
+        let activity = json!({
+            "threadId": "root",
+            "item": { "type": "subAgentActivity", "agentThreadId": "child", "agentPath": "explorer", "kind": "started" }
+        });
+        assert_eq!(
+            extract_sub_agent_activity(&activity),
+            Some(("child".to_string(), "explorer".to_string()))
+        );
+        assert_eq!(
+            extract_sub_agent_activity(&json!({ "item": { "type": "commandExecution" } })),
+            None
+        );
+    }
+
+    #[test]
+    fn sub_agent_approvals_are_labelled_with_the_agent_path() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "child",
+            "turnId": "child-turn",
+            "approvalId": "approval-1",
+            "command": "rm -rf build",
+        });
+        let mut approval = mapper
+            .map_server_request(
+                "request-1",
+                &json!(7),
+                "item/commandExecution/requestApproval",
+                &params,
+            )
+            .expect("approval should map");
+        let link = SubAgentLink {
+            root_thread_id: "root".to_string(),
+            agent_path: "explorer".to_string(),
+        };
+        decorate_sub_agent_approval(&mut approval, "child", &link);
+
+        let EngineEvent::ApprovalRequested {
+            summary, details, ..
+        } = approval.event
+        else {
+            panic!("expected approval event");
+        };
+        assert_eq!(summary, "Sub-agent explorer: rm -rf build");
+        assert_eq!(
+            details.get(APPROVAL_DETAIL_SUB_AGENT_PATH_KEY),
+            Some(&json!("explorer"))
+        );
+        assert_eq!(
+            details.get(APPROVAL_DETAIL_SUB_AGENT_THREAD_ID_KEY),
+            Some(&json!("child"))
+        );
     }
 }

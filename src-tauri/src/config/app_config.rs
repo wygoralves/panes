@@ -20,6 +20,15 @@ pub fn clamp_terminal_font_size(font_size: u32) -> u32 {
     font_size.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE)
 }
 
+pub const MIN_UI_ZOOM_PERCENT: u32 = 70;
+pub const MAX_UI_ZOOM_PERCENT: u32 = 150;
+pub const DEFAULT_UI_ZOOM_PERCENT: u32 = 100;
+
+/// Clamp a requested interface zoom percentage into the supported range.
+pub fn clamp_ui_zoom_percent(zoom_percent: u32) -> u32 {
+    zoom_percent.clamp(MIN_UI_ZOOM_PERCENT, MAX_UI_ZOOM_PERCENT)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -29,6 +38,111 @@ pub struct AppConfig {
     pub power: PowerConfig,
     #[serde(skip_serializing_if = "HarnessesConfig::is_empty")]
     pub harnesses: HarnessesConfig,
+    /// Extra chat provider instances (several installs or accounts of the
+    /// same engine kind), plus runtime overrides for the built-in ones.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub chat_providers: Vec<ChatProviderInstanceConfig>,
+}
+
+pub const CHAT_PROVIDER_KINDS: &[&str] = &["codex", "claude"];
+const CHAT_PROVIDER_SLUG_MAX_CHARS: usize = 48;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ChatProviderInstanceConfig {
+    /// Engine id. Built-in kinds use their own name (`codex`, `claude`);
+    /// extra instances are `<kind>_<slug>`.
+    pub id: String,
+    pub kind: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary_path: Option<String>,
+    /// `CODEX_HOME` or `CLAUDE_CONFIG_DIR` for this instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_args: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    pub enabled: bool,
+}
+
+impl Default for ChatProviderInstanceConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: String::new(),
+            display_name: String::new(),
+            binary_path: None,
+            home_path: None,
+            launch_args: None,
+            env: BTreeMap::new(),
+            enabled: true,
+        }
+    }
+}
+
+impl ChatProviderInstanceConfig {
+    pub fn is_builtin(&self) -> bool {
+        self.id == self.kind
+    }
+
+    /// Validates the entry shape: known kind, well-formed id for the kind,
+    /// and a display name.
+    pub fn validate(&self) -> Result<(), String> {
+        // OpenCode has no extra instances, but its built-in row can still be
+        // switched off in settings.
+        let builtin_only_kind = self.kind == "opencode" && self.id == self.kind;
+        if !CHAT_PROVIDER_KINDS.contains(&self.kind.as_str()) && !builtin_only_kind {
+            return Err(format!(
+                "unsupported chat provider kind `{}`. expected one of: {}",
+                self.kind,
+                CHAT_PROVIDER_KINDS.join(", ")
+            ));
+        }
+        if self.id != self.kind {
+            let Some(slug) = self.id.strip_prefix(&format!("{}_", self.kind)) else {
+                return Err(format!(
+                    "chat provider id `{}` must start with `{}_`",
+                    self.id, self.kind
+                ));
+            };
+            validate_chat_provider_slug(slug)?;
+        }
+        if self.display_name.trim().is_empty() {
+            return Err("chat provider display name is required".to_string());
+        }
+        for key in self.env.keys() {
+            let valid = !key.is_empty()
+                && key
+                    .chars()
+                    .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                && !key.chars().next().is_some_and(|ch| ch.is_ascii_digit());
+            if !valid {
+                return Err(format!("invalid environment variable name `{key}`"));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_chat_provider_slug(slug: &str) -> Result<(), String> {
+    let valid = !slug.is_empty()
+        && slug.len() <= CHAT_PROVIDER_SLUG_MAX_CHARS
+        && slug
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+        && slug
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_lowercase());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid chat provider id suffix `{slug}`. use lowercase letters, digits and dashes, starting with a letter"
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +167,15 @@ pub struct GeneralConfig {
     /// (`read-only` | `ask` | `auto` | `full`); `None` follows repo trust.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_autonomy_preset: Option<String>,
+    /// Sidebar chat-list layout (`projects` | `status`); `None` means `projects`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sidebar_list_mode: Option<String>,
+    /// Whether the chat composer shows the Plan mode toggle; `None` means shown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composer_plan_mode_visible: Option<bool>,
+    /// Whether the model picker lists legacy models; `None` means hidden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composer_legacy_models_visible: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +184,9 @@ pub struct UiConfig {
     pub sidebar_width: u32,
     pub git_panel_width: u32,
     pub font_size: u32,
+    /// Interface zoom in percent; `None` means 100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_percent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,11 +238,16 @@ impl Default for GeneralConfig {
             terminal_notifications: None,
             notification_sound: None,
             default_autonomy_preset: None,
+            sidebar_list_mode: None,
+            composer_plan_mode_visible: None,
+            composer_legacy_models_visible: None,
         }
     }
 }
 
 pub const VALID_THEME_PREFERENCES: [&str; 3] = ["dark", "light", "system"];
+
+pub const VALID_SIDEBAR_LIST_MODES: [&str; 2] = ["projects", "status"];
 
 impl AppConfig {
     /// Resolve the configured notification sound name.
@@ -139,6 +270,31 @@ impl AppConfig {
             "dark"
         }
     }
+
+    /// Resolve the configured sidebar chat-list mode, falling back to
+    /// `"projects"` for missing or unrecognized values.
+    pub fn sidebar_list_mode(&self) -> &str {
+        match self.general.sidebar_list_mode.as_deref() {
+            Some(mode) if VALID_SIDEBAR_LIST_MODES.contains(&mode) => mode,
+            Some("fleet") => "status",
+            _ => "projects",
+        }
+    }
+
+    /// Whether the chat composer should show the Plan mode toggle.
+    pub fn composer_plan_mode_visible(&self) -> bool {
+        self.general.composer_plan_mode_visible.unwrap_or(true)
+    }
+
+    /// Whether the model picker should list legacy models.
+    pub fn composer_legacy_models_visible(&self) -> bool {
+        self.general.composer_legacy_models_visible.unwrap_or(false)
+    }
+
+    /// Interface zoom percentage, clamped into the supported range.
+    pub fn ui_zoom_percent(&self) -> u32 {
+        clamp_ui_zoom_percent(self.ui.zoom_percent.unwrap_or(DEFAULT_UI_ZOOM_PERCENT))
+    }
 }
 
 impl Default for UiConfig {
@@ -147,6 +303,7 @@ impl Default for UiConfig {
             sidebar_width: 260,
             git_panel_width: 380,
             font_size: 13,
+            zoom_percent: None,
         }
     }
 }
@@ -182,6 +339,7 @@ impl Default for AppConfig {
             debug: DebugConfig::default(),
             power: PowerConfig::default(),
             harnesses: HarnessesConfig::default(),
+            chat_providers: Vec::new(),
         }
     }
 }
@@ -214,6 +372,18 @@ impl AppConfig {
             .get(harness_id)
             .map(|args| args.trim())
             .filter(|args| !args.is_empty())
+    }
+
+    /// Configured chat provider entries that pass validation, with duplicate
+    /// ids dropped (first wins).
+    pub fn chat_providers(&self) -> Vec<ChatProviderInstanceConfig> {
+        let mut seen = std::collections::BTreeSet::new();
+        self.chat_providers
+            .iter()
+            .filter(|entry| entry.validate().is_ok())
+            .filter(|entry| seen.insert(entry.id.clone()))
+            .cloned()
+            .collect()
     }
 
     pub fn default_autonomy_preset(&self) -> Option<&str> {
@@ -341,7 +511,9 @@ fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io:
 mod tests {
     use std::fs;
 
-    use super::AppConfig;
+    use std::collections::BTreeMap;
+
+    use super::{AppConfig, ChatProviderInstanceConfig};
     use uuid::Uuid;
 
     const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
@@ -561,6 +733,105 @@ max_action_output_chars = 20000
         config.general.theme = "solarized".to_string();
 
         assert_eq!(config.theme_preference(), "dark");
+    }
+
+    #[test]
+    fn sidebar_list_mode_defaults_to_projects() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.sidebar_list_mode(), "projects");
+    }
+
+    #[test]
+    fn sidebar_list_mode_accepts_status_migrates_fleet_and_rejects_unknown_values() {
+        let mut config = AppConfig::default();
+
+        config.general.sidebar_list_mode = Some("status".to_string());
+        assert_eq!(config.sidebar_list_mode(), "status");
+
+        config.general.sidebar_list_mode = Some("fleet".to_string());
+        assert_eq!(config.sidebar_list_mode(), "status");
+
+        config.general.sidebar_list_mode = Some("kanban".to_string());
+        assert_eq!(config.sidebar_list_mode(), "projects");
+    }
+
+    #[test]
+    fn chat_provider_entries_validate_ids_kinds_and_env_names() {
+        let mut entry = ChatProviderInstanceConfig {
+            id: "claude_work".to_string(),
+            kind: "claude".to_string(),
+            display_name: "Claude (work)".to_string(),
+            ..Default::default()
+        };
+        assert!(entry.validate().is_ok());
+        assert!(!entry.is_builtin());
+
+        entry.id = "codex_work".to_string();
+        assert!(entry.validate().is_err());
+
+        entry.id = "claude_Work".to_string();
+        assert!(entry.validate().is_err());
+
+        entry.id = "claude".to_string();
+        assert!(entry.validate().is_ok());
+        assert!(entry.is_builtin());
+
+        entry.env.insert("1BAD".to_string(), "x".to_string());
+        assert!(entry.validate().is_err());
+    }
+
+    #[test]
+    fn chat_providers_roundtrip_through_toml_and_dedupe() {
+        let mut config = AppConfig::default();
+        config.chat_providers.push(ChatProviderInstanceConfig {
+            id: "codex_work".to_string(),
+            kind: "codex".to_string(),
+            display_name: "Codex (work)".to_string(),
+            home_path: Some("~/.codex-work".to_string()),
+            env: BTreeMap::from([("OPENAI_BASE_URL".to_string(), "http://x".to_string())]),
+            ..Default::default()
+        });
+        config.chat_providers.push(ChatProviderInstanceConfig {
+            id: "codex_work".to_string(),
+            kind: "codex".to_string(),
+            display_name: "Duplicate".to_string(),
+            ..Default::default()
+        });
+        let raw = toml::to_string_pretty(&config).expect("serialize");
+        assert!(raw.contains("[[chat_providers]]"));
+        let reloaded: AppConfig = toml::from_str(&raw).expect("parse");
+        let providers = reloaded.chat_providers();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].display_name, "Codex (work)");
+        assert_eq!(
+            providers[0].env.get("OPENAI_BASE_URL").map(String::as_str),
+            Some("http://x")
+        );
+    }
+
+    #[test]
+    fn ui_zoom_defaults_to_full_size_and_clamps() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.ui_zoom_percent(), 100);
+
+        config.ui.zoom_percent = Some(125);
+        assert_eq!(config.ui_zoom_percent(), 125);
+
+        config.ui.zoom_percent = Some(10);
+        assert_eq!(config.ui_zoom_percent(), 70);
+
+        config.ui.zoom_percent = Some(900);
+        assert_eq!(config.ui_zoom_percent(), 150);
+    }
+
+    #[test]
+    fn composer_plan_mode_defaults_to_visible() {
+        let mut config = AppConfig::default();
+        assert!(config.composer_plan_mode_visible());
+
+        config.general.composer_plan_mode_visible = Some(false);
+        assert!(!config.composer_plan_mode_visible());
     }
 
     #[test]

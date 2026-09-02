@@ -2,9 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { normalizeDependencyReport } from "./dependencies";
 import type { AppLocale } from "./locale";
+import type { SidebarListMode } from "./sidebarListMode";
 import type { ThemePreference } from "./theme";
 import type {
   ApprovalResponse,
+  ChatProviderInstance,
   ActionOutputPayload,
   AttachmentPreview,
   ChatAttachment,
@@ -76,6 +78,18 @@ export const ipc = {
   setAppLocale: (locale: AppLocale) => invoke<AppLocale>("set_app_locale", { locale }),
   getAppTheme: () => invoke<ThemePreference>("get_app_theme"),
   setAppTheme: (theme: ThemePreference) => invoke<ThemePreference>("set_app_theme", { theme }),
+  getSidebarListMode: () => invoke<SidebarListMode>("get_sidebar_list_mode"),
+  setSidebarListMode: (mode: SidebarListMode) =>
+    invoke<SidebarListMode>("set_sidebar_list_mode", { mode }),
+  getComposerPlanModeVisible: () => invoke<boolean>("get_composer_plan_mode_visible"),
+  setComposerPlanModeVisible: (visible: boolean) =>
+    invoke<boolean>("set_composer_plan_mode_visible", { visible }),
+  getComposerLegacyModelsVisible: () => invoke<boolean>("get_composer_legacy_models_visible"),
+  setComposerLegacyModelsVisible: (visible: boolean) =>
+    invoke<boolean>("set_composer_legacy_models_visible", { visible }),
+  getUiZoomPercent: () => invoke<number>("get_ui_zoom_percent"),
+  setUiZoomPercent: (zoomPercent: number) =>
+    invoke<number>("set_ui_zoom_percent", { zoomPercent }),
   getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
   setKeepAwakeEnabled: (enabled: boolean) =>
     invoke<KeepAwakeState>("set_keep_awake_enabled", { enabled }),
@@ -330,6 +344,12 @@ export const ipc = {
       agent: patch.agent ?? null,
     }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
+  // `restore` carries the stamps the row held before the action, so an undo
+  // puts the thread back exactly instead of stamping the current time.
+  settleThread: (threadId: string, restore?: { settledAt: string | null }) =>
+    invoke<Thread>("settle_thread", { threadId, restore: restore ?? null }),
+  unsettleThread: (threadId: string, restore?: { unsettledAt: string | null }) =>
+    invoke<Thread>("unsettle_thread", { threadId, restore: restore ?? null }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
   syncThreadFromEngine: (threadId: string) =>
     invoke<Thread>("sync_thread_from_engine", { threadId }),
@@ -341,6 +361,11 @@ export const ipc = {
     invoke<Thread>("compact_codex_thread", { threadId }),
   deleteThread: (threadId: string) => invoke<void>("delete_thread", { threadId }),
   listEngines: () => invoke<EngineInfo[]>("list_engines"),
+  listChatProviders: () => invoke<ChatProviderInstance[]>("list_chat_providers"),
+  saveChatProvider: (provider: ChatProviderInstance) =>
+    invoke<ChatProviderInstance[]>("save_chat_provider", { provider }),
+  removeChatProvider: (providerId: string) =>
+    invoke<ChatProviderInstance[]>("remove_chat_provider", { providerId }),
   getChatProviderUsage: () =>
     invoke<ChatProviderUsage[]>("get_chat_provider_usage"),
   engineHealth: (engineId: string) => invoke<EngineHealth>("engine_health", { engineId }),

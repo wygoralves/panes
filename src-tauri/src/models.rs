@@ -72,6 +72,9 @@ pub struct ThreadDto {
     pub total_tokens: i64,
     pub created_at: String,
     pub last_activity_at: String,
+    pub settled_at: Option<String>,
+    pub unsettled_at: Option<String>,
+    pub turn_started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,9 +251,24 @@ pub struct SearchResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct EngineInfoDto {
     pub id: String,
+    pub kind: String,
     pub name: String,
     pub models: Vec<EngineModelDto>,
     pub capabilities: EngineCapabilitiesDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatProviderInstanceDto {
+    pub id: String,
+    pub kind: String,
+    pub display_name: String,
+    pub binary_path: Option<String>,
+    pub home_path: Option<String>,
+    pub launch_args: Option<String>,
+    pub env: std::collections::BTreeMap<String, String>,
+    pub enabled: bool,
+    pub built_in: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

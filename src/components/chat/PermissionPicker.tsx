@@ -10,6 +10,7 @@ import {
   Shield,
   SquareTerminal,
   Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -68,21 +69,18 @@ interface PermissionPickerProps {
   networkNotice?: string | null;
 }
 
-const PRESET_ICONS: Record<AutonomyPresetId, ReactNode> = {
-  inherit: <Shield size={13} />,
-  "read-only": <Eye size={13} />,
-  ask: <Shield size={13} />,
-  auto: <FolderOpen size={13} />,
-  full: <Zap size={13} />,
+const PRESET_ICON_COMPONENTS: Record<AutonomyPresetId, LucideIcon> = {
+  inherit: Shield,
+  "read-only": Eye,
+  ask: Shield,
+  auto: FolderOpen,
+  full: Zap,
 };
 
-const PRESET_TRIGGER_ICONS: Record<AutonomyPresetId, ReactNode> = {
-  inherit: <Shield size={12} />,
-  "read-only": <Eye size={12} />,
-  ask: <Shield size={12} />,
-  auto: <FolderOpen size={12} />,
-  full: <Zap size={12} />,
-};
+function presetIcon(preset: AutonomyPresetId, size: number): ReactNode {
+  const Icon = PRESET_ICON_COMPONENTS[preset];
+  return <Icon size={size} />;
+}
 
 function findOption<T extends string>(
   options: PermissionOption<T>[] | undefined,
@@ -366,7 +364,7 @@ export function PermissionPicker({
                 className={`pp-option pp-preset-option${selected ? " pp-option-selected" : ""}`}
                 onClick={() => onPresetChange?.(preset)}
               >
-                <span className="pp-preset-icon">{PRESET_ICONS[preset]}</span>
+                <span className="pp-preset-icon">{presetIcon(preset, 13)}</span>
                 <div className="pp-option-copy">
                   <span className="pp-option-label">{presetLabel(preset)}</span>
                   <span className="pp-option-description">
@@ -525,7 +523,7 @@ export function PermissionPicker({
       >
         <span className="pp-trigger-icon">
           {presetsAvailable && presetValue != null
-            ? PRESET_TRIGGER_ICONS[presetValue]
+            ? presetIcon(presetValue, 12)
             : <Shield size={12} />}
         </span>
         <span className="pp-trigger-label">{triggerLabel}</span>

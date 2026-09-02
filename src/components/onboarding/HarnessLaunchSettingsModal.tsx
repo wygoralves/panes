@@ -20,9 +20,29 @@ interface Props {
 export function HarnessLaunchSettingsModal({ harness, onClose }: Props) {
   const { t } = useTranslation("app");
   const savedArgs = useHarnessStore((s) => s.launchArgs[harness.id] ?? "");
+  const launchArgsLoaded = useHarnessStore((s) => s.launchArgsLoaded);
+  const loadLaunchArgs = useHarnessStore((s) => s.loadLaunchArgs);
   const saveLaunchArgs = useHarnessStore((s) => s.saveLaunchArgs);
   const [value, setValue] = useState(savedArgs);
+  const [edited, setEdited] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (launchArgsLoaded) {
+      return;
+    }
+    void loadLaunchArgs();
+  }, [launchArgsLoaded, loadLaunchArgs]);
+
+  // The stored flags may still be in flight when the modal opens. Adopt them
+  // when they land so saving cannot overwrite them with the empty field the
+  // user was shown, and stop once the field has been typed into.
+  useEffect(() => {
+    if (edited) {
+      return;
+    }
+    setValue(savedArgs);
+  }, [edited, savedArgs]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -36,6 +56,9 @@ export function HarnessLaunchSettingsModal({ harness, onClose }: Props) {
   }, [onClose]);
 
   const handleSave = useCallback(async () => {
+    if (!launchArgsLoaded) {
+      return;
+    }
     setSaving(true);
     const ok = await saveLaunchArgs(harness.id, value);
     setSaving(false);
@@ -45,7 +68,7 @@ export function HarnessLaunchSettingsModal({ harness, onClose }: Props) {
     } else {
       toast.error(t("harnesses.launchSettings.saveFailed"));
     }
-  }, [harness.id, onClose, saveLaunchArgs, t, value]);
+  }, [harness.id, launchArgsLoaded, onClose, saveLaunchArgs, t, value]);
 
   const trimmed = value.trim();
   const preview = trimmed ? `${harness.command} ${trimmed}` : harness.command;
@@ -84,9 +107,12 @@ export function HarnessLaunchSettingsModal({ harness, onClose }: Props) {
             <input
               className="hp-args-input"
               value={value}
-              onChange={(event) => setValue(event.target.value)}
+              onChange={(event) => {
+                setEdited(true);
+                setValue(event.target.value);
+              }}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !saving) void handleSave();
+                if (event.key === "Enter" && !saving && launchArgsLoaded) void handleSave();
               }}
               placeholder={SUGGESTED_FLAGS[harness.id] ?? t("harnesses.launchSettings.argsPlaceholder")}
               spellCheck={false}
@@ -108,7 +134,7 @@ export function HarnessLaunchSettingsModal({ harness, onClose }: Props) {
             <button
               type="button"
               className="ws-prop-btn ws-prop-btn-accent"
-              disabled={saving}
+              disabled={saving || !launchArgsLoaded}
               onClick={() => void handleSave()}
             >
               {t("harnesses.launchSettings.save")}

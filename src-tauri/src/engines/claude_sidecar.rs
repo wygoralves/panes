@@ -21,12 +21,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::instance::EngineInstanceSettings;
 use crate::{process_utils, runtime_env};
 
 use super::{
     normalize_approval_response_for_engine, trim_action_output_delta_content, ActionResult,
     ActionType, ApprovalRequestRoute, Engine, EngineEvent, EngineThread, ModelInfo, OutputStream,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnCompletionStatus, TurnInput,
+    ReasoningEffortOption, SandboxPolicy, TaskItem, ThreadScope, TurnCompletionStatus, TurnInput,
 };
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -117,6 +118,12 @@ enum SidecarEvent {
         #[serde(rename = "durationMs")]
         duration_ms: Option<u64>,
     },
+    TaskListUpdated {
+        id: Option<String>,
+        source: String,
+        explanation: Option<String>,
+        tasks: Vec<SidecarTaskItem>,
+    },
     ApprovalRequested {
         id: Option<String>,
         #[serde(rename = "approvalId")]
@@ -194,6 +201,7 @@ impl SidecarEvent {
             | SidecarEvent::ActionOutputDelta { id, .. }
             | SidecarEvent::ActionProgressUpdated { id, .. }
             | SidecarEvent::ActionCompleted { id, .. }
+            | SidecarEvent::TaskListUpdated { id, .. }
             | SidecarEvent::ApprovalRequested { id, .. }
             | SidecarEvent::TurnCompleted { id, .. }
             | SidecarEvent::Notice { id, .. }
@@ -210,6 +218,19 @@ impl SidecarEvent {
 struct SidecarTokenUsage {
     input: u64,
     output: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarTaskItem {
+    id: String,
+    title: String,
+    status: String,
+    active_form: Option<String>,
+    description: Option<String>,
+    owner: Option<String>,
+    #[serde(default)]
+    blocked_by: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -260,7 +281,10 @@ struct ClaudeTransport {
 }
 
 impl ClaudeTransport {
-    async fn spawn(sidecar_path: PathBuf) -> anyhow::Result<Self> {
+    async fn spawn(
+        sidecar_path: PathBuf,
+        instance: &EngineInstanceSettings,
+    ) -> anyhow::Result<Self> {
         let node_resolution = resolve_node_executable().await;
         let node = node_resolution
             .executable
@@ -282,7 +306,16 @@ impl ClaudeTransport {
         if let Some(module_specifier) = sdk_module_specifier {
             command.env("CLAUDE_AGENT_SDK_MODULE", module_specifier);
         }
-        if let Some(claude_executable) = resolve_system_claude_executable() {
+        for (key, value) in instance.process_env("claude") {
+            command.env(key, value);
+        }
+        if !instance.launch_args.is_empty() {
+            command.env(
+                "PANES_CLAUDE_EXTRA_ARGS",
+                serde_json::to_string(&instance.launch_args).unwrap_or_default(),
+            );
+        }
+        if let Some(claude_executable) = resolve_claude_executable_for_instance(instance) {
             log::info!(
                 "claude sidecar: using system Claude Code runtime at {}",
                 claude_executable.display()
@@ -358,7 +391,11 @@ impl ClaudeTransport {
                     match lines.next_line().await {
                         Ok(Some(line)) => {
                             if !line.trim().is_empty() {
-                                log::debug!("claude sidecar stderr: {line}");
+                                if line.contains("CLAUDE_SDK_") {
+                                    log::warn!("claude sidecar stderr: {line}");
+                                } else {
+                                    log::debug!("claude sidecar stderr: {line}");
+                                }
                             }
                         }
                         Ok(None) | Err(_) => break,
@@ -582,9 +619,67 @@ struct ClaudeState {
     runtime_info: Option<ClaudeRuntimeInfo>,
 }
 
-#[derive(Default)]
 pub struct ClaudeSidecarEngine {
+    id: String,
+    name: String,
+    instance: std::sync::Mutex<EngineInstanceSettings>,
     state: Arc<Mutex<ClaudeState>>,
+}
+
+impl Default for ClaudeSidecarEngine {
+    fn default() -> Self {
+        Self::with_instance("claude", "Claude", EngineInstanceSettings::default())
+    }
+}
+
+impl ClaudeSidecarEngine {
+    pub fn with_instance(id: &str, name: &str, instance: EngineInstanceSettings) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            instance: std::sync::Mutex::new(instance),
+            state: Arc::new(Mutex::new(ClaudeState::default())),
+        }
+    }
+
+    pub fn instance_settings(&self) -> EngineInstanceSettings {
+        self.instance
+            .lock()
+            .map(|settings| settings.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn instance_settings_slot(&self) -> &std::sync::Mutex<EngineInstanceSettings> {
+        &self.instance
+    }
+
+    /// Sets the sidecar resource dir on a freshly built engine that has no
+    /// other owner yet, without touching the async lock from a sync context.
+    pub fn set_resource_dir_blocking_free(&self, resource_dir: Option<PathBuf>) {
+        if let Ok(mut state) = self.state.try_lock() {
+            state.resource_dir = resource_dir;
+        }
+    }
+
+    /// Replaces the instance runtime settings and drops the running sidecar
+    /// so the next request spawns one with the new environment.
+    pub async fn update_instance_settings(&self, settings: EngineInstanceSettings) {
+        let changed = {
+            let mut current = self
+                .instance
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = *current != settings;
+            *current = settings;
+            changed
+        };
+        if changed {
+            let mut state = self.state.lock().await;
+            state.transport = None;
+            state.runtime_info = None;
+            state.runtime_model_cache = None;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -652,7 +747,8 @@ impl ClaudeSidecarEngine {
         }
 
         let sidecar_path = ClaudeTransport::resolve_sidecar_path(resource_dir.as_ref())?;
-        let transport = Arc::new(ClaudeTransport::spawn(sidecar_path).await?);
+        let instance = self.instance_settings();
+        let transport = Arc::new(ClaudeTransport::spawn(sidecar_path, &instance).await?);
 
         // Wait for the "ready" event from the sidecar
         let mut rx = transport.subscribe();
@@ -919,8 +1015,10 @@ impl ClaudeSidecarEngine {
         let node_resolution = resolve_node_executable().await;
         let node_available = node_resolution.executable.is_some();
         let sidecar_exists = ClaudeTransport::resolve_sidecar_path(resource_dir.as_ref()).is_ok();
-        let api_key_set = std::env::var("ANTHROPIC_API_KEY").is_ok();
-        let system_claude = resolve_system_claude_executable();
+        let instance = self.instance_settings();
+        let api_key_set = std::env::var("ANTHROPIC_API_KEY").is_ok()
+            || instance.env.contains_key("ANTHROPIC_API_KEY");
+        let system_claude = resolve_claude_executable_for_instance(&instance);
         let system_claude_version = match system_claude.as_deref() {
             Some(executable) => probe_claude_version(executable).await,
             None => None,
@@ -1301,6 +1399,12 @@ fn paths_match(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn resolve_claude_executable_for_instance(instance: &EngineInstanceSettings) -> Option<PathBuf> {
+    instance
+        .executable_override()
+        .or_else(resolve_system_claude_executable)
+}
+
 fn resolve_system_claude_executable() -> Option<PathBuf> {
     if std::env::var("PANES_CLAUDE_CODE_USE_BUNDLED")
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
@@ -1445,21 +1549,10 @@ fn default_effort_for_claude_model(
         return String::new();
     }
 
-    let identity = format!(
-        "{} {} {} {}",
-        model.value,
-        model.display_name,
-        model.description,
-        model.resolved_model.as_deref().unwrap_or_default()
-    )
-    .to_lowercase();
-    let preferred = if identity.contains("haiku") {
-        "low"
-    } else if identity.contains("sonnet") {
-        "medium"
-    } else {
-        "high"
-    };
+    // Claude Code defaults every model to "high" effort. Mirror that so Panes
+    // does not quietly run Sonnet or Haiku at a lower effort than the CLI.
+    let _ = model;
+    let preferred = "high";
 
     supported_efforts
         .iter()
@@ -1474,7 +1567,51 @@ fn default_effort_for_claude_model(
         .unwrap_or_default()
 }
 
+/// Builds a versioned display name such as "Opus 4.8" or "Sonnet 5" from a
+/// resolved model id like `claude-opus-4-8[1m]` or
+/// `claude-haiku-4-5-20251001`. Returns `None` when the id has no version.
+fn claude_model_name_from_resolved(resolved: &str) -> Option<String> {
+    let trimmed = resolved.trim().to_lowercase();
+    let one_million = trimmed.ends_with("[1m]");
+    let base = trimmed.trim_end_matches("[1m]");
+    let rest = base.strip_prefix("claude-")?;
+    let mut parts = rest.split('-');
+    let family = parts.next()?;
+    if family.is_empty() {
+        return None;
+    }
+    let mut version = Vec::new();
+    for part in parts {
+        // Date suffixes such as 20251001 are not part of the version.
+        if part.len() >= 8 || !part.chars().all(|ch| ch.is_ascii_digit()) {
+            break;
+        }
+        version.push(part);
+    }
+    if version.is_empty() {
+        return None;
+    }
+    let mut family_chars = family.chars();
+    let family_name = match family_chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + family_chars.as_str(),
+        None => return None,
+    };
+    let mut name = format!("{family_name} {}", version.join("."));
+    if one_million {
+        name.push_str(" (1M)");
+    }
+    Some(name)
+}
+
 fn inferred_claude_model_name(model: &SidecarModelInfo) -> String {
+    if let Some(name) = model
+        .resolved_model
+        .as_deref()
+        .and_then(claude_model_name_from_resolved)
+    {
+        return name;
+    }
+
     let identity = format!(
         "{} {} {}",
         model.description,
@@ -1520,16 +1657,20 @@ fn map_claude_model(model: SidecarModelInfo) -> Option<ModelInfo> {
     };
     let default_reasoning_effort = default_effort_for_claude_model(&model, &supported_efforts);
 
-    let display_name = if id == "default"
+    let is_default_alias = id == "default"
         && model
             .display_name
             .trim()
             .to_lowercase()
-            .starts_with("default")
+            .starts_with("default");
+    let display_name = match model
+        .resolved_model
+        .as_deref()
+        .and_then(claude_model_name_from_resolved)
     {
-        inferred_claude_model_name(&model)
-    } else {
-        model.display_name.trim().to_string()
+        Some(numbered) => numbered,
+        None if is_default_alias => inferred_claude_model_name(&model),
+        None => model.display_name.trim().to_string(),
     };
 
     Some(ModelInfo {
@@ -1671,11 +1812,11 @@ pub struct ClaudeHealthReport {
 #[async_trait]
 impl Engine for ClaudeSidecarEngine {
     fn id(&self) -> &str {
-        "claude"
+        &self.id
     }
 
     fn name(&self) -> &str {
-        "Claude"
+        &self.name
     }
 
     fn models(&self) -> Vec<ModelInfo> {
@@ -1939,6 +2080,32 @@ impl Engine for ClaudeSidecarEngine {
                                                 diff: None,
                                                 duration_ms: duration_ms.unwrap_or(0),
                                             },
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::TaskListUpdated {
+                                    source,
+                                    explanation,
+                                    tasks,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::TaskListUpdated {
+                                            source,
+                                            explanation,
+                                            tasks: tasks
+                                                .into_iter()
+                                                .map(|task| TaskItem {
+                                                    id: task.id,
+                                                    title: task.title,
+                                                    status: task.status,
+                                                    active_form: task.active_form,
+                                                    description: task.description,
+                                                    owner: task.owner,
+                                                    blocked_by: task.blocked_by,
+                                                })
+                                                .collect(),
                                         })
                                         .await
                                         .ok();
@@ -2280,6 +2447,36 @@ mod tests {
     }
 
     #[test]
+    fn deserializes_task_list_updated_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "task_list_updated",
+            "id": "request-1",
+            "source": "claude",
+            "explanation": null,
+            "tasks": [{
+                "id": "1",
+                "title": "Inspect the sidebar",
+                "status": "in_progress",
+                "activeForm": "Inspecting the sidebar",
+                "description": null,
+                "owner": null,
+                "blockedBy": [],
+            }],
+        }))
+        .expect("task_list_updated should deserialize");
+
+        match event {
+            SidecarEvent::TaskListUpdated { source, tasks, .. } => {
+                assert_eq!(source, "claude");
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].title, "Inspect the sidebar");
+                assert_eq!(tasks[0].status, "in_progress");
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_output_stream_names() {
         assert!(matches!(
             ClaudeSidecarEngine::parse_output_stream("stderr"),
@@ -2373,7 +2570,7 @@ mod tests {
         .expect("runtime model should map");
 
         assert_eq!(model.id, "claude-fable-5[1m]");
-        assert_eq!(model.display_name, "Fable");
+        assert_eq!(model.display_name, "Fable 5");
         assert_eq!(model.default_reasoning_effort, "high");
         assert_eq!(
             model
@@ -2419,7 +2616,7 @@ mod tests {
                 .iter()
                 .map(|model| model.display_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Opus", "Sonnet"]
+            vec!["Opus 4.8 (1M)", "Sonnet 5"]
         );
         assert!(models[0].is_default);
         assert!(!models[1].is_default);
@@ -2440,6 +2637,23 @@ mod tests {
         assert_eq!(model.id, "default");
         assert_eq!(model.display_name, "Opus");
         assert!(model.is_default);
+    }
+
+    #[test]
+    fn resolved_model_ids_become_versioned_names() {
+        assert_eq!(
+            claude_model_name_from_resolved("claude-opus-4-8[1m]").as_deref(),
+            Some("Opus 4.8 (1M)")
+        );
+        assert_eq!(
+            claude_model_name_from_resolved("claude-sonnet-5").as_deref(),
+            Some("Sonnet 5")
+        );
+        assert_eq!(
+            claude_model_name_from_resolved("claude-haiku-4-5-20251001").as_deref(),
+            Some("Haiku 4.5")
+        );
+        assert_eq!(claude_model_name_from_resolved("opus"), None);
     }
 
     #[test]

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS threads (
   engine_capabilities_json TEXT,
   title TEXT,
   status TEXT NOT NULL DEFAULT 'idle',
+  settled_at TEXT,
   archived_at TEXT,
   message_count INTEGER NOT NULL DEFAULT 0,
   total_tokens INTEGER NOT NULL DEFAULT 0,

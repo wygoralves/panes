@@ -1,14 +1,15 @@
+import { engineKind } from "./engineKind";
 import type { ChatEngineId } from "../types";
 
 export type AutonomyPresetId = "inherit" | "read-only" | "ask" | "auto" | "full";
 
-export interface AutonomyPolicySnapshot {
+interface AutonomyPolicySnapshot {
   approvalPolicy: string;
   sandboxMode: string;
   networkPolicy: string;
 }
 
-export interface AutonomyPresetPatch {
+interface AutonomyPresetPatch {
   approvalPolicy: string;
   sandboxMode?: "inherit" | "read-only" | "workspace-write" | "danger-full-access";
   networkPolicy?: "inherit" | "enabled" | "restricted";
@@ -32,13 +33,7 @@ export const AUTONOMY_PRESET_IDS: readonly AutonomyPresetId[] = [
 ];
 
 export function isAutonomyPresetId(value: unknown): value is AutonomyPresetId {
-  return (
-    value === "inherit" ||
-    value === "read-only" ||
-    value === "ask" ||
-    value === "auto" ||
-    value === "full"
-  );
+  return AUTONOMY_PRESET_IDS.includes(value as AutonomyPresetId);
 }
 
 export function resolveDefaultAutonomyPreset(
@@ -59,10 +54,10 @@ export function autonomyPresetDescriptionKey(
   engineId: ChatEngineId,
   options?: AutonomyPresetOptions,
 ): string {
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     return `autonomy.engineDescriptions.opencode.${preset}`;
   }
-  if (engineId === "claude") {
+  if (engineKind(engineId) === "claude") {
     return `autonomy.engineDescriptions.claude.${preset}`;
   }
   if (
@@ -80,24 +75,60 @@ export function autonomyPresetDescriptionKey(
  * autonomy there.
  */
 export function availableAutonomyPresets(engineId: ChatEngineId): AutonomyPresetId[] {
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     return ["inherit", "read-only", "ask", "full"];
   }
   return [...AUTONOMY_PRESET_IDS];
 }
 
-export function autonomyPresetPatch(
+/**
+ * Clamp a preset onto the ladder the engine actually exposes. A rung an
+ * engine does not implement must step *down* to the closest rung it does,
+ * never sideways onto a more permissive one: OpenCode has no sandboxed
+ * "auto" rung, so mapping "auto" to its `allow` mode would hand an
+ * unsandboxed thread full autonomy it was never asked for.
+ */
+export function resolveAutonomyPresetForEngine(
   preset: AutonomyPresetId,
+  engineId: ChatEngineId,
+): AutonomyPresetId {
+  const available = availableAutonomyPresets(engineId);
+  if (available.includes(preset)) {
+    return preset;
+  }
+
+  for (let index = AUTONOMY_PRESET_IDS.indexOf(preset) - 1; index > 0; index -= 1) {
+    const candidate = AUTONOMY_PRESET_IDS[index];
+    if (available.includes(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "inherit";
+}
+
+/**
+ * The rung "allow all and stop asking" switches a thread to. It grants
+ * autonomy inside the workspace sandbox and never escalates to full disk
+ * and network access, so engines without that rung step down instead.
+ */
+export function stopAskingAutonomyPreset(engineId: ChatEngineId): AutonomyPresetId {
+  return resolveAutonomyPresetForEngine("auto", engineId);
+}
+
+export function autonomyPresetPatch(
+  requestedPreset: AutonomyPresetId,
   engineId: ChatEngineId,
   options?: AutonomyPresetOptions,
 ): AutonomyPresetPatch {
-  if (engineId === "opencode") {
+  const preset = resolveAutonomyPresetForEngine(requestedPreset, engineId);
+
+  if (engineKind(engineId) === "opencode") {
     switch (preset) {
       case "read-only":
         return { approvalPolicy: "deny" };
       case "ask":
         return { approvalPolicy: "ask" };
-      case "auto":
       case "full":
         return { approvalPolicy: "allow" };
       default:
@@ -105,7 +136,7 @@ export function autonomyPresetPatch(
     }
   }
 
-  if (engineId === "claude") {
+  if (engineKind(engineId) === "claude") {
     switch (preset) {
       case "read-only":
         return { approvalPolicy: "restricted", sandboxMode: "read-only", networkPolicy: "restricted" };
@@ -160,7 +191,7 @@ export function detectAutonomyPreset(
   snapshot: AutonomyPolicySnapshot,
   options?: AutonomyPresetOptions,
 ): AutonomyPresetId | null {
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     switch (snapshot.approvalPolicy) {
       case "inherit":
         return "inherit";
@@ -178,7 +209,7 @@ export function detectAutonomyPreset(
   // Full access forces the network on for Codex, so the stored network value
   // is irrelevant on that rung.
   if (
-    engineId === "codex" &&
+    engineKind(engineId) === "codex" &&
     snapshot.approvalPolicy === "never" &&
     snapshot.sandboxMode === "danger-full-access"
   ) {
@@ -186,7 +217,7 @@ export function detectAutonomyPreset(
   }
 
   for (const preset of availableAutonomyPresets(engineId)) {
-    if (engineId === "codex" && preset === "full") {
+    if (engineKind(engineId) === "codex" && preset === "full") {
       continue;
     }
     const patch = autonomyPresetPatch(preset, engineId, options);
@@ -207,7 +238,7 @@ export function detectAutonomyPreset(
  * `inherit`, which means "leave the thread on trust defaults".
  */
 export function autonomyPresetExecutionPolicyRequest(
-  preset: AutonomyPresetId,
+  requestedPreset: AutonomyPresetId,
   engineId: ChatEngineId,
   options?: AutonomyPresetOptions,
 ): {
@@ -215,12 +246,13 @@ export function autonomyPresetExecutionPolicyRequest(
   sandboxMode?: string | null;
   allowNetwork?: boolean | null;
 } | null {
+  const preset = resolveAutonomyPresetForEngine(requestedPreset, engineId);
   if (preset === "inherit") {
     return null;
   }
 
   const patch = autonomyPresetPatch(preset, engineId, options);
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     return { approvalPolicy: patch.approvalPolicy };
   }
 

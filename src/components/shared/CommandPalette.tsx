@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { TFunction } from "i18next";
@@ -37,6 +38,8 @@ import {
   Power,
   RotateCcw,
   Minimize2,
+  CircleCheck,
+  MailOpen,
 } from "lucide-react";
 import { ipc, writeCommandToNewSession } from "../../lib/ipc";
 import {
@@ -57,6 +60,13 @@ import {
 } from "../../lib/commandPaletteGit";
 import { formatRelativeTime } from "../../lib/formatters";
 import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
+import {
+  canMarkThreadUnread,
+  canSettleThread,
+  getActiveThread,
+  markThreadUnread,
+  toggleThreadSettlement,
+} from "../../lib/threadActions";
 import {
   applyWorkspaceEditorChatSplit,
   applyWorkspaceLayoutMode,
@@ -611,6 +621,51 @@ export function getStaticCommands(
     },
   },
   {
+    id: "settle-thread",
+    label: t("commandPalette.commands.settleThread"),
+    icon: CircleCheck,
+    group: "navigation",
+    keywords: ["settle", "done", "archive", "shelf", "concluir", "concluída"],
+    isAvailable: () => {
+      const thread = getActiveThread();
+      return thread !== null && !thread.settledAt && canSettleThread(thread);
+    },
+    action: async ({ close }) => {
+      const thread = getActiveThread();
+      close();
+      if (thread) await toggleThreadSettlement(thread);
+    },
+  },
+  {
+    id: "unsettle-thread",
+    label: t("commandPalette.commands.unsettleThread"),
+    icon: RotateCcw,
+    group: "navigation",
+    keywords: ["unsettle", "resume", "reopen", "retomar", "reabrir"],
+    isAvailable: () => getActiveThread()?.settledAt != null,
+    action: async ({ close }) => {
+      const thread = getActiveThread();
+      close();
+      if (thread) await toggleThreadSettlement(thread);
+    },
+  },
+  {
+    id: "mark-thread-unread",
+    label: t("commandPalette.commands.markThreadUnread"),
+    icon: MailOpen,
+    group: "navigation",
+    keywords: ["unread", "mark", "attention", "não lida", "marcar"],
+    isAvailable: () => {
+      const thread = getActiveThread();
+      return thread !== null && canMarkThreadUnread(thread);
+    },
+    action: ({ close }) => {
+      const thread = getActiveThread();
+      close();
+      if (thread) markThreadUnread(thread);
+    },
+  },
+  {
     id: "switch-workspace",
     label: t("commandPalette.commands.switchWorkspace"),
     description: t("commandPalette.descriptions.switchWorkspace"),
@@ -727,7 +782,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: async ({ close }) => {
       close();
@@ -754,7 +809,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: async ({ close }) => {
       close();
@@ -778,7 +833,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: ({ openSubFlow }) => {
       openSubFlow({ type: "codex-rollback" as SubFlow["type"], value: "1" } as SubFlow);
@@ -794,7 +849,7 @@ export function getStaticCommands(
     isAvailable: () => {
       const { threads, activeThreadId } = useThreadStore.getState();
       const thread = threads.find((th) => th.id === activeThreadId);
-      return !!thread && thread.engineId === "codex" && !!thread.engineThreadId;
+      return !!thread && engineKind(thread.engineId) === "codex" && !!thread.engineThreadId;
     },
     action: async ({ close }) => {
       close();

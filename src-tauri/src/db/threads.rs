@@ -36,7 +36,8 @@ pub fn get_thread(db: &Database, thread_id: &str) -> anyhow::Result<Option<Threa
     let conn = db.connect()?;
     conn.query_row(
     "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
-            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
+            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at,
+            settled_at, unsettled_at, turn_started_at
      FROM threads WHERE id = ?1",
     params![thread_id],
     map_thread_row,
@@ -53,7 +54,8 @@ pub fn find_thread_by_engine_thread_id(
     let conn = db.connect()?;
     conn.query_row(
         "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
-                COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
+                COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at,
+                settled_at, unsettled_at, turn_started_at
          FROM threads
          WHERE engine_id = ?1
            AND engine_thread_id = ?2
@@ -72,7 +74,8 @@ pub fn list_threads_for_workspace(
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
     "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
-            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
+            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at,
+            settled_at, unsettled_at, turn_started_at
      FROM threads
      WHERE workspace_id = ?1
        AND archived_at IS NULL
@@ -101,7 +104,8 @@ pub fn list_archived_threads_for_workspace(
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
     "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
-            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at
+            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at,
+            settled_at, unsettled_at, turn_started_at
      FROM threads
      WHERE workspace_id = ?1
        AND archived_at IS NOT NULL
@@ -138,6 +142,109 @@ pub fn update_thread_status(
     )
     .context("failed to update thread status")?;
     Ok(())
+}
+
+pub fn start_thread_turn(db: &Database, thread_id: &str) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE threads
+         SET status = 'streaming',
+             unsettled_at = CASE
+               WHEN settled_at IS NOT NULL
+                 THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+               ELSE unsettled_at
+             END,
+             settled_at = NULL,
+             turn_started_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+             last_activity_at = datetime('now')
+         WHERE id = ?1",
+        params![thread_id],
+    )
+    .context("failed to start thread turn")?;
+    Ok(())
+}
+
+/// How a settlement write picks its timestamp. `Now` is the user acting;
+/// `Restore` is an undo putting the exact prior stamp back, so undoing never
+/// invents a new time (and `Restore(None)` clears the column again).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettlementStamp {
+    Now,
+    Restore(Option<String>),
+}
+
+pub fn settle_thread(
+    db: &Database,
+    thread_id: &str,
+    stamp: SettlementStamp,
+) -> anyhow::Result<ThreadDto> {
+    let conn = db.connect()?;
+    // A thread the engine still owns cannot be settled, so the caller gets the
+    // same "not settled" error it already handles.
+    let affected = match &stamp {
+        SettlementStamp::Now => conn.execute(
+            "UPDATE threads
+             SET settled_at = COALESCE(settled_at, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+             WHERE id = ?1
+               AND archived_at IS NULL
+               AND status NOT IN ('streaming', 'awaiting_approval')",
+            params![thread_id],
+        ),
+        SettlementStamp::Restore(settled_at) => conn.execute(
+            "UPDATE threads
+             SET settled_at = COALESCE(settled_at, ?2)
+             WHERE id = ?1
+               AND archived_at IS NULL
+               AND status NOT IN ('streaming', 'awaiting_approval')",
+            params![thread_id, settled_at],
+        ),
+    }
+    .context("failed to settle thread")?;
+
+    if affected == 0 {
+        anyhow::bail!("thread not found, archived or still running: {thread_id}");
+    }
+
+    get_thread(db, thread_id)?
+        .ok_or_else(|| anyhow::anyhow!("thread not found after settle: {thread_id}"))
+}
+
+pub fn unsettle_thread(
+    db: &Database,
+    thread_id: &str,
+    stamp: SettlementStamp,
+) -> anyhow::Result<ThreadDto> {
+    let conn = db.connect()?;
+    let affected = match &stamp {
+        SettlementStamp::Now => conn.execute(
+            "UPDATE threads
+             SET unsettled_at = CASE
+                   WHEN settled_at IS NOT NULL
+                     THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                   ELSE unsettled_at
+                 END,
+                 settled_at = NULL
+             WHERE id = ?1
+               AND archived_at IS NULL",
+            params![thread_id],
+        ),
+        SettlementStamp::Restore(unsettled_at) => conn.execute(
+            "UPDATE threads
+             SET unsettled_at = ?2,
+                 settled_at = NULL
+             WHERE id = ?1
+               AND archived_at IS NULL",
+            params![thread_id, unsettled_at],
+        ),
+    }
+    .context("failed to unsettle thread")?;
+
+    if affected == 0 {
+        anyhow::bail!("thread not found or archived: {thread_id}");
+    }
+
+    get_thread(db, thread_id)?
+        .ok_or_else(|| anyhow::anyhow!("thread not found after unsettle: {thread_id}"))
 }
 
 pub fn set_engine_thread_id(
@@ -430,6 +537,9 @@ fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadDto> {
         total_tokens: row.get(10)?,
         created_at: row.get(11)?,
         last_activity_at: row.get(12)?,
+        settled_at: row.get(13)?,
+        unsettled_at: row.get(14)?,
+        turn_started_at: row.get(15)?,
     })
 }
 
@@ -584,5 +694,167 @@ mod tests {
 
         assert!(listed_ids.contains(&visible.id));
         assert!(!listed_ids.contains(&hidden.id));
+    }
+
+    #[test]
+    fn settlement_is_manual_and_opening_does_not_change_it() {
+        let db = test_db();
+        let thread = test_thread(&db, "Settle me");
+
+        let settled = settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        assert!(settled.settled_at.is_some());
+
+        let opened = get_thread(&db, &thread.id).unwrap().unwrap();
+        assert_eq!(opened.settled_at, settled.settled_at);
+
+        let unsettled = unsettle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        assert!(unsettled.settled_at.is_none());
+    }
+
+    #[test]
+    fn unsettling_stamps_the_sidebar_anchor() {
+        let db = test_db();
+        let thread = test_thread(&db, "Re-anchor me");
+        assert!(thread.unsettled_at.is_none());
+
+        // Un-settling a thread that never settled must not re-anchor it.
+        let never_settled = unsettle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        assert!(never_settled.unsettled_at.is_none());
+
+        settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        let unsettled = unsettle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        let anchor = unsettled.unsettled_at.expect("expected an unsettle anchor");
+        assert!(anchor.ends_with('Z'), "expected a UTC stamp, got {anchor}");
+
+        // A later turn on an active thread keeps the anchor where it was, so
+        // rows do not move while a thread streams.
+        start_thread_turn(&db, &thread.id).unwrap();
+        let streaming = get_thread(&db, &thread.id).unwrap().unwrap();
+        assert_eq!(streaming.unsettled_at.as_deref(), Some(anchor.as_str()));
+    }
+
+    #[test]
+    fn settling_writes_a_utc_timestamp() {
+        let db = test_db();
+        let thread = test_thread(&db, "Stamp me");
+
+        let settled = settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        let settled_at = settled.settled_at.expect("expected a settle stamp");
+
+        assert!(
+            settled_at.ends_with('Z') && settled_at.contains('T'),
+            "expected an ISO UTC stamp, got {settled_at}"
+        );
+    }
+
+    #[test]
+    fn sending_a_new_turn_unsettles_the_thread() {
+        let db = test_db();
+        let thread = test_thread(&db, "Resume me");
+        settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+
+        start_thread_turn(&db, &thread.id).unwrap();
+
+        let resumed = get_thread(&db, &thread.id).unwrap().unwrap();
+        assert!(resumed.settled_at.is_none());
+        assert!(resumed.unsettled_at.is_some());
+        assert_eq!(resumed.status, ThreadStatusDto::Streaming);
+    }
+
+    #[test]
+    fn undoing_a_settle_restores_the_previous_anchor() {
+        let db = test_db();
+        let thread = test_thread(&db, "Undo my settle");
+        settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        let unsettled = unsettle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        let original_anchor = unsettled.unsettled_at.clone();
+        assert!(original_anchor.is_some());
+
+        // Settle again, then undo with the anchor the row carried before.
+        settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        let undone = unsettle_thread(
+            &db,
+            &thread.id,
+            SettlementStamp::Restore(original_anchor.clone()),
+        )
+        .unwrap();
+
+        assert!(undone.settled_at.is_none());
+        assert_eq!(undone.unsettled_at, original_anchor);
+    }
+
+    #[test]
+    fn undoing_a_settle_clears_an_anchor_that_was_never_set() {
+        let db = test_db();
+        let thread = test_thread(&db, "Never un-settled");
+        settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+
+        let undone = unsettle_thread(&db, &thread.id, SettlementStamp::Restore(None)).unwrap();
+
+        assert!(undone.settled_at.is_none());
+        assert!(undone.unsettled_at.is_none());
+    }
+
+    #[test]
+    fn undoing_an_unsettle_restores_the_previous_settle_stamp() {
+        let db = test_db();
+        let thread = test_thread(&db, "Undo my un-settle");
+        let settled = settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+        let original_settled_at = settled.settled_at.clone();
+        unsettle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+
+        let undone = settle_thread(
+            &db,
+            &thread.id,
+            SettlementStamp::Restore(original_settled_at.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(undone.settled_at, original_settled_at);
+    }
+
+    #[test]
+    fn settling_refuses_a_thread_the_engine_still_owns() {
+        let db = test_db();
+        let thread = test_thread(&db, "Still running");
+        start_thread_turn(&db, &thread.id).unwrap();
+
+        assert!(settle_thread(&db, &thread.id, SettlementStamp::Now).is_err());
+
+        update_thread_status(&db, &thread.id, ThreadStatusDto::AwaitingApproval).unwrap();
+        assert!(settle_thread(&db, &thread.id, SettlementStamp::Now).is_err());
+
+        update_thread_status(&db, &thread.id, ThreadStatusDto::Completed).unwrap();
+        assert!(settle_thread(&db, &thread.id, SettlementStamp::Now).is_ok());
+    }
+
+    #[test]
+    fn starting_a_turn_stamps_the_working_anchor() {
+        let db = test_db();
+        let thread = test_thread(&db, "Time me");
+        assert!(thread.turn_started_at.is_none());
+
+        start_thread_turn(&db, &thread.id).unwrap();
+
+        let started = get_thread(&db, &thread.id).unwrap().unwrap();
+        let stamp = started
+            .turn_started_at
+            .expect("expected a turn start stamp");
+        assert!(
+            stamp.ends_with('Z') && stamp.contains('T'),
+            "expected an ISO UTC stamp, got {stamp}"
+        );
+    }
+
+    #[test]
+    fn archive_and_restore_preserve_settlement() {
+        let db = test_db();
+        let thread = test_thread(&db, "Archive me");
+        settle_thread(&db, &thread.id, SettlementStamp::Now).unwrap();
+
+        archive_thread(&db, &thread.id).unwrap();
+        let restored = restore_thread(&db, &thread.id).unwrap();
+
+        assert!(restored.settled_at.is_some());
     }
 }

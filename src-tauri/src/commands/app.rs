@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    config::app_config::{clamp_terminal_font_size, AppConfig},
+    config::app_config::{clamp_terminal_font_size, clamp_ui_zoom_percent, AppConfig},
     locale::{normalize_app_locale, resolve_app_locale},
     state::AppState,
     terminal_notifications::{
@@ -175,6 +175,126 @@ pub async fn set_app_theme(state: State<'_, AppState>, theme: String) -> Result<
         AppConfig::mutate(|config| {
             config.general.theme = theme.clone();
             Ok(theme)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn get_sidebar_list_mode() -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.sidebar_list_mode().to_string())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_sidebar_list_mode(
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<String, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        if !crate::config::app_config::VALID_SIDEBAR_LIST_MODES.contains(&mode.as_str()) {
+            return Err(format!("unsupported sidebar list mode: {mode}"));
+        }
+        AppConfig::mutate(|config| {
+            config.general.sidebar_list_mode = Some(mode.clone());
+            Ok(mode)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn get_composer_plan_mode_visible() -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.composer_plan_mode_visible())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_composer_plan_mode_visible(
+    state: State<'_, AppState>,
+    visible: bool,
+) -> Result<bool, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        AppConfig::mutate(|config| {
+            config.general.composer_plan_mode_visible = Some(visible);
+            Ok(visible)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn get_composer_legacy_models_visible() -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.composer_legacy_models_visible())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_composer_legacy_models_visible(
+    state: State<'_, AppState>,
+    visible: bool,
+) -> Result<bool, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        AppConfig::mutate(|config| {
+            config.general.composer_legacy_models_visible = Some(visible);
+            Ok(visible)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn get_ui_zoom_percent() -> Result<u32, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.ui_zoom_percent())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_ui_zoom_percent(
+    state: State<'_, AppState>,
+    zoom_percent: u32,
+) -> Result<u32, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || -> Result<u32, String> {
+        let clamped = clamp_ui_zoom_percent(zoom_percent);
+        AppConfig::mutate(|config| {
+            config.ui.zoom_percent = if clamped == 100 { None } else { Some(clamped) };
+            Ok(clamped)
         })
         .map_err(err_to_string)
     })

@@ -80,11 +80,12 @@ pub fn run() {
     let _ =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
 
+    let engines = EngineManager::from_config(&app_config);
     let app_state = AppState {
         db,
         config: Arc::new(app_config),
         config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
-        engines: Arc::new(EngineManager::new()),
+        engines: Arc::new(engines),
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
         notifications: Arc::new(terminal_notifications::TerminalNotificationManager::default()),
@@ -181,6 +182,14 @@ pub fn run() {
             commands::app::set_app_locale,
             commands::app::get_app_theme,
             commands::app::set_app_theme,
+            commands::app::get_sidebar_list_mode,
+            commands::app::set_sidebar_list_mode,
+            commands::app::get_composer_plan_mode_visible,
+            commands::app::set_composer_plan_mode_visible,
+            commands::app::get_composer_legacy_models_visible,
+            commands::app::set_composer_legacy_models_visible,
+            commands::app::get_ui_zoom_percent,
+            commands::app::set_ui_zoom_percent,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::power::get_power_settings,
@@ -279,6 +288,9 @@ pub fn run() {
             commands::files::open_path_with_default_app,
             commands::git::watch_git_repo,
             commands::engines::list_engines,
+            commands::engines::list_chat_providers,
+            commands::engines::save_chat_provider,
+            commands::engines::remove_chat_provider,
             commands::engines::get_chat_provider_usage,
             commands::engines::codex_uses_external_sandbox,
             commands::engines::engine_health,
@@ -295,6 +307,8 @@ pub fn run() {
             commands::threads::attach_opencode_remote_session,
             commands::threads::create_thread,
             commands::threads::rename_thread,
+            commands::threads::settle_thread,
+            commands::threads::unsettle_thread,
             commands::threads::confirm_workspace_thread,
             commands::threads::set_thread_reasoning_effort,
             commands::threads::set_thread_execution_policy,

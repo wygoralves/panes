@@ -4,6 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -71,8 +72,42 @@ try {
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 const activeQueries = new Map();
 const pendingApprovals = new Map();
+const taskSnapshotsBySessionId = new Map();
 let shuttingDown = false;
 const claudeCodeExecutable = process.env.PANES_CLAUDE_CODE_EXECUTABLE?.trim() || null;
+// Extra CLI flags configured for this provider instance, as a JSON array of
+// tokens. They are mapped onto the SDK `extraArgs` option: `--flag value`
+// pairs become { flag: value } and bare flags become { flag: null }.
+const claudeExtraArgs = parseExtraArgs(process.env.PANES_CLAUDE_EXTRA_ARGS);
+
+function parseExtraArgs(raw) {
+  if (!raw) return null;
+  let tokens;
+  try {
+    tokens = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(tokens)) return null;
+  const extraArgs = {};
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = String(tokens[index] ?? "");
+    if (!token.startsWith("--")) continue;
+    const equals = token.indexOf("=");
+    if (equals > 2) {
+      extraArgs[token.slice(2, equals)] = token.slice(equals + 1);
+      continue;
+    }
+    const next = tokens[index + 1];
+    if (typeof next === "string" && !next.startsWith("--")) {
+      extraArgs[token.slice(2)] = next;
+      index += 1;
+    } else {
+      extraArgs[token.slice(2)] = null;
+    }
+  }
+  return Object.keys(extraArgs).length > 0 ? extraArgs : null;
+}
 const execFileAsync = promisify(execFile);
 const claudeUsageUrl =
   process.env.PANES_CLAUDE_USAGE_URL?.trim() || "https://api.anthropic.com/api/oauth/usage";
@@ -85,6 +120,13 @@ const MAX_ATTACHMENTS_PER_TURN = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS = 40_000;
 const TOOL_OUTPUT_CHUNK_SIZE = 8_192;
+const TASK_TOOL_NAMES = new Set([
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskGet",
+  "TaskList",
+  "TodoWrite",
+]);
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -393,7 +435,12 @@ function resolvePermissionMode(approvalPolicy, allowNetwork) {
   }
 }
 
-function requiresApproval(permissionMode, toolName) {
+function requiresApproval(permissionMode, toolName, allowedTools) {
+  // Task bookkeeping never touches the filesystem, so it skips approval, but
+  // only while it is actually part of the thread's effective allowlist.
+  if (TASK_TOOL_NAMES.has(toolName) && allowedTools?.has(toolName)) {
+    return false;
+  }
   if (permissionMode === "trusted") {
     return false;
   }
@@ -403,7 +450,11 @@ function requiresApproval(permissionMode, toolName) {
   return !["Read", "Glob", "Grep", "ExitPlanMode", "EnterPlanMode"].includes(toolName);
 }
 
-function createQueryContext(id) {
+function createQueryContext(id, sessionIdHint = null) {
+  const cachedTasks =
+    typeof sessionIdHint === "string"
+      ? taskSnapshotsBySessionId.get(sessionIdHint)
+      : null;
   return {
     id,
     query: null,
@@ -414,7 +465,9 @@ function createQueryContext(id) {
     pendingApprovalIds: new Set(),
     cancelled: false,
     turnCompleted: false,
-    sessionId: null,
+    sessionId: sessionIdHint,
+    tasks: new Map(cachedTasks || []),
+    taskCounter: 0,
     tokenUsage: null,
     stopReason: null,
   };
@@ -423,6 +476,218 @@ function createQueryContext(id) {
 function setContextSessionId(context, sessionId) {
   if (typeof sessionId === "string" && sessionId.length > 0) {
     context.sessionId = sessionId;
+    const cachedTasks = taskSnapshotsBySessionId.get(sessionId);
+    if (context.tasks.size === 0 && cachedTasks) {
+      context.tasks = new Map(cachedTasks);
+    }
+  }
+}
+
+function parseTaskToolOutput(output) {
+  if (output == null) {
+    return null;
+  }
+  if (typeof output === "object") {
+    if (Array.isArray(output.content)) {
+      const text = output.content
+        .filter((item) => item?.type === "text" && typeof item.text === "string")
+        .map((item) => item.text)
+        .join("\n");
+      if (text) {
+        return parseTaskToolOutput(text);
+      }
+    }
+    return output;
+  }
+  if (typeof output !== "string") {
+    return null;
+  }
+  try {
+    return JSON.parse(output);
+  } catch {
+    return output;
+  }
+}
+
+function normalizeTaskStatus(status) {
+  if (status === "inProgress" || status === "in-progress") {
+    return "in_progress";
+  }
+  if (["pending", "in_progress", "completed"].includes(status)) {
+    return status;
+  }
+  return "pending";
+}
+
+function taskIdFromValue(value, fallback) {
+  const direct = value?.id ?? value?.taskId ?? value?.task_id;
+  if (direct != null && String(direct).trim()) {
+    return String(direct);
+  }
+  if (typeof value === "string") {
+    const match =
+      value.match(/\btask\s*#\s*([A-Za-z0-9_-]+)/i) ||
+      value.match(/\btask\s+([0-9][A-Za-z0-9_-]*)/i);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return fallback;
+}
+
+function normalizeTask(value, fallbackId) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const title = value.subject ?? value.title ?? value.content;
+  if (typeof title !== "string" || !title.trim()) {
+    return null;
+  }
+  return {
+    id: taskIdFromValue(value, fallbackId),
+    title: title.trim(),
+    status: normalizeTaskStatus(value.status),
+    activeForm:
+      typeof value.activeForm === "string"
+        ? value.activeForm
+        : typeof value.active_form === "string"
+          ? value.active_form
+          : null,
+    description: typeof value.description === "string" ? value.description : null,
+    owner: typeof value.owner === "string" ? value.owner : null,
+    blockedBy: Array.isArray(value.blockedBy ?? value.blocked_by)
+      ? (value.blockedBy ?? value.blocked_by).map(String)
+      : [],
+  };
+}
+
+function rememberTaskSnapshot(context) {
+  if (!context.sessionId) {
+    return;
+  }
+  taskSnapshotsBySessionId.set(context.sessionId, new Map(context.tasks));
+  while (taskSnapshotsBySessionId.size > 128) {
+    taskSnapshotsBySessionId.delete(taskSnapshotsBySessionId.keys().next().value);
+  }
+}
+
+function emitTaskSnapshot(context) {
+  rememberTaskSnapshot(context);
+  emit({
+    id: context.id,
+    type: "task_list_updated",
+    source: "claude",
+    explanation: null,
+    tasks: [...context.tasks.values()],
+  });
+}
+
+function extractTaskList(output) {
+  const parsed = parseTaskToolOutput(output);
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+  if (Array.isArray(parsed?.tasks)) {
+    return parsed.tasks;
+  }
+  if (Array.isArray(parsed?.todos)) {
+    return parsed.todos;
+  }
+  return null;
+}
+
+function applyTaskToolCompletion(context, toolName, input, output) {
+  const parsedOutput = parseTaskToolOutput(output);
+  const inputValue = input && typeof input === "object" ? input : {};
+
+  if (toolName === "TodoWrite") {
+    context.tasks.clear();
+    const todos = Array.isArray(inputValue.todos) ? inputValue.todos : [];
+    todos.forEach((todo, index) => {
+      const task = normalizeTask(todo, `todo-${index}`);
+      if (task) context.tasks.set(task.id, task);
+    });
+    emitTaskSnapshot(context);
+    return;
+  }
+
+  if (toolName === "TaskList") {
+    const tasks = extractTaskList(parsedOutput);
+    if (tasks) {
+      context.tasks.clear();
+      tasks.forEach((value, index) => {
+        const task = normalizeTask(value, `task-${index}`);
+        if (task) context.tasks.set(task.id, task);
+      });
+      emitTaskSnapshot(context);
+    }
+    return;
+  }
+
+  if (toolName === "TaskGet") {
+    const taskValue = parsedOutput?.task ?? parsedOutput;
+    const task = normalizeTask(
+      taskValue,
+      taskIdFromValue(inputValue, `task-${++context.taskCounter}`),
+    );
+    if (task) {
+      context.tasks.set(task.id, task);
+      emitTaskSnapshot(context);
+    }
+    return;
+  }
+
+  if (toolName === "TaskCreate") {
+    const taskId = taskIdFromValue(
+      parsedOutput?.task ?? parsedOutput,
+      `task-${++context.taskCounter}`,
+    );
+    const task = normalizeTask(
+      { ...inputValue, ...(parsedOutput?.task || {}), id: taskId },
+      taskId,
+    );
+    if (task) {
+      context.tasks.set(task.id, task);
+      emitTaskSnapshot(context);
+    }
+    return;
+  }
+
+  if (toolName === "TaskUpdate") {
+    const taskId = taskIdFromValue(inputValue, null);
+    if (!taskId) {
+      return;
+    }
+    if (inputValue.status === "deleted") {
+      context.tasks.delete(taskId);
+      emitTaskSnapshot(context);
+      return;
+    }
+    const status = normalizeTaskStatus(inputValue.status);
+    // An update for a task Panes never saw created has no title to show, and
+    // a synthesized one would persist as a real task.
+    const existing = context.tasks.get(taskId);
+    if (!existing) {
+      return;
+    }
+    const blockedBy = new Set(existing.blockedBy);
+    for (const id of inputValue.addBlockedBy ?? inputValue.add_blocked_by ?? []) {
+      blockedBy.add(String(id));
+    }
+    for (const id of inputValue.removeBlockedBy ?? inputValue.remove_blocked_by ?? []) {
+      blockedBy.delete(String(id));
+    }
+    context.tasks.set(taskId, {
+      ...existing,
+      title: inputValue.subject ?? inputValue.title ?? existing.title,
+      status: inputValue.status ? status : existing.status,
+      activeForm:
+        inputValue.activeForm ?? inputValue.active_form ?? existing.activeForm,
+      description: inputValue.description ?? existing.description,
+      owner: inputValue.owner ?? existing.owner,
+      blockedBy: [...blockedBy],
+    });
+    emitTaskSnapshot(context);
   }
 }
 
@@ -719,9 +984,11 @@ function buildPermissionHandler({
   sandboxMode,
   allowNetwork,
   approvalPolicy,
+  allowedTools = [],
 }) {
   const normalizedRoots = writableRoots.map((root) => path.resolve(root));
   const permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
+  const allowedToolNames = new Set(allowedTools);
 
   return async (toolName, input, options) => {
     const toolInput = input ?? {};
@@ -783,7 +1050,7 @@ function buildPermissionHandler({
       }
     }
 
-    if (!requiresApproval(permissionMode, toolName)) {
+    if (!requiresApproval(permissionMode, toolName, allowedToolNames)) {
       return { behavior: "allow" };
     }
 
@@ -982,34 +1249,65 @@ function buildUsageApiSnapshot(payload) {
   return Object.values(snapshot).some((value) => value !== null) ? snapshot : null;
 }
 
+/**
+ * Keychain service names that may hold this instance's OAuth credentials.
+ * Claude Code stores the default install under "Claude Code-credentials" and
+ * a custom CLAUDE_CONFIG_DIR under the same name suffixed with the first eight
+ * hex characters of sha256 over the raw directory value, so an instance must
+ * never fall back to the default item or it reports another account's limits.
+ */
+export function claudeCredentialKeychainServices(configDirectory, homeDirectory) {
+  const raw = configDirectory?.trim();
+  if (!raw) {
+    return ["Claude Code-credentials"];
+  }
+  const candidates = new Set([raw]);
+  if (homeDirectory) {
+    if (raw.startsWith("~/")) candidates.add(path.join(homeDirectory, raw.slice(2)));
+    if (raw.startsWith(homeDirectory + "/")) candidates.add("~" + raw.slice(homeDirectory.length));
+  }
+  const trimmed = raw.replace(/\/+$/, "");
+  if (trimmed && trimmed !== raw) candidates.add(trimmed);
+  return [...candidates].map(
+    (value) => `Claude Code-credentials-${createHash("sha256").update(value).digest("hex").slice(0, 8)}`,
+  );
+}
+
 async function readClaudeOauthAccessToken() {
   const environmentToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (environmentToken) {
     return environmentToken;
   }
 
+  const homeDirectory = process.env.HOME || process.env.USERPROFILE || "";
+  const configDirectoryEnv = process.env.CLAUDE_CONFIG_DIR?.trim() || "";
+
   if (process.platform === "darwin") {
-    try {
-      const { stdout } = await execFileAsync(
-        "/usr/bin/security",
-        ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-        { encoding: "utf8", timeout: 2_000, maxBuffer: 1024 * 1024 },
-      );
-      const credentials = JSON.parse(stdout);
-      const token = credentials?.claudeAiOauth?.accessToken;
-      if (typeof token === "string" && token.trim().length > 0) {
-        return token.trim();
+    for (const service of claudeCredentialKeychainServices(configDirectoryEnv, homeDirectory)) {
+      try {
+        const { stdout } = await execFileAsync(
+          "/usr/bin/security",
+          ["find-generic-password", "-s", service, "-w"],
+          { encoding: "utf8", timeout: 2_000, maxBuffer: 1024 * 1024 },
+        );
+        const credentials = JSON.parse(stdout);
+        const token = credentials?.claudeAiOauth?.accessToken;
+        if (typeof token === "string" && token.trim().length > 0) {
+          return token.trim();
+        }
+      } catch {
+        // Try the next service name, then the credentials file.
       }
-    } catch {
-      // Fall through to the credentials file used on Linux and Windows.
     }
   }
 
   try {
-    const homeDirectory = process.env.HOME || process.env.USERPROFILE;
-    if (!homeDirectory) return null;
-    const configDirectory =
-      process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
+    if (!homeDirectory && !configDirectoryEnv) return null;
+    const configDirectory = configDirectoryEnv
+      ? configDirectoryEnv.startsWith("~/")
+        ? path.join(homeDirectory, configDirectoryEnv.slice(2))
+        : configDirectoryEnv
+      : path.join(homeDirectory, ".claude");
     const credentials = JSON.parse(
       await readFile(path.join(configDirectory, ".credentials.json"), "utf8"),
     );
@@ -1183,6 +1481,27 @@ function formatAssistantMessageError(message) {
         message: "Claude stopped because it reached the maximum output token limit.",
         recoverable: true,
       };
+    case "overloaded":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "Claude is temporarily overloaded. Retry in a moment.",
+        recoverable: true,
+      };
+    case "model_not_found":
+      return {
+        errorType,
+        isAuthError: false,
+        message: "The selected Claude model is not available for this account.",
+        recoverable: false,
+      };
+    case "oauth_org_not_allowed":
+      return {
+        errorType,
+        isAuthError: true,
+        message: "This Claude organization does not allow this sign-in. Switch accounts or sign in again.",
+        recoverable: false,
+      };
     default:
       return {
         errorType,
@@ -1351,18 +1670,26 @@ async function handleQuery(req) {
     reasoningEffort,
   } = params;
 
-  const context = createQueryContext(id);
+  const context = createQueryContext(id, sessionId || resume || null);
   activeQueries.set(id, context);
 
-  const toolList = allowedTools || [
-    "Read",
-    "Write",
-    "Edit",
-    "Bash",
-    "Glob",
-    "Grep",
-    ...(allowNetwork ? ["WebFetch"] : []),
-  ];
+  // Task tools belong to the default tool set only. A caller that supplied an
+  // explicit allowlist gets exactly that list, so Panes never widens a thread
+  // past what the policy asked for.
+  const toolList = Array.isArray(allowedTools)
+    ? [...new Set(allowedTools)]
+    : [
+        ...new Set([
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Glob",
+          "Grep",
+          ...(allowNetwork ? ["WebFetch"] : []),
+          ...TASK_TOOL_NAMES,
+        ]),
+      ];
 
   const sessionCwd = cwd || process.cwd();
   let actualSessionId = null;
@@ -1378,7 +1705,15 @@ async function handleQuery(req) {
         normalizedWritableRoots,
       ),
       permissionMode: planMode ? "plan" : "default",
-      allowedTools: toolList,
+      // Never pass `allowedTools` to the SDK: bare tool names there auto-approve
+      // the tool and shadow `canUseTool`, so Panes' approval flow would be
+      // skipped (warning CLAUDE_SDK_CAN_USE_TOOL_SHADOWED). An explicit
+      // allowlist restricts the tool set through `tools` instead.
+      ...(Array.isArray(allowedTools) ? { tools: toolList } : {}),
+      env: {
+        ...process.env,
+        CLAUDE_CODE_ENABLE_TODO_TOOLS: "1",
+      },
       canUseTool: buildPermissionHandler({
         context,
         cwd: sessionCwd,
@@ -1386,10 +1721,13 @@ async function handleQuery(req) {
         sandboxMode: normalizedSandboxMode,
         allowNetwork: Boolean(allowNetwork),
         approvalPolicy,
+        allowedTools: toolList,
       }),
-      settingSources: ["project"],
+      // settingSources is intentionally omitted so user, project and local
+      // settings all load, matching the Claude Code CLI default.
       sandbox: {
         enabled: true,
+        failIfUnavailable: false,
         autoAllowBashIfSandboxed: true,
         allowUnsandboxedCommands: false,
         filesystem: {
@@ -1423,6 +1761,9 @@ async function handleQuery(req) {
             async (hookInput) => {
               const toolName = hookInput?.tool_name || hookInput?.name || "unknown";
               if (toolName === "AskUserQuestion") {
+                return {};
+              }
+              if (TASK_TOOL_NAMES.has(toolName)) {
                 return {};
               }
               if (toolName === "ExitPlanMode" || toolName === "EnterPlanMode") {
@@ -1470,6 +1811,15 @@ async function handleQuery(req) {
               if (toolName === "AskUserQuestion") {
                 return {};
               }
+              if (TASK_TOOL_NAMES.has(toolName)) {
+                const toolInput = hookInput?.tool_input || hookInput?.input || {};
+                const output =
+                  hookInput?.tool_response ??
+                  hookInput?.tool_result ??
+                  hookInput?.result;
+                applyTaskToolCompletion(context, toolName, toolInput, output);
+                return {};
+              }
               const toolUseId =
                 hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
               if (
@@ -1509,6 +1859,9 @@ async function handleQuery(req) {
               if (toolName === "AskUserQuestion") {
                 return {};
               }
+              if (TASK_TOOL_NAMES.has(toolName)) {
+                return {};
+              }
               const toolUseId =
                 hookInput?.tool_use_id || hookInput?.toolUseID || hookInput?.toolUseId;
               if (
@@ -1541,7 +1894,15 @@ async function handleQuery(req) {
     });
 
     if (model) options.model = model;
-    if (systemPrompt) options.systemPrompt = systemPrompt;
+    if (claudeExtraArgs) options.extraArgs = claudeExtraArgs;
+    // Without a systemPrompt option the SDK runs with an empty system prompt.
+    // Use the Claude Code preset so results match the Claude Code app, and
+    // append any caller-supplied instructions on top of it.
+    options.systemPrompt = {
+      type: "preset",
+      preset: "claude_code",
+      ...(systemPrompt ? { append: systemPrompt } : {}),
+    };
     if (resume) options.resume = resume;
     if (sessionId) options.sessionId = sessionId;
     if (maxTurns) options.maxTurns = maxTurns;
@@ -1603,6 +1964,22 @@ async function handleQuery(req) {
             ...notice,
           });
         }
+      } else if (message.type === "system" && message.subtype === "api_retry") {
+        const attempt = Number(message.attempt) || 0;
+        const maxRetries = Number(message.max_retries) || 0;
+        const delayMs = Number(message.retry_delay_ms) || 0;
+        emit({
+          id,
+          type: "notice",
+          kind: "claude_status",
+          level: "info",
+          title: "Claude status",
+          message:
+            `Claude API request failed${message.error ? ` (${message.error})` : ""}; ` +
+            `retrying ${attempt}/${maxRetries}` +
+            (delayMs > 0 ? ` in ${Math.round(delayMs / 1000)}s` : "") +
+            ".",
+        });
       } else if (message.type === "result") {
         actualSessionId = message.session_id || actualSessionId;
         setContextSessionId(context, actualSessionId);

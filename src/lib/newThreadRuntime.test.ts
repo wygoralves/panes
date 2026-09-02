@@ -8,6 +8,7 @@ import type { EngineInfo, Thread } from "../types";
 const engines: EngineInfo[] = [
   {
     id: "codex",
+    kind: "codex",
     name: "Codex",
     models: [
       {
@@ -53,6 +54,7 @@ const engines: EngineInfo[] = [
   },
   {
     id: "claude",
+    kind: "claude",
     name: "Claude",
     models: [
       {
@@ -94,6 +96,7 @@ function buildThread(overrides?: Partial<Thread>): Thread {
     totalTokens: 0,
     createdAt: "2026-03-26T00:00:00Z",
     lastActivityAt: "2026-03-26T00:00:00Z",
+    settledAt: null,
     ...overrides,
   };
 }

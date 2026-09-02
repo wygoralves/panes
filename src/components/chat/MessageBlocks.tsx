@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import {
   memo,
   useCallback,
@@ -32,6 +33,7 @@ import {
   Copy,
   Check,
   MessageSquare,
+  ListTodo,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -43,6 +45,7 @@ import type {
   MessageStatus,
   NoticeBlock,
   SteerBlock,
+  TaskListBlock,
   ThinkingBlock,
 } from "../../types";
 import {
@@ -72,6 +75,7 @@ import {
   extractDiffFilename,
 } from "../../lib/parseDiff";
 import { getMessageBlockKey } from "./messageBlockKeys";
+import { isVisibleMessageBlock } from "./messageBlockVisibility";
 import {
   VirtualizedDiffBody,
   useParsedDiff,
@@ -560,6 +564,67 @@ function NoticeBlockView({ block }: { block: NoticeBlock }) {
         <div className="msg-notice-message">{block.message}</div>
       </div>
     </div>
+  );
+}
+
+function TaskListBlockView({ block }: { block: TaskListBlock }) {
+  const { t } = useTranslation("chat");
+  const completed = block.tasks.filter((task) => task.status === "completed").length;
+
+  return (
+    <section className="msg-task-list" aria-label={t("messageBlocks.tasks.title")}>
+      <header className="msg-task-list-header">
+        <span className="msg-task-list-title">
+          <ListTodo size={15} aria-hidden="true" />
+          {t("messageBlocks.tasks.title")}
+        </span>
+        <span className="msg-task-list-progress">
+          {t("messageBlocks.tasks.progress", { completed, total: block.tasks.length })}
+        </span>
+      </header>
+      {block.explanation ? (
+        <p className="msg-task-list-explanation">{block.explanation}</p>
+      ) : null}
+      <ol className="msg-task-list-items">
+        {block.tasks.map((task) => {
+          const label =
+            task.status === "in_progress" && task.activeForm
+              ? task.activeForm
+              : task.title;
+          return (
+            <li
+              key={task.id}
+              className={`msg-task-list-item is-${task.status.replace("_", "-")}`}
+            >
+              <span className="msg-task-list-state" aria-hidden="true">
+                {task.status === "completed" ? (
+                  <Check size={13} />
+                ) : task.status === "in_progress" ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Circle size={11} />
+                )}
+              </span>
+              <span className="msg-task-list-copy">
+                <span className="msg-task-list-label">{label}</span>
+                {task.owner || task.blockedBy.length > 0 ? (
+                  <span className="msg-task-list-meta">
+                    {task.owner ? <span>{task.owner}</span> : null}
+                    {task.blockedBy.length > 0 ? (
+                      <span>
+                        {t("messageBlocks.tasks.blockedBy", {
+                          count: task.blockedBy.length,
+                        })}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : null}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
 
@@ -1161,7 +1226,7 @@ function ApprovalCard({
 }) {
   const { t } = useTranslation("chat");
   const isPending = block.status === "pending";
-  const isClaudeThread = engineId === "claude";
+  const isClaudeThread = engineKind(engineId) === "claude";
   const details = block.details ?? {};
   const isToolInputRequest = isRequestUserInputApproval(details);
   const isDynamicToolCall = isDynamicToolCallApproval(details);
@@ -1580,6 +1645,10 @@ function renderSingleBlock(
     return <NoticeBlockView key={blockKey} block={block} />;
   }
 
+  if (block.type === "taskList") {
+    return <TaskListBlockView key={blockKey} block={block} />;
+  }
+
   /* ── Steer ── */
   if (block.type === "steer") {
     return <SteerBlockView key={blockKey} block={block} />;
@@ -1649,7 +1718,7 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
   const safeBlocks = useMemo(
     () => dedupeDiffBlocksByScope(
       (Array.isArray(blocks) ? blocks : []).filter(isBlockLike) as ContentBlock[],
-    ),
+    ).filter(isVisibleMessageBlock),
     [blocks],
   );
 

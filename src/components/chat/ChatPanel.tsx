@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import {
   FormEvent,
   Suspense,
@@ -48,10 +49,13 @@ import {
   Compass,
   BookOpen,
 } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
+import { DraftScopePicker } from "./DraftScopePicker";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useChatComposerStore } from "../../stores/chatComposerStore";
+import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
+import { useChatProvidersStore } from "../../stores/chatProvidersStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useFileStore } from "../../stores/fileStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
@@ -69,10 +73,11 @@ import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import {
-  autonomyPresetExecutionPolicyRequest,
+  autonomyPresetDescriptionKey,
   autonomyPresetPatch,
   detectAutonomyPreset,
   isAutonomyPresetId,
+  stopAskingAutonomyPreset,
 } from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
 import {
@@ -83,6 +88,10 @@ import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
 import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
+import {
+  hasVisibleMessageContent,
+  isRenderableMessageRow,
+} from "./messageBlockVisibility";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
 import {
@@ -204,7 +213,7 @@ export function resolvePendingToolInputApproval(
       return false;
     }
 
-    return engineId !== "claude" || isSupportedClaudeToolInputApproval(details);
+    return engineKind(engineId) !== "claude" || isSupportedClaudeToolInputApproval(details);
   });
 
   if (eligibleApprovals.length === 0) {
@@ -242,7 +251,7 @@ export function filterPendingApprovalBannerRows(
       return false;
     }
 
-    return engineId === "claude";
+    return engineKind(engineId) === "claude";
   });
 }
 
@@ -254,7 +263,7 @@ export function canUseApprovalDecisionActions(
   engineId?: string,
   details?: Record<string, unknown>,
 ): boolean {
-  return engineId !== "opencode" || !isOpenCodeQuestionApproval(details);
+  return engineKind(engineId) !== "opencode" || !isOpenCodeQuestionApproval(details);
 }
 
 export function canBatchApproveApproval(
@@ -266,7 +275,7 @@ export function canBatchApproveApproval(
     canUseApprovalDecisionActions(engineId, details) &&
     !isRequestUserInputApproval(details) &&
     !requiresCustomApprovalPayload(details) &&
-    !shouldShowClaudeUnsupportedApproval(details, true, engineId === "claude")
+    !shouldShowClaudeUnsupportedApproval(details, true, engineKind(engineId) === "claude")
   );
 }
 
@@ -290,7 +299,7 @@ export function buildPermissionApprovalResponseForEngine(
   details: Record<string, unknown> | undefined,
   decision: "accept" | "decline" | "accept_for_session",
 ): ApprovalResponse {
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     return { decision };
   }
 
@@ -854,10 +863,10 @@ function readThreadOpenCodeAgentValue(thread: Thread | null): string {
 }
 
 function readThreadApprovalPolicyValue(thread: Thread | null): ThreadApprovalPolicyValue {
-  if (thread?.engineId === "claude") {
+  if (engineKind(thread?.engineId) === "claude") {
     return readClaudeThreadPermissionModeValue(thread);
   }
-  if (thread?.engineId === "opencode") {
+  if (engineKind(thread?.engineId) === "opencode") {
     return readOpenCodeThreadPermissionModeValue(thread);
   }
 
@@ -911,7 +920,7 @@ function readThreadExecutionPolicyState(thread: Thread | null): {
   const rawApprovalPolicy = thread?.engineMetadata?.sandboxApprovalPolicy;
   return {
     approvalPolicy:
-      thread?.engineId === "codex" && isCustomCodexApprovalPolicyValue(rawApprovalPolicy)
+      engineKind(thread?.engineId) === "codex" && isCustomCodexApprovalPolicyValue(rawApprovalPolicy)
         ? rawApprovalPolicy
         : readThreadApprovalPolicyValue(thread),
     sandboxMode: readThreadSandboxModeValue(thread),
@@ -937,7 +946,7 @@ function applyThreadExecutionPolicyPatch(
     approvalPolicy: nextApprovalPolicy,
   };
 
-  if (thread.engineId === "claude") {
+  if (engineKind(thread.engineId) === "claude") {
     if (
       nextState.approvalPolicy === "restricted" ||
       nextState.approvalPolicy === "standard" ||
@@ -947,7 +956,7 @@ function applyThreadExecutionPolicyPatch(
     } else {
       delete metadata.claudePermissionMode;
     }
-  } else if (thread.engineId === "opencode") {
+  } else if (engineKind(thread.engineId) === "opencode") {
     if (
       nextState.approvalPolicy === "ask" ||
       nextState.approvalPolicy === "allow" ||
@@ -974,7 +983,7 @@ function applyThreadExecutionPolicyPatch(
     }
   }
 
-  if (thread.engineId !== "opencode") {
+  if (engineKind(thread.engineId) !== "opencode") {
     if (nextState.sandboxMode === "inherit") {
       delete metadata.sandboxMode;
     } else {
@@ -1135,14 +1144,6 @@ function readThreadLastModelId(thread: {
   }
   const normalized = raw.trim();
   return normalized.length > 0 ? normalized : null;
-}
-
-function hasVisibleContent(blocks?: ContentBlock[]): boolean {
-  if (!blocks || blocks.length === 0) return false;
-  return blocks.some((b) => {
-    if (b.type === "text" || b.type === "thinking") return Boolean(b.content?.trim());
-    return true;
-  });
 }
 
 function parseMessageDate(raw?: string): Date | null {
@@ -1341,10 +1342,14 @@ function MessageRowView({
       ),
     [message.blocks],
   );
-  const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
+  const hasAssistantContent = !isUser && hasVisibleMessageContent(message.blocks);
   const showAssistantShell = !isUser && (hasAssistantContent || message.status === "streaming");
   const showThinkingPlaceholder = showAssistantShell && !hasAssistantContent;
   const thinkingVariant = useThinkingVariant(showThinkingPlaceholder);
+
+  if (!isUser && !showAssistantShell) {
+    return null;
+  }
 
   return (
     <div
@@ -1433,7 +1438,7 @@ function MessageRowView({
         >
           {assistantLabel && (
             <div className="msg-turn-header">
-              {getHarnessIcon(assistantEngineId, 11)}
+              {getHarnessIcon(engineKind(assistantEngineId), 11)}
               <span className="msg-turn-header-label">{assistantLabel}</span>
               <span className="msg-turn-actions">
                 {messageTimestamp && <span style={{ padding: "0 2px" }}>{messageTimestamp}</span>}
@@ -1665,6 +1670,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [isFileDropOver, setIsFileDropOver] = useState(false);
   const [planMode, setPlanMode] = useState(false);
+  const planModeVisible = useComposerSettingsStore((state) => state.planModeVisible);
+  const loadComposerSettings = useComposerSettingsStore((state) => state.load);
+  useEffect(() => {
+    void loadComposerSettings();
+  }, [loadComposerSettings]);
+  useEffect(() => {
+    if (!planModeVisible && planMode) {
+      setPlanMode(false);
+    }
+  }, [planMode, planModeVisible]);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashMenuQuery, setSlashMenuQuery] = useState("");
   const [slashMenuActiveIndex, setSlashMenuActiveIndex] = useState(0);
@@ -1699,7 +1714,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     null,
   );
   const {
-    messages,
     status,
     hasOlderMessages,
     loadingOlderMessages,
@@ -1715,6 +1729,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     error,
     setActiveThread: bindChatThread,
     threadId,
+    messages: allMessages,
   } = useChatStore(
     useShallow((state) => ({
       messages: state.messages,
@@ -1735,6 +1750,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       threadId: state.threadId,
     })),
   );
+  // Rows the transcript never paints (an assistant shell with nothing to show
+  // yet) are dropped here so the virtualized measurements, the plain list, and
+  // the empty state all work from the same set.
+  const messages = useMemo(
+    () => allMessages.filter(isRenderableMessageRow),
+    [allMessages],
+  );
   const messageFocusTarget = useUiStore((s) => s.messageFocusTarget);
   const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
   const focusMode = useUiStore((s) => s.focusMode);
@@ -1744,8 +1766,24 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const customWindowFrame = usesCustomWindowFrame();
   const useTitlebarSafeInset = !embedded && isMac && focusMode && !showSidebar;
   const engines = useEngineStore((s) => s.engines);
+  const chatProviders = useChatProvidersStore((s) => s.providers);
+  const loadChatProviders = useChatProvidersStore((s) => s.load);
   const health = useEngineStore((s) => s.health);
   const ensureEngineHealth = useEngineStore((s) => s.ensureHealth);
+  useEffect(() => {
+    void loadChatProviders();
+  }, [loadChatProviders]);
+  // Providers switched off in settings stay out of the picker, except the
+  // one this thread already runs on.
+  const composerEngines = useMemo(
+    () =>
+      engines.filter(
+        (engine) =>
+          engine.id === selectedEngineId ||
+          !chatProviders.some((provider) => provider.id === engine.id && !provider.enabled),
+      ),
+    [chatProviders, engines, selectedEngineId],
+  );
   const onboardingOpen = useOnboardingStore((s) => s.open);
   const onboardingSelectedChatEngines = useOnboardingStore((s) => s.selectedChatEngines);
   // The health warning is only a heuristic; the backend answer is what
@@ -1944,7 +1982,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     [availableModels, selectedModelId],
   );
   const selectedClaudeWeeklyUsage = useMemo(() => {
-    if (selectedEngineId !== "claude" || !usageLimits) {
+    if (engineKind(selectedEngineId) !== "claude" || !usageLimits) {
       return null;
     }
 
@@ -1975,7 +2013,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     () => messages.some((message) => message.role === "user"),
     [messages],
   );
-  const selectedModelSupportsPersonality = selectedEngineId === "codex" &&
+  const selectedModelSupportsPersonality = engineKind(selectedEngineId) === "codex" &&
     selectedModel?.supportsPersonality === true;
   const codexConfigActiveCount =
     (selectedPersonality !== "inherit" ? 1 : 0) +
@@ -2007,7 +2045,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       activeThread.repoId === activeScopeRepoId;
     const engineMatch = activeThread.engineId === selectedEngineId;
     const modelMatch =
-      selectedEngineId === "codex" ||
+      engineKind(selectedEngineId) === "codex" ||
       activeThread.modelId === selectedModelId ||
       readThreadLastModelId(activeThread) === selectedModelId;
 
@@ -2025,7 +2063,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [selectedEngineId]);
 
   useEffect(() => {
-    if (selectedEngineId === "opencode" && planMode) {
+    if (engineKind(selectedEngineId) === "opencode" && planMode) {
       setPlanMode(false);
     }
   }, [planMode, selectedEngineId]);
@@ -2047,7 +2085,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       !threadId ||
       !activeThread ||
       !activeWorkspaceId ||
-      selectedEngineId !== "codex"
+      engineKind(selectedEngineId) !== "codex"
     ) {
       return false;
     }
@@ -2057,7 +2095,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       activeThread.id === threadId &&
       activeThread.workspaceId === activeWorkspaceId &&
       activeThread.repoId === activeScopeRepoId &&
-      activeThread.engineId === "codex"
+      engineKind(activeThread.engineId) === "codex"
     );
   }, [
     activeRepo?.id,
@@ -2077,7 +2115,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   );
   const openCodeSlashCommands = useMemo<SlashCommand[]>(
     () =>
-      selectedEngineId === "opencode"
+      engineKind(selectedEngineId) === "opencode"
         ? (openCodeCatalog?.commands ?? []).map((command) => ({
             id: `opencode-command:${command.name}`,
             name: command.name,
@@ -2133,7 +2171,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
   const resolveCodexInputItems = useCallback(
     async (message: string, engineId: string): Promise<ChatInputItem[] | undefined> => {
-      if (engineId !== "codex") {
+      if (engineKind(engineId) !== "codex") {
         return undefined;
       }
 
@@ -2252,27 +2290,28 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     [activeThread?.engineId, engines],
   );
   const activeThreadApprovalTitle =
-    activeThread?.engineId === "claude"
+    engineKind(activeThread?.engineId) === "claude"
       ? t("policy.approvalTitleClaude")
-      : activeThread?.engineId === "opencode"
+      : engineKind(activeThread?.engineId) === "opencode"
         ? t("policy.approvalTitleOpenCode")
       : t("permissionPicker.approvalPolicy");
   const activeThreadApprovalOptions =
-    activeThread?.engineId === "claude"
+    engineKind(activeThread?.engineId) === "claude"
       ? claudeThreadPermissionModeOptions
-      : activeThread?.engineId === "opencode"
+      : engineKind(activeThread?.engineId) === "opencode"
         ? openCodeThreadPermissionModeOptions
       : codexThreadApprovalPolicyOptions;
   const activeThreadApprovalSelectedLabel =
-    activeThread?.engineId === "codex" && activeThreadApprovalPolicy === "custom"
+    engineKind(activeThread?.engineId) === "codex" && activeThreadApprovalPolicy === "custom"
       ? t("permissionPicker.custom")
       : undefined;
   const activeThreadSandboxMode = readThreadSandboxModeValue(activeThread);
   const activeThreadNetworkPolicy = readThreadNetworkPolicyValue(activeThread);
   const activeThreadAutonomyEngineId =
-    activeThread?.engineId === "codex" ||
-    activeThread?.engineId === "claude" ||
-    activeThread?.engineId === "opencode"
+    activeThread &&
+    (engineKind(activeThread.engineId) === "codex" ||
+      engineKind(activeThread.engineId) === "claude" ||
+      engineKind(activeThread.engineId) === "opencode")
       ? activeThread.engineId
       : undefined;
   const activeThreadAutonomyPreset = useMemo(
@@ -2327,7 +2366,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           activeThreadSandboxCapabilities.includes(option.value),
       );
 
-      if (activeThread?.engineId === "codex" && codexExternalSandboxActive) {
+      if (engineKind(activeThread?.engineId) === "codex" && codexExternalSandboxActive) {
         return supportedByEngine.filter(
           (option) =>
             option.value === "inherit" || option.value === "danger-full-access",
@@ -2350,7 +2389,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     (option) => option.value === activeThreadSandboxMode,
   );
   const activeThreadSandboxNotice =
-    activeThread?.engineId === "claude" && !activeThreadSandboxModeSupported
+    engineKind(activeThread?.engineId) === "claude" && !activeThreadSandboxModeSupported
         ? t("policy.claudeSandboxNotice")
         : null;
   const activeThreadSandboxSelectedLabel =
@@ -2358,9 +2397,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       ? `${activeThreadSandboxModeOption.label} ${t("panel.unsupportedSuffix")}`
       : undefined;
   const threadPolicyCustomCount =
-    activeThread?.engineId === "opencode"
+    engineKind(activeThread?.engineId) === "opencode"
       ? activeThreadApprovalPolicy !== "inherit" ? 1 : 0
-      : activeThread?.engineId === "claude"
+      : engineKind(activeThread?.engineId) === "claude"
       ? (activeThreadApprovalPolicy !== "inherit" ? 1 : 0) +
         (activeThreadSandboxMode !== "inherit" ? 1 : 0) +
         (activeThreadNetworkPolicy !== "inherit" ? 1 : 0)
@@ -2583,7 +2622,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     pendingToolInputApproval?.details,
   );
   const pendingToolInputIsOpenCodeQuestion =
-    activeThread?.engineId === "opencode" &&
+    engineKind(activeThread?.engineId) === "opencode" &&
     isOpenCodeQuestionApproval(pendingToolInputApproval?.details);
   const pendingToolInputSupportsDecline =
     (pendingToolInputCanUseDecisionActions || pendingToolInputIsOpenCodeQuestion) &&
@@ -2995,7 +3034,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [activeWorkspaceId, activeThread?.engineId, engines, selectedEngineId]);
 
   useEffect(() => {
-    if (selectedEngineId !== "codex" || !activeWorkspaceId || !codexReferenceRoot) {
+    if (engineKind(selectedEngineId) !== "codex" || !activeWorkspaceId || !codexReferenceRoot) {
       setCodexSkills([]);
       setCodexApps([]);
       setCodexReferenceCatalogState({
@@ -3035,7 +3074,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [activeWorkspaceId, codexReferenceRoot, loadCodexReferenceCatalogs, selectedEngineId]);
 
   useEffect(() => {
-    if (selectedEngineId !== "opencode" || !activeWorkspaceId || !openCodeRuntimeRoot) {
+    if (engineKind(selectedEngineId) !== "opencode" || !activeWorkspaceId || !openCodeRuntimeRoot) {
       setOpenCodeCatalog(null);
       setOpenCodeCatalogLoaded(false);
       return;
@@ -3069,7 +3108,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
   useEffect(() => {
     if (
-      selectedEngineId !== "codex" ||
+      engineKind(selectedEngineId) !== "codex" ||
       !activeWorkspaceId ||
       !codexReferenceRoot ||
       !codexProtocolDiagnostics?.fetchedAt ||
@@ -3123,17 +3162,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
     effortSyncKeyRef.current = syncKey;
 
+    // Until the user picks an effort, follow the model default (which the
+    // engine seeds from its own config) instead of Panes' composer fallback.
     const nextEffort = resolveReasoningEffortForModel(
       selectedModel,
-      activeThreadReasoningEffort ?? selectedEffort,
+      activeThreadReasoningEffort ?? (hasExplicitComposerRuntime ? selectedEffort : null),
     );
 
     if (nextEffort && selectedEffort !== nextEffort) {
+      selectedEffortRef.current = nextEffort;
       setSelectedEffort(nextEffort);
     }
   }, [
     activeThread?.id,
     activeThreadReasoningEffort,
+    hasExplicitComposerRuntime,
     selectedModel?.id,
     selectedModel?.defaultReasoningEffort,
     selectedEffort,
@@ -3181,7 +3224,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   useEffect(() => {
     if (
       activeThreadInCurrentWorkspace &&
-      activeThread?.engineId !== "codex" &&
+      engineKind(activeThread?.engineId) !== "codex" &&
       selectedServiceTier !== "inherit"
     ) {
       setSelectedServiceTier("inherit");
@@ -3189,7 +3232,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [activeThread?.engineId, activeThreadInCurrentWorkspace, selectedServiceTier]);
 
   useEffect(() => {
-    if (activeThread?.engineId !== "codex") {
+    if (engineKind(activeThread?.engineId) !== "codex") {
       return;
     }
 
@@ -3200,9 +3243,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }, [activeThread?.engineId, activeThread?.id, activeThread?.engineMetadata]);
 
   useEffect(() => {
-    if (activeThread?.engineId === "opencode") {
+    if (engineKind(activeThread?.engineId) === "opencode") {
       setSelectedOpenCodeAgent(readThreadOpenCodeAgentValue(activeThread));
-    } else if (selectedEngineId !== "opencode") {
+    } else if (engineKind(selectedEngineId) !== "opencode") {
       setSelectedOpenCodeAgent("build");
     }
   }, [activeThread?.engineId, activeThread?.id, activeThread?.engineMetadata, selectedEngineId]);
@@ -3546,7 +3589,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       setCustomApprovalPolicyText(nextCustomApprovalPolicyText);
     };
 
-    if (!activeThreadMatchesComposer || activeThread?.engineId !== "codex") {
+    if (!activeThread || !activeThreadMatchesComposer || engineKind(activeThread.engineId) !== "codex") {
       applyLocalState();
       return;
     }
@@ -3587,7 +3630,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     },
   ): Promise<boolean> {
     const effectiveEngineId = config?.engineId ?? selectedEngineId;
-    if (effectiveEngineId !== "codex") {
+    if (engineKind(effectiveEngineId) !== "codex") {
       return true;
     }
 
@@ -3650,7 +3693,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     selectedOpenCodeAgentRef.current = agent;
     setHasExplicitComposerRuntime(true);
 
-    if (!activeThreadMatchesComposer || activeThread?.engineId !== "opencode") {
+    if (!activeThread || !activeThreadMatchesComposer || engineKind(activeThread.engineId) !== "opencode") {
       return;
     }
 
@@ -3674,7 +3717,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     },
   ): Promise<boolean> {
     const effectiveEngineId = config?.engineId ?? selectedEngineId;
-    if (effectiveEngineId !== "opencode") {
+    if (engineKind(effectiveEngineId) !== "opencode") {
       return true;
     }
 
@@ -3694,7 +3737,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }
 
   async function onForkCodexThread() {
-    if (!activeThread || activeThread.engineId !== "codex") {
+    if (!activeThread || engineKind(activeThread.engineId) !== "codex") {
       throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
     }
 
@@ -3714,7 +3757,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }) {
     if (
       !activeThread ||
-      activeThread.engineId !== "codex" ||
+      engineKind(activeThread.engineId) !== "codex" ||
       !activeThread.engineThreadId
     ) {
       throw new Error(t("panel.toasts.codexReviewUnavailable"));
@@ -3739,7 +3782,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }
 
   async function onRollbackCodexThread(numTurns: number) {
-    if (!activeThread || activeThread.engineId !== "codex") {
+    if (!activeThread || engineKind(activeThread.engineId) !== "codex") {
       throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
     }
 
@@ -3754,7 +3797,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   }
 
   async function onCompactCodexThread() {
-    if (!activeThread || activeThread.engineId !== "codex") {
+    if (!activeThread || engineKind(activeThread.engineId) !== "codex") {
       throw new Error(t("panel.toasts.codexThreadToolUnavailable"));
     }
 
@@ -3809,15 +3852,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
   const canManageActiveCodexThread =
     !!activeThread &&
-    activeThread.engineId === "codex" &&
+    engineKind(activeThread.engineId) === "codex" &&
     !!activeThread.engineThreadId &&
     !streaming;
   const canUseNativeCodexHistoryTools =
     canManageActiveCodexThread &&
     activeThread?.engineMetadata?.codexTranscriptImported !== false;
 
-  const isCodexEngine = selectedEngineId === "codex";
-  const isOpenCodeEngine = selectedEngineId === "opencode";
+  const isCodexEngine = engineKind(selectedEngineId) === "codex";
+  const isOpenCodeEngine = engineKind(selectedEngineId) === "opencode";
   const activePlanMode = planMode && !isOpenCodeEngine;
 
   const slashCommands: SlashCommand[] = useMemo(
@@ -4107,7 +4150,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     const submitEngineId = composerRuntime.engineId;
     const submitModelId = composerRuntime.modelId;
     const submitReasoningEffort = composerRuntime.reasoningEffort;
-    const submitPlanMode = submitEngineId === "opencode" ? false : planMode;
+    const submitPlanMode = engineKind(submitEngineId) === "opencode" ? false : planMode;
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -4115,7 +4158,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         activeThread.repoId === activeScopeRepoId
       : false;
     const activeThreadModelMatch = activeThread
-      ? submitEngineId === "codex" ||
+      ? engineKind(submitEngineId) === "codex" ||
         activeThread.modelId === submitModelId ||
         readThreadLastModelId(activeThread) === submitModelId
       : false;
@@ -4140,7 +4183,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         modelId: submitModelId,
         reasoningEffort: submitReasoningEffort,
         serviceTier:
-          submitEngineId === "codex" && selectedServiceTier !== "inherit"
+          engineKind(submitEngineId) === "codex" && selectedServiceTier !== "inherit"
             ? selectedServiceTier
             : null,
         title: activeRepo
@@ -4216,7 +4259,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     setThreadReasoningEffortLocal(targetThreadId, submitReasoningEffort);
 
     const needsNewThreadCodexConfig =
-      submitEngineId === "codex" &&
+      engineKind(submitEngineId) === "codex" &&
       (selectedPersonality !== "inherit" ||
         outputSchemaText.trim().length > 0 ||
         customApprovalPolicyText.trim().length > 0);
@@ -4227,7 +4270,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
 
     const needsNewThreadOpenCodeConfig =
-      submitEngineId === "opencode" && selectedOpenCodeAgentRef.current !== "build";
+      engineKind(submitEngineId) === "opencode" && selectedOpenCodeAgentRef.current !== "build";
     if (!createdThread || needsNewThreadOpenCodeConfig) {
       if (!(await applyOpenCodeConfigToThread(targetThreadId))) {
         return false;
@@ -4349,7 +4392,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
-      const promptPlanMode = prompt.engineId === "opencode" ? false : prompt.planMode;
+      const promptPlanMode = engineKind(prompt.engineId) === "opencode" ? false : prompt.planMode;
       const sent = await send(prompt.text, {
         threadIdOverride: prompt.threadId,
         engineId: prompt.engineId,
@@ -4543,9 +4586,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   async function onThreadExecutionPolicyChange(patch: ThreadExecutionPolicyPatch) {
     if (
       !activeThread ||
-      (activeThread.engineId !== "codex" &&
-        activeThread.engineId !== "claude" &&
-        activeThread.engineId !== "opencode")
+      (engineKind(activeThread.engineId) !== "codex" &&
+        engineKind(activeThread.engineId) !== "claude" &&
+        engineKind(activeThread.engineId) !== "opencode")
     ) {
       return;
     }
@@ -4553,8 +4596,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     const currentThread =
       useThreadStore.getState().threads.find((thread) => thread.id === activeThread.id) ??
       activeThread;
-    const isCodexThread = currentThread.engineId === "codex";
-    const isOpenCodeThread = currentThread.engineId === "opencode";
+    const isCodexThread = engineKind(currentThread.engineId) === "codex";
+    const isOpenCodeThread = engineKind(currentThread.engineId) === "opencode";
     const nextState = {
       ...readThreadExecutionPolicyState(currentThread),
       ...patch,
@@ -4578,7 +4621,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
 
     if (
-      currentThread.engineId === "claude" &&
+      engineKind(currentThread.engineId) === "claude" &&
       patch.sandboxMode === "danger-full-access"
     ) {
       toast.error(t("panel.toasts.claudeSandboxUnsupported"));
@@ -4586,8 +4629,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
 
     if (
-      currentThread.engineId !== "codex" &&
-      currentThread.engineId !== "claude" &&
+      engineKind(currentThread.engineId) !== "codex" &&
+      engineKind(currentThread.engineId) !== "claude" &&
       patch.sandboxMode !== undefined
     ) {
       toast.error(t("panel.toasts.codexOnlySandbox"));
@@ -4709,25 +4752,17 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         }
       }
 
-      if (stopAsking && autonomyEngineId) {
-        const request = autonomyPresetExecutionPolicyRequest("full", autonomyEngineId, {
-          codexExternalSandbox: codexExternalSandboxActive,
-        });
-        if (request) {
-          const requestId =
-            (threadExecutionPolicyRequestIdsRef.current[targetThreadId] ?? 0) + 1;
-          threadExecutionPolicyRequestIdsRef.current[targetThreadId] = requestId;
-          try {
-            const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, request);
-            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
-              applyThreadUpdateLocal(updatedThread);
-            }
-          } catch (error) {
-            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
-              toast.error(t("panel.toasts.updateExecutionPolicyFailed", { error: String(error) }));
-            }
-          }
-        }
+      if (stopAsking && autonomyEngineId && activeThread?.id === targetThreadId) {
+        // Route through the shared handler so the engine guards, the external
+        // sandbox retry, and the failure toast all apply. The rung is never
+        // "full": this button grants workspace autonomy, not disk and network.
+        await onThreadExecutionPolicyChange(
+          autonomyPresetPatch(
+            stopAskingAutonomyPreset(autonomyEngineId),
+            autonomyEngineId,
+            { codexExternalSandbox: codexExternalSandboxActive },
+          ) as ThreadExecutionPolicyPatch,
+        );
       }
     } finally {
       batchApprovalInFlightRef.current = false;
@@ -5386,7 +5421,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         {/* Chat section */}
         <div
           ref={chatSectionRef}
-          className="chat-section"
+          className={`chat-section${messages.length === 0 && !pendingSubmission ? " chat-section-draft" : ""}`}
           style={{
             flex: (layoutMode === "terminal" || layoutMode === "editor") ? "0 0 0px"
                  : layoutMode === "chat" ? "1 1 0px"
@@ -5424,65 +5459,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             {/* ── Messages ── */}
             <div
               ref={viewportRef}
-              style={{
-                position: "relative",
-                flex: 1,
-                overflow: "auto",
-                padding: "20px 24px",
-              }}
+              className="chat-messages-viewport"
             >
         {messages.length === 0 && !pendingSubmission ? (
-          <div
-            className="animate-fade-in"
-            style={{
-              height: "100%",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 14,
-              color: "var(--text-3)",
-              textAlign: "center",
-            }}
-          >
-            <div className="chat-empty-tile">
-              <MessageSquare size={18} />
-            </div>
-            <div>
-              <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 500, color: "var(--text-2)" }}>
-                {t("panel.startConversation")}
-              </p>
-              <p style={{ margin: 0, fontSize: 12.5 }}>
-                {activeWorkspaceId && (activeRepo || gitStatus?.branch)
-                  ? activeRepo && gitStatus?.branch
-                    ? t("panel.emptyScopeRepoBranch", { repo: activeRepo.name, branch: gitStatus.branch })
-                    : t("panel.emptyScopeRepo", { repo: activeRepo?.name ?? workspaceName })
-                  : t("panel.emptyHint")}
-              </p>
-            </div>
-            {activeWorkspaceId && (
-              <div className="chat-empty-suggestions">
-                <button
-                  type="button"
-                  className="chat-empty-suggestion"
-                  onClick={() => handleEditResend(t("panel.emptySuggestionSummarize"))}
-                >
-                  {t("panel.emptySuggestionSummarize")}
-                </button>
-                <button
-                  type="button"
-                  className="chat-empty-suggestion"
-                  onClick={() => handleEditResend(t("panel.emptySuggestionTests"))}
-                >
-                  {t("panel.emptySuggestionTests")}
-                </button>
-              </div>
-            )}
-            <p style={{ margin: 0, fontSize: 11 }}>
-              <span className="chat-empty-kbd">⌘K</span> {t("panel.emptyHintCommands")}
-              <span style={{ opacity: 0.5, padding: "0 5px" }}>·</span>
-              <span className="chat-empty-kbd">/</span> {t("panel.emptyHintSlash")}
-            </p>
+          <div className="chat-draft-hero animate-fade-in">
+            <h1 className="chat-draft-headline">
+              {activeWorkspaceId ? (
+                <Trans
+                  t={t}
+                  i18nKey="panel.draftHeadline"
+                  values={{ scope: activeRepo?.name ?? workspaceName }}
+                  components={{ scope: <DraftScopePicker /> }}
+                />
+              ) : (
+                t("panel.draftHeadlineNoWorkspace")
+              )}
+            </h1>
           </div>
         ) : virtualizationEnabled && virtualWindow ? (
           <div style={{ display: "flex", flexDirection: "column" }}>
@@ -5638,9 +5630,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                             type="button"
                             className="approval-batch-btn"
                             onClick={() => void allowAllPendingApprovals(true)}
-                            title={t("autonomy.presets.full.description")}
+                            title={t(
+                              autonomyPresetDescriptionKey(
+                                stopAskingAutonomyPreset(activeThreadAutonomyEngineId),
+                                activeThreadAutonomyEngineId,
+                                { codexExternalSandbox: codexExternalSandboxActive },
+                              ),
+                            )}
                           >
-                            {t("autonomy.allowAllStopAsking")}
+                            {t("autonomy.allowAllAndSwitch", {
+                              preset: t(
+                                `autonomy.presets.${stopAskingAutonomyPreset(
+                                  activeThreadAutonomyEngineId,
+                                )}.label`,
+                              ),
+                            })}
                           </button>
                         )}
                       </>
@@ -5681,7 +5685,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   const toolInputQuestionCount = isToolInputRequest
                     ? parseToolInputQuestions(details).length
                     : 0;
-                  const isClaudeApproval = activeThread?.engineId === "claude";
+                  const isClaudeApproval = engineKind(activeThread?.engineId) === "claude";
                   const supportsDecline =
                     canUseDecisionActions &&
                     activeThreadApprovalDecisionCapabilities.includes("decline");
@@ -5989,7 +5993,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     openCodeAgents={openCodeCatalog?.agents}
                     openCodeCommands={openCodeCatalog?.commands}
                     openCodeMcpServers={
-                      selectedEngineId === "opencode"
+                      engineKind(selectedEngineId) === "opencode"
                         ? openCodeCatalog?.mcpServers ?? []
                         : undefined
                     }
@@ -5997,7 +6001,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     selectedModelId={selectedModelId}
                     onAttachOpenCodeSession={onAttachOpenCodeRemoteSession}
                     mcpServers={
-                      selectedEngineId === "opencode"
+                      engineKind(selectedEngineId) === "opencode"
                         ? undefined
                         : codexProtocolDiagnostics?.mcpServers
                     }
@@ -6094,7 +6098,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     }
                     if (e.shiftKey && e.key === "Tab") {
                       e.preventDefault();
-                      if (activeWorkspaceId && !isOpenCodeEngine) {
+                      if (activeWorkspaceId && !isOpenCodeEngine && planModeVisible) {
                         setPlanMode((prev) => !prev);
                       }
                     }
@@ -6113,6 +6117,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     fontSize: 13,
                     lineHeight: 1.6,
                     resize: "none",
+                    overflowX: "hidden",
                     fontFamily: "inherit",
                     caretColor: activePlanMode ? "var(--accent-2)" : "var(--accent)",
                   }}
@@ -6166,14 +6171,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     onAgentChange={(agent) => void onOpenCodeAgentChange(agent)}
                     disabled={!openCodeCatalogLoaded && openCodeSelectableAgents.length === 0}
                   />
-                ) : (
+                ) : planModeVisible ? (
                   <button
                     type="button"
                     className={`chat-toolbar-btn chat-toolbar-btn-bordered ${activePlanMode ? "chat-toolbar-btn-active" : ""}`}
                     onClick={() => setPlanMode((prev) => !prev)}
                     disabled={!activeWorkspaceId}
                     title={
-                      selectedEngineId === "codex"
+                      engineKind(selectedEngineId) === "codex"
                         ? activePlanMode
                           ? t("panel.disablePlanModeCodex")
                           : t("panel.enablePlanModeCodex")
@@ -6185,7 +6190,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     <ListChecks size={12} />
                     <span style={{ fontSize: 11 }}>{t("panel.planShort")}</span>
                   </button>
-                )
+                ) : null
               )}
 
               {!showSpecialInputComposer && <div className="chat-toolbar-divider" />}
@@ -6194,7 +6199,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               {!showSpecialInputComposer && (
                 <>
                   <ModelPicker
-                    engines={engines}
+                    engines={composerEngines}
                     health={health}
                     selectedEngineId={selectedEngineId}
                     selectedModelId={selectedModelId ?? selectedModel?.id ?? ""}
@@ -6204,7 +6209,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       manuallyOverrodeThreadSelectionRef.current = true;
                       setHasExplicitComposerRuntime(true);
                       selectedEngineIdRef.current = engineId;
-                      if (engineId === "opencode") setPlanMode(false);
+                      if (engineKind(engineId) === "opencode") setPlanMode(false);
                       if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
                       const nextEngine =
                         engines.find((engine) => engine.id === engineId) ?? null;
@@ -6252,9 +6257,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               {!showSpecialInputComposer &&
                 (activeRepo ||
                   repos.length > 0 ||
-                  activeThread?.engineId === "codex" ||
-                  activeThread?.engineId === "claude" ||
-                  activeThread?.engineId === "opencode") && (
+                  engineKind(activeThread?.engineId) === "codex" ||
+                  engineKind(activeThread?.engineId) === "claude" ||
+                  engineKind(activeThread?.engineId) === "opencode") && (
                 <>
                   <div className="chat-toolbar-divider" />
                   <PermissionPicker
@@ -6285,38 +6290,38 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                           : undefined
                     }
                     customPolicyCount={
-                      activeThread?.engineId === "codex" ||
-                      activeThread?.engineId === "claude" ||
-                      activeThread?.engineId === "opencode"
+                      engineKind(activeThread?.engineId) === "codex" ||
+                      engineKind(activeThread?.engineId) === "claude" ||
+                      engineKind(activeThread?.engineId) === "opencode"
                         ? threadPolicyCustomCount
                         : 0
                     }
                     approvalTitle={activeThread?.engineId ? activeThreadApprovalTitle : undefined}
                     approvalValue={
-                      activeThread?.engineId === "codex" ||
-                      activeThread?.engineId === "claude" ||
-                      activeThread?.engineId === "opencode"
+                      engineKind(activeThread?.engineId) === "codex" ||
+                      engineKind(activeThread?.engineId) === "claude" ||
+                      engineKind(activeThread?.engineId) === "opencode"
                         ? activeThreadApprovalPolicy
                         : undefined
                     }
                     approvalSelectedLabel={
-                      activeThread?.engineId === "codex"
+                      engineKind(activeThread?.engineId) === "codex"
                         ? activeThreadApprovalSelectedLabel
                         : undefined
                     }
                     approvalOptions={
-                      activeThread?.engineId === "codex" ||
-                      activeThread?.engineId === "claude" ||
-                      activeThread?.engineId === "opencode"
+                      engineKind(activeThread?.engineId) === "codex" ||
+                      engineKind(activeThread?.engineId) === "claude" ||
+                      engineKind(activeThread?.engineId) === "opencode"
                         ? activeThreadApprovalOptions
                         : undefined
                     }
                     onApprovalChange={
-                      activeThread?.engineId === "codex" ||
-                      activeThread?.engineId === "claude" ||
-                      activeThread?.engineId === "opencode"
+                      engineKind(activeThread?.engineId) === "codex" ||
+                      engineKind(activeThread?.engineId) === "claude" ||
+                      engineKind(activeThread?.engineId) === "opencode"
                         ? (value) => {
-                            if (activeThread?.engineId === "codex") {
+                            if (engineKind(activeThread?.engineId) === "codex") {
                               setCustomApprovalPolicyText("");
                             }
                             void onThreadExecutionPolicyChange({
@@ -6326,17 +6331,17 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : undefined
                     }
                     sandboxValue={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      engineKind(activeThread?.engineId) === "codex" || engineKind(activeThread?.engineId) === "claude"
                         ? activeThreadSandboxMode
                         : undefined
                     }
                     sandboxOptions={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      engineKind(activeThread?.engineId) === "codex" || engineKind(activeThread?.engineId) === "claude"
                         ? threadSandboxModeOptions
                         : undefined
                     }
                     onSandboxChange={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      engineKind(activeThread?.engineId) === "codex" || engineKind(activeThread?.engineId) === "claude"
                         ? (value) =>
                             void onThreadExecutionPolicyChange({
                               sandboxMode: value as ThreadSandboxModeValue,
@@ -6346,17 +6351,17 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     sandboxSelectedLabel={activeThreadSandboxSelectedLabel}
                     sandboxNotice={activeThreadSandboxNotice}
                     networkValue={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      engineKind(activeThread?.engineId) === "codex" || engineKind(activeThread?.engineId) === "claude"
                         ? activeThreadNetworkPolicy
                         : undefined
                     }
                     networkOptions={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      engineKind(activeThread?.engineId) === "codex" || engineKind(activeThread?.engineId) === "claude"
                         ? threadNetworkPolicyOptions
                         : undefined
                     }
                     onNetworkChange={
-                      activeThread?.engineId === "codex" || activeThread?.engineId === "claude"
+                      engineKind(activeThread?.engineId) === "codex" || engineKind(activeThread?.engineId) === "claude"
                         ? (value) =>
                             void onThreadExecutionPolicyChange({
                               networkPolicy: value as ThreadNetworkPolicyValue,
@@ -6364,11 +6369,11 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : undefined
                     }
                     networkDisabled={
-                      activeThread?.engineId === "codex" &&
+                      engineKind(activeThread?.engineId) === "codex" &&
                       activeThreadSandboxMode === "danger-full-access"
                     }
                     networkNotice={
-                      activeThread?.engineId === "codex" &&
+                      engineKind(activeThread?.engineId) === "codex" &&
                       activeThreadSandboxMode === "danger-full-access"
                         ? t("policy.fullAccessNotice")
                         : null
@@ -6381,7 +6386,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {!showSpecialInputComposer &&
-                  (isCodexEngine || selectedEngineId === "claude") &&
+                  (isCodexEngine || engineKind(selectedEngineId) === "claude") &&
                   usageLimits?.contextPercent != null && (
                   <button
                     type="button"
@@ -6463,9 +6468,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
           {/* Bottom status bar with context usage */}
           <div className="chat-status-bar">
-            {(isCodexEngine || selectedEngineId === "claude") && (
+            {(isCodexEngine || engineKind(selectedEngineId) === "claude") && (
               usageLimits ? (
                 <div className="chat-status-usage">
+                  {usageLimits.windowFiveHourPercent !== null && (
                   <button
                     type="button"
                     className="chat-context-section"
@@ -6491,9 +6497,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       </span>
                     )}
                   </button>
+                  )}
 
-                  <span className="chat-context-divider">&middot;</span>
-
+                  {usageLimits.windowWeeklyPercent !== null && (
+                  <>
+                  {usageLimits.windowFiveHourPercent !== null && (
+                    <span className="chat-context-divider">&middot;</span>
+                  )}
                   <button
                     type="button"
                     className="chat-context-section"
@@ -6519,10 +6529,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       </span>
                     )}
                   </button>
+                  </>
+                  )}
 
                   {selectedClaudeWeeklyUsage && (
                     <>
-                      <span className="chat-context-divider">&middot;</span>
+                      {(usageLimits.windowFiveHourPercent !== null ||
+                        usageLimits.windowWeeklyPercent !== null) && (
+                        <span className="chat-context-divider">&middot;</span>
+                      )}
 
                       <button
                         type="button"
@@ -6552,14 +6567,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     </>
                   )}
                 </div>
-              ) : (
+              ) : hasUserMessage ? (
                 <div className="chat-context-section">
                   <Clock size={10} />
-                  <span>
-                    {t(resolveUsageStatusKey(hasUserMessage, streaming || usageLimitsLoading))}
-                  </span>
+                  <span>{t(resolveUsageStatusKey(streaming || usageLimitsLoading))}</span>
                 </div>
-              )
+              ) : null
             )}
 
             {/* Branch */}

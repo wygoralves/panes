@@ -1,3 +1,4 @@
+import { engineKind } from "./lib/engineKind";
 import { useEffect } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { CommandPalette } from "./components/shared/CommandPalette";
@@ -19,6 +20,7 @@ import {
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
+import { useUiZoomStore } from "./stores/uiZoomStore";
 import { useThreadStore } from "./stores/threadStore";
 import { useChatStore } from "./stores/chatStore";
 import { useGitStore } from "./stores/gitStore";
@@ -32,7 +34,21 @@ import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMi
 import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
 import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
-import { createAndActivateWorkspaceThread } from "./lib/newThreadActions";
+import {
+  createAndActivateWorkspaceThread,
+  resolveNewThreadWorkspaceId,
+} from "./lib/newThreadActions";
+import { useSidebarListModeStore } from "./stores/sidebarListModeStore";
+import { useSidebarViewStore } from "./stores/sidebarViewStore";
+import {
+  getAdjacentThreadId,
+  getSidebarThreadOrder,
+} from "./components/sidebar/statusGrouping";
+import {
+  activateThread,
+  getActiveThread,
+  toggleThreadSettlement,
+} from "./lib/threadActions";
 import {
   cycleWorkspaceTerminalLayout,
   isWorkspaceSurfaceVisible,
@@ -60,12 +76,36 @@ function fireShortcut(id: string, action: () => void) {
 }
 
 async function createNewWorkspaceThread() {
-  const { activeWorkspaceId } = useWorkspaceStore.getState();
-  await createAndActivateWorkspaceThread(activeWorkspaceId);
+  await createAndActivateWorkspaceThread(resolveNewThreadWorkspaceId());
+}
+
+function selectAdjacentSidebarThread(direction: -1 | 1) {
+  const threadState = useThreadStore.getState();
+  const order = getSidebarThreadOrder({
+    threads: threadState.threads,
+    mode: useSidebarListModeStore.getState().mode,
+    workspaceIds: useWorkspaceStore.getState().workspaces.map((workspace) => workspace.id),
+    projectFilterId: useSidebarViewStore.getState().projectFilterId,
+  });
+
+  const nextThreadId = getAdjacentThreadId(order, threadState.activeThreadId, direction);
+  if (!nextThreadId || nextThreadId === threadState.activeThreadId) return;
+
+  const nextThread = order.find((thread) => thread.id === nextThreadId);
+  if (!nextThread) return;
+  void activateThread(nextThread);
+}
+
+function toggleActiveThreadSettlement() {
+  const thread = getActiveThread();
+  if (!thread) return;
+  void toggleThreadSettlement(thread);
 }
 
 function isCodexSyncRequired(thread: Thread | null | undefined): boolean {
-  return thread?.engineId === "codex" && thread.engineMetadata?.codexSyncRequired === true;
+  return (
+    !!thread && engineKind(thread.engineId) === "codex" && thread.engineMetadata?.codexSyncRequired === true
+  );
 }
 
 function showRuntimeToast(runtimeToast?: RuntimeToast) {
@@ -372,7 +412,8 @@ export function App() {
   //
   // Cmd+Alt+F (focus mode) is intercepted before Cmd+F so it wins even in editors.
   // F11 toggles native window fullscreen independently from focus mode.
-  // Cmd+Shift+N (new thread) and Cmd+E (editor toggle) are JS-only.
+  // Cmd+Shift+N (new thread), Cmd+E (editor toggle), Cmd+Shift+S (settle
+  // thread) and Cmd+Shift+[ / ] (previous/next thread) are JS-only.
   // Cmd+S always prevents the browser save-page dialog.
   // Cmd+W is debounced like the native menu path so Linux can use the same
   // close behavior even without a native menubar.
@@ -392,6 +433,20 @@ export function App() {
       // On macOS/WebKit, e.key is lowercase even when Shift is held with Cmd,
       // so normalize to lowercase and use e.shiftKey to differentiate.
       const key = e.key.toLowerCase();
+
+      // Cmd+= / Cmd+- / Cmd+0 scale the whole interface from any focus state.
+      if (!e.altKey && (key === "=" || key === "+" || key === "-" || key === "0")) {
+        e.preventDefault();
+        const zoom = useUiZoomStore.getState();
+        if (key === "0") {
+          fireShortcut("zoom-reset", () => void zoom.reset());
+        } else {
+          const direction = key === "-" ? -1 : 1;
+          fireShortcut(`zoom-${direction}`, () => void zoom.step(direction));
+        }
+        return;
+      }
+
       const allowWhileTerminalFocused = shouldHandleAppShortcutWhileTerminalFocused(key, e.shiftKey);
 
       if (isTerminalInputFocused() && !allowWhileTerminalFocused) return;
@@ -399,6 +454,25 @@ export function App() {
       // Always prevent Cmd+S from opening the browser save dialog
       if (key === "s" && !e.shiftKey) {
         e.preventDefault();
+        return;
+      }
+
+      // Cmd+Shift+S — settle / un-settle the open thread.
+      if (key === "s" && e.shiftKey) {
+        e.preventDefault();
+        fireShortcut("toggle-thread-settlement", toggleActiveThreadSettlement);
+        return;
+      }
+
+      // Cmd+Shift+[ / ] — previous / next thread in the sidebar order. The
+      // bracket keys report their shifted character, so match on the physical
+      // key instead.
+      if (e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
+        e.preventDefault();
+        const direction = e.code === "BracketLeft" ? -1 : 1;
+        fireShortcut(`select-thread-${direction}`, () =>
+          selectAdjacentSidebarThread(direction),
+        );
         return;
       }
 

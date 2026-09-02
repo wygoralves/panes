@@ -16,11 +16,13 @@ import {
   Globe2,
   Gauge,
   LayoutGrid,
+  ListFilter,
   LockKeyhole,
   Minus,
   Monitor,
   Moon,
   Palette,
+  PanelLeft,
   Play,
   Plus,
   RefreshCw,
@@ -30,6 +32,13 @@ import {
   Clock3,
   Volume2,
   Zap,
+  ListChecks,
+  MessageSquare,
+  Pencil,
+  Trash2,
+  KeyRound,
+  ZoomIn,
+  History,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
 import {
@@ -49,8 +58,21 @@ import {
   SUPPORTED_APP_LOCALES,
   type AppLocale,
 } from "../../lib/locale";
+import {
+  SIDEBAR_LIST_MODES,
+  type SidebarListMode,
+} from "../../lib/sidebarListMode";
 import { THEME_PREFERENCES, type ThemePreference } from "../../lib/theme";
 import { useKeepAwakeStore, canToggleKeepAwake } from "../../stores/keepAwakeStore";
+import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
+import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
+import { useChatProvidersStore } from "../../stores/chatProvidersStore";
+import { ChatProviderDialog, providerKindIcon } from "./ChatProviderDialog";
+import { signInChatProviderInTerminal } from "../../lib/chatProviderSignIn";
+import { useUiZoomStore } from "../../stores/uiZoomStore";
+import { MAX_UI_ZOOM_PERCENT, MIN_UI_ZOOM_PERCENT } from "../../lib/uiZoom";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
+import type { ChatProviderInstance } from "../../types";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
 import { useThemeStore } from "../../stores/themeStore";
 import { toast } from "../../stores/toastStore";
@@ -179,6 +201,34 @@ export function SettingsPage() {
   const activeRepos = useWorkspaceStore((state) => state.repos);
   const themePreference = useThemeStore((state) => state.preference);
   const setThemePreference = useThemeStore((state) => state.setPreference);
+  const sidebarListMode = useSidebarListModeStore((state) => state.mode);
+  const setSidebarListMode = useSidebarListModeStore((state) => state.setMode);
+  const loadSidebarListMode = useSidebarListModeStore((state) => state.load);
+
+  const composerPlanModeVisible = useComposerSettingsStore((state) => state.planModeVisible);
+  const composerLegacyModelsVisible = useComposerSettingsStore((state) => state.legacyModelsVisible);
+  const setComposerLegacyModelsVisible = useComposerSettingsStore((state) => state.setLegacyModelsVisible);
+  const setComposerPlanModeVisible = useComposerSettingsStore((state) => state.setPlanModeVisible);
+  const loadComposerSettings = useComposerSettingsStore((state) => state.load);
+  const chatProviders = useChatProvidersStore((state) => state.providers);
+  const chatProvidersSaving = useChatProvidersStore((state) => state.saving);
+  const loadChatProviders = useChatProvidersStore((state) => state.load);
+  const saveChatProvider = useChatProvidersStore((state) => state.save);
+  const removeChatProvider = useChatProvidersStore((state) => state.remove);
+  const [providerDialog, setProviderDialog] = useState<
+    { open: false } | { open: true; provider: ChatProviderInstance | null }
+  >({ open: false });
+  const [providerPendingRemoval, setProviderPendingRemoval] = useState<ChatProviderInstance | null>(null);
+  const [providerPendingSignIn, setProviderPendingSignIn] = useState<ChatProviderInstance | null>(null);
+  const uiZoomPercent = useUiZoomStore((state) => state.percent);
+  const stepUiZoom = useUiZoomStore((state) => state.step);
+  const resetUiZoom = useUiZoomStore((state) => state.reset);
+
+  useEffect(() => {
+    void loadSidebarListMode();
+    void loadComposerSettings();
+    void loadChatProviders();
+  }, [loadSidebarListMode, loadComposerSettings, loadChatProviders]);
   const updateStatus = useUpdateStore((state) => state.status);
   const availableVersion = useUpdateStore((state) => state.version);
   const updateError = useUpdateStore((state) => state.error);
@@ -310,6 +360,7 @@ export function SettingsPage() {
     () => [
       { id: "overview" as const, icon: <LayoutGrid size={15} />, label: t("app:settingsPage.nav.overview") },
       { id: "appearance" as const, icon: <Palette size={15} />, label: t("app:settingsPage.nav.appearance") },
+      { id: "chat" as const, icon: <MessageSquare size={15} />, label: t("app:settingsPage.nav.chat") },
       { id: "terminal" as const, icon: <TerminalSquare size={15} />, label: t("app:settingsPage.nav.terminal") },
       { id: "notifications" as const, icon: <BellRing size={15} />, label: t("app:settingsPage.nav.notifications") },
       { id: "usage" as const, icon: <Gauge size={15} />, label: t("app:settingsPage.nav.usage") },
@@ -438,6 +489,63 @@ export function SettingsPage() {
     if (theme === themePreference) return;
     const saved = await setThemePreference(theme);
     if (!saved) toast.error(t("app:sidebar.themeFailed"));
+  }
+
+  async function changeSidebarListMode(mode: SidebarListMode) {
+    if (mode === sidebarListMode) return;
+    const saved = await setSidebarListMode(mode);
+    if (!saved) toast.error(t("app:sidebar.sidebarListModeFailed"));
+  }
+
+  async function changeComposerPlanModeVisible(visible: boolean) {
+    if (visible === composerPlanModeVisible) return;
+    const saved = await setComposerPlanModeVisible(visible);
+    if (!saved) toast.error(t("app:settingsPage.chat.composerPlanModeFailed"));
+  }
+
+  async function changeComposerLegacyModelsVisible(visible: boolean) {
+    if (visible === composerLegacyModelsVisible) return;
+    const saved = await setComposerLegacyModelsVisible(visible);
+    if (!saved) toast.error(t("app:settingsPage.chat.composerLegacyModelsFailed"));
+  }
+
+  async function toggleChatProviderEnabled(provider: ChatProviderInstance, enabled: boolean) {
+    const saved = await saveChatProvider({ ...provider, enabled });
+    if (!saved) toast.error(t("app:settingsPage.chat.saveFailed"));
+  }
+
+  async function confirmRemoveChatProvider() {
+    const provider = providerPendingRemoval;
+    setProviderPendingRemoval(null);
+    if (!provider) return;
+    const removed = await removeChatProvider(provider.id);
+    if (removed) toast.success(t("app:settingsPage.chat.removed", { name: provider.displayName }));
+    else toast.error(t("app:settingsPage.chat.removeFailed"));
+  }
+
+  async function confirmSignInChatProvider() {
+    const provider = providerPendingSignIn;
+    setProviderPendingSignIn(null);
+    if (!provider) return;
+    await signInChatProviderInTerminal(provider, selectedWorkspace?.id ?? activeWorkspaceId ?? null);
+  }
+
+  function describeChatProvider(provider: ChatProviderInstance): string {
+    const parts: string[] = [];
+    if (provider.homePath) parts.push(provider.homePath);
+    if (provider.binaryPath) parts.push(provider.binaryPath);
+    if (provider.launchArgs) parts.push(provider.launchArgs);
+    const envCount = Object.keys(provider.env).length;
+    if (envCount > 0) parts.push(t("app:settingsPage.chat.envCount", { count: envCount }));
+    if (!provider.builtIn && provider.homePath) {
+      return t("app:settingsPage.chat.ownLogin", { path: provider.homePath });
+    }
+    if (parts.length === 0) {
+      return provider.builtIn
+        ? t("app:settingsPage.chat.defaultInstall")
+        : t("app:settingsPage.chat.sharedInstall");
+    }
+    return parts.join(", ");
   }
 
   async function toggleAcceleratedRendering(enabled: boolean) {
@@ -726,6 +834,61 @@ export function SettingsPage() {
                     })}
                   </div>
                 </SettingsRow>
+                <SettingsRow
+                  icon={<ZoomIn size={17} />}
+                  title={t("app:settingsPage.appearance.zoom")}
+                  description={t("app:settingsPage.appearance.zoomDescription")}
+                >
+                  <div className="usp-stepper">
+                    <button
+                      type="button"
+                      aria-label={t("app:settingsPage.appearance.zoomOut")}
+                      disabled={uiZoomPercent <= MIN_UI_ZOOM_PERCENT}
+                      onClick={() => void stepUiZoom(-1).then((ok) => { if (!ok) toast.error(t("app:settingsPage.appearance.zoomFailed")); })}
+                    >
+                      <Minus size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="usp-stepper-value"
+                      title={t("app:settingsPage.appearance.zoomReset")}
+                      disabled={uiZoomPercent === 100}
+                      onClick={() => void resetUiZoom()}
+                    >
+                      {uiZoomPercent}%
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("app:settingsPage.appearance.zoomIn")}
+                      disabled={uiZoomPercent >= MAX_UI_ZOOM_PERCENT}
+                      onClick={() => void stepUiZoom(1).then((ok) => { if (!ok) toast.error(t("app:settingsPage.appearance.zoomFailed")); })}
+                    >
+                      <Plus size={13} />
+                    </button>
+                  </div>
+                </SettingsRow>
+                <SettingsRow
+                  icon={<PanelLeft size={17} />}
+                  title={t("app:sidebar.sidebarListMode")}
+                  description={t("app:settingsPage.appearance.sidebarListModeDescription")}
+                >
+                  <div className="usp-segmented">
+                    {SIDEBAR_LIST_MODES.map((mode) => {
+                      const ModeIcon = mode === "status" ? ListFilter : FolderGit2;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={sidebarListMode === mode ? "usp-segment-active" : ""}
+                          onClick={() => void changeSidebarListMode(mode)}
+                        >
+                          <ModeIcon size={13} />
+                          {t(`app:sidebar.sidebarListMode_${mode}`)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </SettingsRow>
                 <SettingsRow icon={<Globe2 size={17} />} title={t("common:language.label")} description={t("app:settingsPage.appearance.languageDescription")}>
                   <Dropdown
                     value={activeLocale}
@@ -739,6 +902,147 @@ export function SettingsPage() {
                 </SettingsRow>
               </div>
             </section>
+          ) : null}
+
+          {section === "chat" ? (
+            <>
+              <section className="usp-section usp-section-first">
+                <div className="usp-section-header">
+                  <h2>{t("app:settingsPage.chat.providers")}</h2>
+                  <p>{t("app:settingsPage.chat.providersDescription")}</p>
+                </div>
+                <div className="usp-group">
+                  {chatProviders.map((provider) => (
+                    <div
+                      key={provider.id}
+                      className={provider.enabled ? undefined : "usp-provider-row-disabled"}
+                    >
+                      <SettingsRow
+                        icon={providerKindIcon(provider.kind, 17)}
+                        title={provider.displayName}
+                        description={describeChatProvider(provider)}
+                      >
+                        <Toggle
+                          checked={provider.enabled}
+                          disabled={chatProvidersSaving}
+                          label={t("app:settingsPage.chat.dialog.enabled")}
+                          onChange={(checked) => void toggleChatProviderEnabled(provider, checked)}
+                        />
+                        {!provider.builtIn ? (
+                          <button
+                            type="button"
+                            className="usp-button"
+                            onClick={() => setProviderPendingSignIn(provider)}
+                          >
+                            <KeyRound size={13} />
+                            {t("app:settingsPage.chat.signIn")}
+                          </button>
+                        ) : null}
+                        {provider.kind !== "opencode" ? (
+                        <button
+                          type="button"
+                          className="usp-icon-button"
+                          aria-label={t("app:settingsPage.chat.edit")}
+                          title={t("app:settingsPage.chat.edit")}
+                          onClick={() => setProviderDialog({ open: true, provider })}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        ) : null}
+                        {!provider.builtIn ? (
+                          <button
+                            type="button"
+                            className="usp-icon-button"
+                            aria-label={t("app:settingsPage.chat.remove")}
+                            title={t("app:settingsPage.chat.remove")}
+                            onClick={() => setProviderPendingRemoval(provider)}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        ) : null}
+                      </SettingsRow>
+                    </div>
+                  ))}
+                  <div className="usp-group-footer">
+                    <button
+                      type="button"
+                      className="usp-button"
+                      onClick={() => setProviderDialog({ open: true, provider: null })}
+                    >
+                      <Plus size={13} />
+                      {t("app:settingsPage.chat.addProvider")}
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section className="usp-section">
+                <div className="usp-section-header">
+                  <h2>{t("app:settingsPage.chat.composer")}</h2>
+                  <p>{t("app:settingsPage.chat.composerDescription")}</p>
+                </div>
+                <div className="usp-group">
+                  <SettingsRow
+                    icon={<ListChecks size={17} />}
+                    title={t("app:settingsPage.chat.composerPlanMode")}
+                    description={t("app:settingsPage.chat.composerPlanModeDescription")}
+                  >
+                    <Toggle
+                      checked={composerPlanModeVisible}
+                      label={t("app:settingsPage.chat.composerPlanMode")}
+                      onChange={(checked) => void changeComposerPlanModeVisible(checked)}
+                    />
+                  </SettingsRow>
+                  <SettingsRow
+                    icon={<History size={17} />}
+                    title={t("app:settingsPage.chat.composerLegacyModels")}
+                    description={t("app:settingsPage.chat.composerLegacyModelsDescription")}
+                  >
+                    <Toggle
+                      checked={composerLegacyModelsVisible}
+                      label={t("app:settingsPage.chat.composerLegacyModels")}
+                      onChange={(checked) => void changeComposerLegacyModelsVisible(checked)}
+                    />
+                  </SettingsRow>
+                </div>
+              </section>
+
+              <ChatProviderDialog
+                open={providerDialog.open}
+                provider={providerDialog.open ? providerDialog.provider : null}
+                existingIds={chatProviders.map((provider) => provider.id)}
+                saving={chatProvidersSaving}
+                onSave={saveChatProvider}
+                onSaved={(provider, created) => {
+                  if (created && !provider.builtIn) setProviderPendingSignIn(provider);
+                }}
+                onClose={() => setProviderDialog({ open: false })}
+              />
+              <ConfirmDialog
+                open={providerPendingSignIn !== null}
+                title={t("app:settingsPage.chat.signInTitle", {
+                  name: providerPendingSignIn?.displayName ?? "",
+                })}
+                message={t("app:settingsPage.chat.signInMessage")}
+                confirmLabel={t("app:settingsPage.chat.signInConfirm")}
+                cancelLabel={t("app:settingsPage.chat.signInLater")}
+                onConfirm={() => void confirmSignInChatProvider()}
+                onCancel={() => setProviderPendingSignIn(null)}
+                onDismiss={() => setProviderPendingSignIn(null)}
+              />
+              <ConfirmDialog
+                open={providerPendingRemoval !== null}
+                title={t("app:settingsPage.chat.removeTitle", {
+                  name: providerPendingRemoval?.displayName ?? "",
+                })}
+                message={t("app:settingsPage.chat.removeMessage")}
+                confirmLabel={t("common:actions.remove")}
+                cancelLabel={t("common:actions.cancel")}
+                onConfirm={() => void confirmRemoveChatProvider()}
+                onCancel={() => setProviderPendingRemoval(null)}
+                onDismiss={() => setProviderPendingRemoval(null)}
+              />
+            </>
           ) : null}
 
           {section === "terminal" ? (

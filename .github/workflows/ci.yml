@@ -35,7 +35,7 @@ jobs:
       - name: Unit tests
         run: pnpm test -- --passWithNoTests
       - name: Install Codex CLI
-        run: npm install -g @openai/codex@0.125.0
+        run: npm install -g @openai/codex@0.151.0
       - name: Codex app-server schema parity
         run: pnpm check:codex-schema
       - name: Build frontend

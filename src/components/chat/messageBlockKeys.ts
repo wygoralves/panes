@@ -26,6 +26,8 @@ export function getMessageBlockKey(
       return `approval:${block.approvalId}`;
     case "notice":
       return `notice:${block.kind}`;
+    case "taskList":
+      return `task-list:${block.source}`;
     case "steer":
       return `steer:${block.steerId}`;
     case "diff":

@@ -33,9 +33,19 @@ function asLocale(locale?: string | null): AppLocale {
   return normalizeAppLocale(locale);
 }
 
+/** SQLite's `datetime('now')` returns "YYYY-MM-DD HH:MM:SS" in UTC with no
+ * zone marker, which `Date` reads as local time. Tag it as UTC before
+ * parsing, or every such stamp drifts by the local offset. */
+const BARE_SQLITE_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+export function normalizeTimestamp(value: string): string {
+  return BARE_SQLITE_TIMESTAMP.test(value) ? `${value.replace(" ", "T")}Z` : value;
+}
+
 function toDate(value: string | number | Date): Date | null {
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const normalized = typeof value === "string" ? normalizeTimestamp(value) : value;
+  const normalizedValue = normalized instanceof Date ? normalized : new Date(normalized);
+  return Number.isNaN(normalizedValue.getTime()) ? null : normalizedValue;
 }
 
 function formatCompactAmount(amount: number, unit: string, locale: AppLocale): string {

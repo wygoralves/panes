@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::{
     trim_action_output_delta_content, ActionResult, ActionType, ApprovalRequestRoute, DiffScope,
-    EngineEvent, OutputStream, TokenUsage, TurnCompletionStatus, UsageLimitsSnapshot,
+    EngineEvent, OutputStream, TaskItem, TokenUsage, TurnCompletionStatus, UsageLimitsSnapshot,
 };
 
 pub const APPROVAL_DETAIL_SERVER_METHOD_KEY: &str = "_serverMethod";
@@ -80,12 +80,13 @@ impl TurnEventMapper {
                 }]
             }
             "turnplanupdated" => {
-                let content = render_plan_update(params);
-                if content.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![EngineEvent::ThinkingDelta { content }]
-                }
+                let tasks = parse_plan_tasks(params);
+                vec![EngineEvent::TaskListUpdated {
+                    source: "codex".to_string(),
+                    explanation: extract_any_string(params, &["explanation"])
+                        .filter(|explanation| !explanation.is_empty()),
+                    tasks,
+                }]
             }
             "itemagentmessagedelta" => {
                 if let Some(item_id) = extract_any_string(params, &["itemId", "item_id", "id"]) {
@@ -216,9 +217,9 @@ impl TurnEventMapper {
             }
             "threadrealtimeitemadded" => self.map_realtime_item_added(params),
             "deprecationnotice" => map_deprecation_notice(params).into_iter().collect(),
-            "hookstarted" | "hookcompleted" => map_hook_notification(method_key.as_str(), params)
-                .into_iter()
-                .collect(),
+            "hookstarted" | "hookcompleted" => {
+                map_hook_failure_notice(params).into_iter().collect()
+            }
             "itemstarted" => self.map_item_started(params),
             "itemcompleted" => self.map_item_completed(params),
             "itemcommandexecutionoutputdelta"
@@ -796,27 +797,32 @@ fn extract_turn_completion_status(params: &Value) -> TurnCompletionStatus {
     parse_turn_completion_status(status)
 }
 
-fn render_plan_update(params: &Value) -> String {
-    let mut lines = Vec::new();
-    if let Some(explanation) = extract_any_string(params, &["explanation"]) {
-        if !explanation.is_empty() {
-            lines.push(explanation);
-        }
-    }
-
-    if let Some(plan) = params.get("plan").and_then(Value::as_array) {
-        for entry in plan {
-            let Some(step) = extract_any_string(entry, &["step"]) else {
-                continue;
-            };
+fn parse_plan_tasks(params: &Value) -> Vec<TaskItem> {
+    params
+        .get("plan")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let title = extract_any_string(entry, &["step"])?;
+            if title.is_empty() {
+                return None;
+            }
             let status = extract_any_string(entry, &["status"])
                 .map(|status| normalize_plan_step_status_for_display(&status))
                 .unwrap_or_else(|| "pending".to_string());
-            lines.push(format!("- [{status}] {step}"));
-        }
-    }
-
-    lines.join("\n")
+            Some(TaskItem {
+                id: format!("codex-plan-{index}"),
+                title,
+                status,
+                active_form: None,
+                description: None,
+                owner: None,
+                blocked_by: Vec::new(),
+            })
+        })
+        .collect()
 }
 
 fn normalize_plan_step_status_for_display(status: &str) -> String {
@@ -981,48 +987,28 @@ fn map_realtime_transcript_delta(params: &Value) -> Option<EngineEvent> {
     }
 }
 
-fn map_realtime_transcript_done(params: &Value, already_streamed: bool) -> Option<EngineEvent> {
-    if already_streamed {
-        return None;
-    }
-    let role = extract_any_string(params, &["role"]).unwrap_or_default();
-    if !role.eq_ignore_ascii_case("assistant") {
-        return None;
-    }
-    let content = extract_any_string(params, &["text"]).unwrap_or_default();
-    if content.is_empty() {
-        None
-    } else {
-        Some(EngineEvent::TextDelta { content })
-    }
-}
-
-fn map_hook_notification(method_key: &str, params: &Value) -> Option<EngineEvent> {
+/// Hook lifecycle chatter is noise, but a hook that failed, blocked, or
+/// stopped the turn changes what the agent was allowed to do, so it stays
+/// visible in the transcript.
+fn map_hook_failure_notice(params: &Value) -> Option<EngineEvent> {
     let run = params.get("run")?;
+    let status = extract_any_string(run, &["status"])?;
+    let level = match status.as_str() {
+        "failed" => "error",
+        "blocked" | "stopped" => "warning",
+        _ => return None,
+    };
+
     let hook_id = extract_any_string(run, &["id"]).unwrap_or_else(|| "unknown".to_string());
     let event_name =
         extract_any_string(run, &["eventName", "event_name"]).unwrap_or_else(|| "hook".to_string());
     let handler_type = extract_any_string(run, &["handlerType", "handler_type"])
         .unwrap_or_else(|| "handler".to_string());
-    let execution_mode =
-        extract_any_string(run, &["executionMode", "execution_mode"]).unwrap_or_default();
     let scope = extract_any_string(run, &["scope"]).unwrap_or_default();
     let source_path = extract_any_string(run, &["sourcePath", "source_path"]).unwrap_or_default();
-    let status = extract_any_string(run, &["status"]).unwrap_or_else(|| {
-        if method_key == "hookstarted" {
-            "running".to_string()
-        } else {
-            "completed".to_string()
-        }
-    });
 
     let mut message_lines = vec![format!(
-        "{event_name} hook via {handler_type}{}{}",
-        if execution_mode.is_empty() {
-            String::new()
-        } else {
-            format!(" ({execution_mode})")
-        },
+        "{event_name} hook via {handler_type}{} {status}",
         if scope.is_empty() {
             String::new()
         } else {
@@ -1042,28 +1028,62 @@ fn map_hook_notification(method_key: &str, params: &Value) -> Option<EngineEvent
 
     if let Some(entries_text) = summarize_hook_entries(run.get("entries").and_then(Value::as_array))
     {
-        if !entries_text.is_empty() {
-            message_lines.push(entries_text);
-        }
+        message_lines.push(entries_text);
     }
 
-    let (kind_prefix, title) = if method_key == "hookstarted" {
-        ("hook_started", "Hook started")
-    } else {
-        ("hook_completed", "Hook completed")
-    };
-    let level = match status.as_str() {
-        "failed" => "error",
-        "blocked" | "stopped" => "warning",
-        _ => "info",
+    let title = match status.as_str() {
+        "failed" => "Hook failed",
+        "blocked" => "Hook blocked the turn",
+        _ => "Hook stopped the turn",
     };
 
-    Some(EngineEvent::Notice {
-        kind: format!("{kind_prefix}_{hook_id}"),
-        level: level.to_string(),
-        title: title.to_string(),
-        message: message_lines.join("\n"),
-    })
+    Some(map_simple_notice(
+        &format!("hook_{status}_{hook_id}"),
+        level,
+        title,
+        message_lines.join("\n"),
+    ))
+}
+
+fn summarize_hook_entries(entries: Option<&Vec<Value>>) -> Option<String> {
+    let entries = entries?;
+    let lines = entries
+        .iter()
+        .filter_map(|entry| {
+            let text = extract_any_string(entry, &["text"])?;
+            if text.is_empty() {
+                return None;
+            }
+            let kind = extract_any_string(entry, &["kind"]).unwrap_or_default();
+            if kind.is_empty() {
+                Some(text)
+            } else {
+                Some(format!("{kind}: {text}"))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn map_realtime_transcript_done(params: &Value, already_streamed: bool) -> Option<EngineEvent> {
+    if already_streamed {
+        return None;
+    }
+    let role = extract_any_string(params, &["role"]).unwrap_or_default();
+    if !role.eq_ignore_ascii_case("assistant") {
+        return None;
+    }
+    let content = extract_any_string(params, &["text"]).unwrap_or_default();
+    if content.is_empty() {
+        None
+    } else {
+        Some(EngineEvent::TextDelta { content })
+    }
 }
 
 fn summarize_permissions_request(params: &Value) -> String {
@@ -1115,31 +1135,6 @@ fn summarize_mcp_elicitation_request(params: &Value) -> String {
         format!("{server_name} requested input")
     } else {
         format!("{server_name} requested input: {message}")
-    }
-}
-
-fn summarize_hook_entries(entries: Option<&Vec<Value>>) -> Option<String> {
-    let entries = entries?;
-    let lines = entries
-        .iter()
-        .filter_map(|entry| {
-            let text = extract_any_string(entry, &["text"])?;
-            if text.is_empty() {
-                return None;
-            }
-            let kind = extract_any_string(entry, &["kind"]).unwrap_or_default();
-            if kind.is_empty() {
-                Some(text)
-            } else {
-                Some(format!("{kind}: {text}"))
-            }
-        })
-        .collect::<Vec<_>>();
-
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join("\n"))
     }
 }
 
@@ -1392,10 +1387,21 @@ fn select_rate_limit_window(
         .collect();
 
     if !with_durations.is_empty() {
-        return with_durations.into_iter().min_by_key(|window| {
-            (window.window_duration_mins.unwrap_or(target_duration_mins) - target_duration_mins)
-                .abs()
-        });
+        // Only accept a window whose duration is in the same order of magnitude
+        // as the target. Otherwise a weekly-only snapshot would be shown as the
+        // five-hour window.
+        let tolerance = target_duration_mins / 2;
+        return with_durations
+            .into_iter()
+            .filter(|window| {
+                (window.window_duration_mins.unwrap_or(target_duration_mins) - target_duration_mins)
+                    .abs()
+                    <= tolerance
+            })
+            .min_by_key(|window| {
+                (window.window_duration_mins.unwrap_or(target_duration_mins) - target_duration_mins)
+                    .abs()
+            });
     }
 
     if prefer_shorter_when_unknown {
@@ -1714,7 +1720,7 @@ mod tests {
     }
 
     #[test]
-    fn map_notification_normalizes_turn_plan_status_for_frontend_detection() {
+    fn map_notification_emits_structured_turn_plan_snapshot() {
         let mut mapper = TurnEventMapper::default();
 
         let events = mapper.map_notification(
@@ -1737,11 +1743,20 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         match &events[0] {
-            EngineEvent::ThinkingDelta { content } => {
-                assert!(content.contains("- [in_progress] Inspect the repo"));
-                assert!(content.contains("- [pending] Apply the fix"));
+            EngineEvent::TaskListUpdated {
+                source,
+                explanation,
+                tasks,
+            } => {
+                assert_eq!(source, "codex");
+                assert_eq!(explanation, &None);
+                assert_eq!(tasks.len(), 2);
+                assert_eq!(tasks[0].title, "Inspect the repo");
+                assert_eq!(tasks[0].status, "in_progress");
+                assert_eq!(tasks[1].title, "Apply the fix");
+                assert_eq!(tasks[1].status, "pending");
             }
-            other => panic!("expected thinking delta event, got {other:?}"),
+            other => panic!("expected task list update event, got {other:?}"),
         }
     }
 
@@ -2057,7 +2072,7 @@ mod tests {
     }
 
     #[test]
-    fn map_notification_emits_hook_notice() {
+    fn map_notification_ignores_hook_lifecycle_events() {
         let mut mapper = TurnEventMapper::default();
 
         let events = mapper.map_notification(
@@ -2084,22 +2099,67 @@ mod tests {
             }),
         );
 
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert!(events.is_empty());
+
+        let started = mapper.map_notification(
+            "hook/started",
+            &json!({
+                "run": { "id": "hook_124", "status": "running" }
+            }),
+        );
+        assert!(started.is_empty());
+    }
+
+    #[test]
+    fn map_notification_surfaces_hook_failures() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "hook/completed",
+            &json!({
+                "run": {
+                    "id": "hook_500",
+                    "eventName": "preToolUse",
+                    "handlerType": "command",
+                    "scope": "thread",
+                    "sourcePath": "/tmp/hooks/guard.sh",
+                    "status": "failed",
+                    "statusMessage": "exit code 1",
+                    "entries": [{ "kind": "stderr", "text": "guard.sh: permission denied" }]
+                }
+            }),
+        );
+
+        match events.first().expect("expected a hook failure notice") {
             EngineEvent::Notice {
                 kind,
                 level,
                 title,
                 message,
             } => {
-                assert_eq!(kind, "hook_completed_hook_123");
-                assert_eq!(level, "info");
-                assert_eq!(title, "Hook completed");
-                assert!(message.contains("sessionStart hook via command"));
-                assert!(message.contains("/tmp/hooks/session-start.sh"));
-                assert!(message.contains("Workspace warmed."));
+                assert_eq!(kind, "hook_failed_hook_500");
+                assert_eq!(level, "error");
+                assert_eq!(title, "Hook failed");
+                assert!(message.contains("preToolUse hook via command [thread] failed"));
+                assert!(message.contains("/tmp/hooks/guard.sh"));
+                assert!(message.contains("exit code 1"));
+                assert!(message.contains("stderr: guard.sh: permission denied"));
             }
             other => panic!("expected notice event, got {other:?}"),
+        }
+
+        for status in ["blocked", "stopped"] {
+            let events = mapper.map_notification(
+                "hook/completed",
+                &json!({ "run": { "id": "hook_501", "status": status } }),
+            );
+            match events.first().expect("expected a hook notice") {
+                EngineEvent::Notice { kind, level, .. } => {
+                    assert_eq!(kind, &format!("hook_{status}_hook_501"));
+                    assert_eq!(level, "warning");
+                }
+                other => panic!("expected notice event, got {other:?}"),
+            }
         }
     }
 

@@ -53,6 +53,11 @@ export function query({ options }) {
         result: clone({
           permissionMode: options?.permissionMode,
           settings: options?.settings,
+          allowedTools: options?.allowedTools,
+          tools: options?.tools,
+          settingSources: options?.settingSources,
+          systemPrompt: options?.systemPrompt,
+          todoToolsEnabled: options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS,
         }),
       });
     }

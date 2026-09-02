@@ -63,7 +63,7 @@
       "low": "Baixo",
       "medium": "Médio",
       "high": "Alto",
-      "xhigh": "XAlto",
+      "xhigh": "Extra alto",
       "max": "Máximo",
       "noneShort": "Nen",
       "minimalShort": "Min",
@@ -72,7 +72,11 @@
       "highShort": "Alt",
       "xhighShort": "XAlt",
       "maxShort": "Máx"
-    }
+    },
+    "fastMode": "Modo rápido",
+    "favorites": "Favoritos",
+    "addFavorite": "Adicionar aos favoritos",
+    "removeFavorite": "Remover dos favoritos"
   },
   "attachments": {
     "codexTitle": "Anexar arquivos (imagens e texto)",
@@ -335,11 +339,26 @@
     "sectionTitle": "Autonomia",
     "custom": "Personalizado",
     "presets": {
-      "inherit": { "label": "Automático", "description": "Segue a política de confiança do repo." },
-      "read-only": { "label": "Somente leitura", "description": "Inspeciona e responde. Leituras seguras rodam; nada muda sem a sua aprovação." },
-      "ask": { "label": "Pedir para agir", "description": "Leituras são livres. Edições e comandos pedem antes." },
-      "auto": { "label": "Autônomo no workspace", "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele." },
-      "full": { "label": "Autonomia total", "description": "Nunca pergunta. Acesso total a disco e rede." }
+      "inherit": {
+        "label": "Automático",
+        "description": "Segue a política de confiança do repo."
+      },
+      "read-only": {
+        "label": "Somente leitura",
+        "description": "Inspeciona e responde. Leituras seguras rodam; nada muda sem a sua aprovação."
+      },
+      "ask": {
+        "label": "Pedir para agir",
+        "description": "Leituras são livres. Edições e comandos pedem antes."
+      },
+      "auto": {
+        "label": "Autônomo no workspace",
+        "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele."
+      },
+      "full": {
+        "label": "Autonomia total",
+        "description": "Nunca pergunta. Acesso total a disco e rede."
+      }
     },
     "engineDescriptions": {
       "opencode": {
@@ -366,15 +385,13 @@
     "advanced": "Avançado",
     "backToPresets": "Presets",
     "allowAll": "Permitir tudo",
-    "allowAllStopAsking": "Permitir tudo e parar de perguntar",
+    "allowAllAndSwitch": "Permitir tudo e {{preset}}",
     "approvalToastTitle": "{{engine}} precisa de aprovação",
     "openThread": "Abrir conversa",
     "defaultSaveFailed": "Falha ao salvar a autonomia padrão: {{error}}"
   },
   "panel": {
     "assistantFallback": "Assistente",
-    "emptyHint": "Abra uma pasta e envie uma mensagem para começar",
-    "startConversation": "Comece uma conversa",
     "workspaceChatTitle": "Chat do workspace",
     "repoChatTitle": "Chat de {{name}}",
     "renameThread": "Clique para renomear a thread",
@@ -406,6 +423,11 @@
     "planImplementationOptionImplementDescription": "Sair do modo de plano e pedir ao Codex que comece a executar este plano na thread atual.",
     "planImplementationOptionStay": "Continuar no modo de plano",
     "planImplementationOptionStayDescription": "Manter o modo de plano ativo para que a próxima mensagem continue em planejamento.",
+    "draftHeadline": "No que vamos trabalhar em <scope>{{scope}}</scope>?",
+    "draftHeadlineNoWorkspace": "Abra uma pasta para começar",
+    "draftPickProject": "Escolher projeto",
+    "draftSearchProjects": "Buscar projetos",
+    "draftNoProjectsFound": "Nenhum projeto encontrado",
     "placeholders": {
       "plan": "Descreva o que você quer planejar...",
       "chat": "Peça alterações de continuação"
@@ -485,13 +507,7 @@
     "approvalBannerTitleCount_one": "{{count}} aprovação pendente",
     "approvalBannerTitleCount_other": "{{count}} aprovações pendentes",
     "editResend": "Editar e reenviar",
-    "attachShort": "Anexar",
-    "emptyScopeRepo": "As mensagens rodam em {{repo}}",
-    "emptyScopeRepoBranch": "As mensagens rodam em {{repo}} no branch {{branch}}",
-    "emptySuggestionSummarize": "Resumir as mudanças recentes",
-    "emptySuggestionTests": "Corrigir o teste que está falhando",
-    "emptyHintCommands": "comandos",
-    "emptyHintSlash": "ações de barra"
+    "attachShort": "Anexar"
   },
   "messageBlocks": {
     "diffFallback": "diff ({{scope}})",
@@ -599,7 +615,6 @@
     "windowOpusWeeklyLeft": "Semana Opus restante",
     "windowSonnetWeeklyLeft": "Semana Sonnet restante",
     "resets": "reinicia {{time}}",
-    "usageAwaitingFirstMessage": "Envie uma mensagem para carregar os limites de uso",
     "usageLoading": "Carregando limites de uso...",
     "usageUnavailable": "Limites de uso indisponíveis no servidor",
     "openUsageLimits": "Abrir limites de uso",
