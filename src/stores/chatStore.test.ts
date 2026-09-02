@@ -578,6 +578,7 @@ describe("chatStore send", () => {
         ],
         outputDeferred: false,
         outputDeferredLoaded: true,
+        startedAt: expect.any(Number),
         status: "running",
       },
     ]);
@@ -1024,6 +1025,7 @@ describe("chatStore send", () => {
         outputChunks: [],
         outputDeferred: false,
         outputDeferredLoaded: true,
+        startedAt: expect.any(Number),
         status: "running",
       },
     ]);

@@ -1,4 +1,5 @@
 import { engineKind } from "../../lib/engineKind";
+import { WorkingIndicator } from "../shared/WorkingIndicator";
 import {
   FormEvent,
   Suspense,
@@ -19,7 +20,6 @@ import {
   Loader2,
   Square,
   GitBranch,
-  Brain,
   Shield,
   Monitor,
   SquareTerminal,
@@ -44,10 +44,6 @@ import {
   SquareCode,
   FlaskConical,
   UserCircle,
-  Lightbulb,
-  Eye,
-  Compass,
-  BookOpen,
 } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 import { DraftScopePicker } from "./DraftScopePicker";
@@ -1229,29 +1225,6 @@ interface MessageRowProps {
   onOpenDiffFile?: (filePath: string) => void;
 }
 
-const THINKING_VARIANTS = [
-  { icon: Brain, key: "thinkingVariants.thinking" },
-  { icon: Lightbulb, key: "thinkingVariants.reasoning" },
-  { icon: Eye, key: "thinkingVariants.analyzing" },
-  { icon: Compass, key: "thinkingVariants.exploring" },
-  { icon: Search, key: "thinkingVariants.researching" },
-  { icon: Sparkles, key: "thinkingVariants.generating" },
-  { icon: BookOpen, key: "thinkingVariants.reading" },
-  { icon: Brain, key: "thinkingVariants.considering" },
-] as const;
-
-function useThinkingVariant(active: boolean) {
-  const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_VARIANTS.length));
-  useEffect(() => {
-    if (!active) return;
-    const interval = setInterval(() => {
-      setIndex((i) => (i + 1) % THINKING_VARIANTS.length);
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [active]);
-  return THINKING_VARIANTS[index];
-}
-
 function extractMessageCopyText(message: Message): string {
   if (message.role === "user") {
     if (message.content) return message.content;
@@ -1345,7 +1318,6 @@ function MessageRowView({
   const hasAssistantContent = !isUser && hasVisibleMessageContent(message.blocks);
   const showAssistantShell = !isUser && (hasAssistantContent || message.status === "streaming");
   const showThinkingPlaceholder = showAssistantShell && !hasAssistantContent;
-  const thinkingVariant = useThinkingVariant(showThinkingPlaceholder);
 
   if (!isUser && !showAssistantShell) {
     return null;
@@ -1456,27 +1428,11 @@ function MessageRowView({
               onOpenDiffFile={onOpenDiffFile}
             />
           ) : (
-            <div
-              style={{
-                padding: "4px 14px 8px",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                color: "var(--text-3)",
-                fontSize: 12,
-              }}
-            >
-              {(() => {
-                const ThinkIcon = thinkingVariant.icon;
-                return <ThinkIcon size={12} className="thinking-icon-active" style={{ color: "var(--info)" }} />;
-              })()}
-              <span>{t(thinkingVariant.key)}</span>
-              <span className="chat-streaming-dots">
-                <span />
-                <span />
-                <span />
-              </span>
-            </div>
+            <WorkingIndicator
+              label={t("messageBlocks.thinking")}
+              tone="info"
+              startedAt={message.createdAt}
+            />
           )}
         </div>
       ) : null}
@@ -5552,27 +5508,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               onApproval={handleApproval}
               onLoadActionOutput={handleLoadActionOutput}
             />
-            <div
-              role="status"
-              aria-live="polite"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                alignSelf: "flex-start",
-                gap: 7,
-                padding: "4px 14px 8px",
-                color: "var(--text-3)",
-                fontSize: 12,
-              }}
-            >
-              <Loader2
-                size={12}
-                className="chat-send-spinner"
-                aria-hidden="true"
-                style={{ color: "var(--info)" }}
-              />
-              <span>{t("panel.sendingMessage")}</span>
-            </div>
+            <WorkingIndicator
+              label={t("panel.sendingMessage")}
+              startedAt={pendingSubmission.createdAt}
+            />
           </div>
         )}
 

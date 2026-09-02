@@ -1,14 +1,4 @@
 {
-  "thinkingVariants": {
-    "thinking": "Thinking",
-    "reasoning": "Reasoning",
-    "analyzing": "Analyzing",
-    "exploring": "Exploring",
-    "researching": "Researching",
-    "generating": "Generating",
-    "reading": "Reading",
-    "considering": "Considering"
-  },
   "modelPicker": {
     "selectModel": "Select model",
     "runtimeConfiguration": "Runtime configuration",

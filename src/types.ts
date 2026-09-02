@@ -316,6 +316,8 @@ export interface ActionBlock {
   outputChunks: Array<{ stream: "stdout" | "stderr" | "stdin"; content: string }>;
   outputDeferred?: boolean;
   outputDeferredLoaded?: boolean;
+  /** Epoch ms when the action started running; drives the live timer. */
+  startedAt?: number;
   status: "pending" | "running" | "done" | "error";
   result?: {
     success: boolean;

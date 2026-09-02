@@ -1451,6 +1451,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
       outputChunks: [],
       outputDeferred: false,
       outputDeferredLoaded: true,
+      startedAt: Date.now(),
       status: "running"
     });
   }

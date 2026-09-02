@@ -1,4 +1,5 @@
 import { engineKind } from "../../lib/engineKind";
+import { PixelGrid, formatElapsed, useElapsed } from "../shared/WorkingIndicator";
 import {
   memo,
   useCallback,
@@ -685,8 +686,9 @@ function SteerBlockView({ block }: { block: SteerBlock }) {
 
 /* ── Action Block ── */
 
-function ActionStatusBadge({ status }: { status: string }) {
+function ActionStatusBadge({ status, startedAt }: { status: string; startedAt?: number }) {
   const { t } = useTranslation("chat");
+  const elapsed = useElapsed(startedAt, status === "running");
   if (status === "done") {
     return (
       <span className="msg-block-status">
@@ -696,9 +698,11 @@ function ActionStatusBadge({ status }: { status: string }) {
   }
   if (status === "running") {
     return (
-      <span className="msg-block-status msg-block-status--warning">
-        <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
-        {t("messageBlocks.actionStatus.running")}
+      <span
+        className="msg-block-status msg-block-status--warning"
+        aria-label={t("messageBlocks.actionStatus.running")}
+      >
+        {elapsed != null ? formatElapsed(elapsed) : t("messageBlocks.actionStatus.running")}
       </span>
     );
   }
@@ -809,7 +813,7 @@ function ActionBlockView({
   return (
     <div>
       <MessageBlockHeader
-        icon={<Icon size={11} />}
+        icon={isRunning ? <PixelGrid tone="amber" /> : <Icon size={11} />}
         label={block.summary}
         labelMono={block.actionType === "command"}
         expanded={expanded}
@@ -823,7 +827,7 @@ function ActionBlockView({
                 : `${(block.result.durationMs / 1000).toFixed(1)}s`}
             </span>
           )}
-          <ActionStatusBadge status={block.status} />
+          <ActionStatusBadge status={block.status} startedAt={block.startedAt} />
           </>
         }
       />

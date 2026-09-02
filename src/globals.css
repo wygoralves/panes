@@ -1032,18 +1032,12 @@ button, input, textarea, select {
     color: var(--text-2) !important;
   }
 
-  .thinking-icon-active,
-  .chat-jump-pill-dot {
+  .chat-jump-pill-dot,
+  .pixel-grid span {
     animation: none;
   }
-}
-
-@keyframes thinking-pulse {
-  0%, 100% { opacity: 0.45; filter: drop-shadow(0 0 0 transparent); }
-  50% { opacity: 1; filter: drop-shadow(0 0 4px rgba(var(--info-rgb), 0.5)); }
-}
-.thinking-icon-active {
-  animation: thinking-pulse 2s ease-in-out infinite;
+  .pixel-grid span { opacity: 0.5; }
+  .pixel-grid span:nth-child(even) { opacity: 0.18; }
 }
 
 .animate-fade-in {
@@ -1206,6 +1200,72 @@ button, input, textarea, select {
 @keyframes msg-shimmer-move {
   from { background-position: 200% 0; }
   to { background-position: -200% 0; }
+}
+
+/* ── Working indicator: one loader for every "in progress" phase ──
+   A 3x3 pixel grid that fits the 18px tile slot, a shimmer label naming the
+   real phase, an optional chip, and a live elapsed timer. */
+.pixel-grid {
+  width: 18px; height: 18px; flex-shrink: 0;
+  display: grid; grid-template-columns: repeat(3, 4px); gap: 1.5px;
+  align-content: center; justify-content: center;
+  color: var(--text-3);
+}
+.pixel-grid span {
+  width: 4px; height: 4px; border-radius: 1px;
+  background: currentColor; opacity: 0.18;
+  animation: pixel-on 650ms ease-in-out infinite;
+}
+/* chevron wavefront driving right: delay grows with column and distance from the middle row */
+.pixel-grid--drive span:nth-child(1) { animation-delay: 90ms; }
+.pixel-grid--drive span:nth-child(2) { animation-delay: 180ms; }
+.pixel-grid--drive span:nth-child(3) { animation-delay: 270ms; }
+.pixel-grid--drive span:nth-child(4) { animation-delay: 0ms; }
+.pixel-grid--drive span:nth-child(5) { animation-delay: 90ms; }
+.pixel-grid--drive span:nth-child(6) { animation-delay: 180ms; }
+.pixel-grid--drive span:nth-child(7) { animation-delay: 90ms; }
+.pixel-grid--drive span:nth-child(8) { animation-delay: 180ms; }
+.pixel-grid--drive span:nth-child(9) { animation-delay: 270ms; }
+/* comet lapping the perimeter: used when the app waits on the user */
+.pixel-grid--orbit span { animation-duration: 950ms; }
+.pixel-grid--orbit span:nth-child(5) { animation: none; opacity: 0.08; }
+.pixel-grid--orbit span:nth-child(1) { animation-delay: 0ms; }
+.pixel-grid--orbit span:nth-child(2) { animation-delay: 110ms; }
+.pixel-grid--orbit span:nth-child(3) { animation-delay: 220ms; }
+.pixel-grid--orbit span:nth-child(6) { animation-delay: 330ms; }
+.pixel-grid--orbit span:nth-child(9) { animation-delay: 440ms; }
+.pixel-grid--orbit span:nth-child(8) { animation-delay: 550ms; }
+.pixel-grid--orbit span:nth-child(7) { animation-delay: 660ms; }
+.pixel-grid--orbit span:nth-child(4) { animation-delay: 770ms; }
+.pixel-grid--info { color: var(--info); }
+.pixel-grid--amber { color: var(--warning); }
+.pixel-grid--violet { color: var(--accent-2); }
+@keyframes pixel-on {
+  0%, 100% { opacity: 0.18; }
+  18%, 42% { opacity: 1; }
+  62% { opacity: 0.18; }
+}
+
+.working-row {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 28px; padding: 2px 14px;
+  font-size: 11.5px; color: var(--text-2);
+  min-width: 0;
+}
+.working-label { font-weight: 550; white-space: nowrap; }
+.working-chip {
+  display: inline-flex; align-items: center;
+  height: 20px; padding: 0 7px; border-radius: 6px;
+  background: var(--wash-06); color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--divider);
+  font-family: var(--font-mono); font-size: 10.5px;
+  min-width: 0; max-width: 60%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.working-chip--sans { font-family: var(--font-body); font-size: 11px; }
+.working-time {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-3);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 
 /* ── Action Group ── */
@@ -8650,36 +8710,8 @@ button.chat-context-section:hover {
   to { transform: rotate(360deg); }
 }
 
-.chat-streaming-dots {
-  display: flex;
-  gap: 3px;
-  align-items: center;
-}
-
-.chat-streaming-dots span {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--info);
-  animation: streaming-dot 1.4s ease-in-out infinite;
-}
-
-.chat-streaming-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.chat-streaming-dots span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-@keyframes streaming-dot {
-  0%, 60%, 100% { opacity: 0.25; transform: scale(0.8); }
-  30% { opacity: 1; transform: scale(1.1); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .chat-send-spinner,
-  .chat-streaming-dots span {
+  .chat-send-spinner {
     animation: none;
   }
 }
