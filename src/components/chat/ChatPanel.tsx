@@ -6117,6 +6117,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     fontSize: 13,
                     lineHeight: 1.6,
                     resize: "none",
+                    overflowX: "hidden",
                     fontFamily: "inherit",
                     caretColor: activePlanMode ? "var(--accent-2)" : "var(--accent)",
                   }}
