@@ -10387,14 +10387,14 @@ label.mp-footer-row {
   --mp-holo-x: 50%;
   --mp-holo-foil: linear-gradient(
     108deg,
-    #c98bb8 0%,
-    #c9a37e 14%,
-    #c2bb7a 28%,
-    #83bf9e 42%,
-    #78a9c4 56%,
-    #9a8ccc 70%,
-    #c98bb8 84%,
-    #c9a37e 100%
+    #d47db4 0%,
+    #d69a63 14%,
+    #c9c25c 28%,
+    #5fc48f 42%,
+    #5aa6d6 56%,
+    #907cd9 70%,
+    #d47db4 84%,
+    #d69a63 100%
   );
   transition: --mp-holo-x 480ms var(--ease-out);
 }
