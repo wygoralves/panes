@@ -4,6 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -1248,34 +1249,65 @@ function buildUsageApiSnapshot(payload) {
   return Object.values(snapshot).some((value) => value !== null) ? snapshot : null;
 }
 
+/**
+ * Keychain service names that may hold this instance's OAuth credentials.
+ * Claude Code stores the default install under "Claude Code-credentials" and
+ * a custom CLAUDE_CONFIG_DIR under the same name suffixed with the first eight
+ * hex characters of sha256 over the raw directory value, so an instance must
+ * never fall back to the default item or it reports another account's limits.
+ */
+export function claudeCredentialKeychainServices(configDirectory, homeDirectory) {
+  const raw = configDirectory?.trim();
+  if (!raw) {
+    return ["Claude Code-credentials"];
+  }
+  const candidates = new Set([raw]);
+  if (homeDirectory) {
+    if (raw.startsWith("~/")) candidates.add(path.join(homeDirectory, raw.slice(2)));
+    if (raw.startsWith(homeDirectory + "/")) candidates.add("~" + raw.slice(homeDirectory.length));
+  }
+  const trimmed = raw.replace(/\/+$/, "");
+  if (trimmed && trimmed !== raw) candidates.add(trimmed);
+  return [...candidates].map(
+    (value) => `Claude Code-credentials-${createHash("sha256").update(value).digest("hex").slice(0, 8)}`,
+  );
+}
+
 async function readClaudeOauthAccessToken() {
   const environmentToken = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (environmentToken) {
     return environmentToken;
   }
 
+  const homeDirectory = process.env.HOME || process.env.USERPROFILE || "";
+  const configDirectoryEnv = process.env.CLAUDE_CONFIG_DIR?.trim() || "";
+
   if (process.platform === "darwin") {
-    try {
-      const { stdout } = await execFileAsync(
-        "/usr/bin/security",
-        ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
-        { encoding: "utf8", timeout: 2_000, maxBuffer: 1024 * 1024 },
-      );
-      const credentials = JSON.parse(stdout);
-      const token = credentials?.claudeAiOauth?.accessToken;
-      if (typeof token === "string" && token.trim().length > 0) {
-        return token.trim();
+    for (const service of claudeCredentialKeychainServices(configDirectoryEnv, homeDirectory)) {
+      try {
+        const { stdout } = await execFileAsync(
+          "/usr/bin/security",
+          ["find-generic-password", "-s", service, "-w"],
+          { encoding: "utf8", timeout: 2_000, maxBuffer: 1024 * 1024 },
+        );
+        const credentials = JSON.parse(stdout);
+        const token = credentials?.claudeAiOauth?.accessToken;
+        if (typeof token === "string" && token.trim().length > 0) {
+          return token.trim();
+        }
+      } catch {
+        // Try the next service name, then the credentials file.
       }
-    } catch {
-      // Fall through to the credentials file used on Linux and Windows.
     }
   }
 
   try {
-    const homeDirectory = process.env.HOME || process.env.USERPROFILE;
-    if (!homeDirectory) return null;
-    const configDirectory =
-      process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
+    if (!homeDirectory && !configDirectoryEnv) return null;
+    const configDirectory = configDirectoryEnv
+      ? configDirectoryEnv.startsWith("~/")
+        ? path.join(homeDirectory, configDirectoryEnv.slice(2))
+        : configDirectoryEnv
+      : path.join(homeDirectory, ".claude");
     const credentials = JSON.parse(
       await readFile(path.join(configDirectory, ".credentials.json"), "utf8"),
     );

@@ -111,7 +111,8 @@
     "markThreadUnread": "Mark thread unread",
     "markUnreadUnavailable": "Only a finished thread can be marked unread.",
     "undo": "Undo",
-    "settleUnavailable": "A running thread cannot be settled yet."
+    "settleUnavailable": "A running thread cannot be settled yet.",
+    "showArchived": "Show archived"
   },
   "commandPalette": {
     "placeholder": "Search commands, threads, workspaces, or files...",
@@ -595,7 +596,7 @@
       },
       "usage": {
         "title": "Usage limits",
-        "description": "Review the current account limits reported by connected chat providers."
+        "description": "What each signed-in account has left before its limits reset."
       },
       "power": {
         "title": "Power and wake",
@@ -640,7 +641,13 @@
       "interfaceDescription": "Theme changes apply to chat, terminal, Git, and editor surfaces.",
       "themeDescription": "Use a fixed theme or follow the operating system.",
       "languageDescription": "Used across navigation, dialogs, and status messages.",
-      "sidebarListModeDescription": "Group threads by project or status."
+      "sidebarListModeDescription": "Group threads by project or status.",
+      "zoom": "Interface zoom",
+      "zoomDescription": "Scales the whole window. Zoom in and out with the usual keyboard shortcuts, and press the value to reset.",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "zoomReset": "Reset to 100%",
+      "zoomFailed": "Failed to save the interface zoom."
     },
     "chat": {
       "providers": "Providers",
@@ -702,9 +709,9 @@
     },
     "usage": {
       "providerLimits": "Connected provider limits",
-      "providerLimitsDescription": "Percentages come directly from each provider and refresh every minute.",
+      "providerLimitsDescription": "Limits come straight from each signed-in account and refresh every minute.",
       "connected": "Account usage available",
-      "unavailable": "Usage data unavailable. Check that this provider is signed in with a subscription account.",
+      "unavailable": "No usage data. Sign in with a subscription account to see its limits here.",
       "loading": "Loading provider usage limits",
       "loadFailed": "Provider usage limits could not be loaded.",
       "percentLeft": "{{percent}}% left",
@@ -715,7 +722,11 @@
         "fableWeekly": "Fable weekly limit",
         "opusWeekly": "Opus weekly limit",
         "sonnetWeekly": "Sonnet weekly limit"
-      }
+      },
+      "noWindows": "This account reports no limits right now.",
+      "resetsIn": "Resets in {{duration}}",
+      "minutes": "{{minutes}} min",
+      "hoursMinutes": "{{hours}}h {{minutes}}m"
     },
     "terminal": {
       "display": "Text and rendering",
