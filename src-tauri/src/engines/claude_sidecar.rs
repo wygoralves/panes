@@ -1567,7 +1567,51 @@ fn default_effort_for_claude_model(
         .unwrap_or_default()
 }
 
+/// Builds a versioned display name such as "Opus 4.8" or "Sonnet 5" from a
+/// resolved model id like `claude-opus-4-8[1m]` or
+/// `claude-haiku-4-5-20251001`. Returns `None` when the id has no version.
+fn claude_model_name_from_resolved(resolved: &str) -> Option<String> {
+    let trimmed = resolved.trim().to_lowercase();
+    let one_million = trimmed.ends_with("[1m]");
+    let base = trimmed.trim_end_matches("[1m]");
+    let rest = base.strip_prefix("claude-")?;
+    let mut parts = rest.split('-');
+    let family = parts.next()?;
+    if family.is_empty() {
+        return None;
+    }
+    let mut version = Vec::new();
+    for part in parts {
+        // Date suffixes such as 20251001 are not part of the version.
+        if part.len() >= 8 || !part.chars().all(|ch| ch.is_ascii_digit()) {
+            break;
+        }
+        version.push(part);
+    }
+    if version.is_empty() {
+        return None;
+    }
+    let mut family_chars = family.chars();
+    let family_name = match family_chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + family_chars.as_str(),
+        None => return None,
+    };
+    let mut name = format!("{family_name} {}", version.join("."));
+    if one_million {
+        name.push_str(" (1M)");
+    }
+    Some(name)
+}
+
 fn inferred_claude_model_name(model: &SidecarModelInfo) -> String {
+    if let Some(name) = model
+        .resolved_model
+        .as_deref()
+        .and_then(claude_model_name_from_resolved)
+    {
+        return name;
+    }
+
     let identity = format!(
         "{} {} {}",
         model.description,
@@ -1613,16 +1657,20 @@ fn map_claude_model(model: SidecarModelInfo) -> Option<ModelInfo> {
     };
     let default_reasoning_effort = default_effort_for_claude_model(&model, &supported_efforts);
 
-    let display_name = if id == "default"
+    let is_default_alias = id == "default"
         && model
             .display_name
             .trim()
             .to_lowercase()
-            .starts_with("default")
+            .starts_with("default");
+    let display_name = match model
+        .resolved_model
+        .as_deref()
+        .and_then(claude_model_name_from_resolved)
     {
-        inferred_claude_model_name(&model)
-    } else {
-        model.display_name.trim().to_string()
+        Some(numbered) => numbered,
+        None if is_default_alias => inferred_claude_model_name(&model),
+        None => model.display_name.trim().to_string(),
     };
 
     Some(ModelInfo {
@@ -2522,7 +2570,7 @@ mod tests {
         .expect("runtime model should map");
 
         assert_eq!(model.id, "claude-fable-5[1m]");
-        assert_eq!(model.display_name, "Fable");
+        assert_eq!(model.display_name, "Fable 5");
         assert_eq!(model.default_reasoning_effort, "high");
         assert_eq!(
             model
@@ -2568,7 +2616,7 @@ mod tests {
                 .iter()
                 .map(|model| model.display_name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Opus", "Sonnet"]
+            vec!["Opus 4.8 (1M)", "Sonnet 5"]
         );
         assert!(models[0].is_default);
         assert!(!models[1].is_default);
@@ -2589,6 +2637,23 @@ mod tests {
         assert_eq!(model.id, "default");
         assert_eq!(model.display_name, "Opus");
         assert!(model.is_default);
+    }
+
+    #[test]
+    fn resolved_model_ids_become_versioned_names() {
+        assert_eq!(
+            claude_model_name_from_resolved("claude-opus-4-8[1m]").as_deref(),
+            Some("Opus 4.8 (1M)")
+        );
+        assert_eq!(
+            claude_model_name_from_resolved("claude-sonnet-5").as_deref(),
+            Some("Sonnet 5")
+        );
+        assert_eq!(
+            claude_model_name_from_resolved("claude-haiku-4-5-20251001").as_deref(),
+            Some("Haiku 4.5")
+        );
+        assert_eq!(claude_model_name_from_resolved("opus"), None);
     }
 
     #[test]
