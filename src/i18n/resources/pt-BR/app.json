@@ -565,6 +565,7 @@
     "nav": {
       "overview": "Visão geral",
       "appearance": "Aparência",
+      "chat": "Chat",
       "terminal": "Terminal",
       "notifications": "Notificações",
       "usage": "Limites de uso",
@@ -579,6 +580,10 @@
       "appearance": {
         "title": "Aparência",
         "description": "Escolha a aparência e o idioma usados pelo Panes."
+      },
+      "chat": {
+        "title": "Chat",
+        "description": "Gerencie provedores de chat e padrões do compositor."
       },
       "terminal": {
         "title": "Terminal",
@@ -635,10 +640,55 @@
       "interfaceDescription": "Mudanças de tema se aplicam ao chat, terminal, Git e editor.",
       "themeDescription": "Use um tema fixo ou acompanhe o sistema operacional.",
       "languageDescription": "Usado na navegação, diálogos e mensagens de status.",
-      "sidebarListModeDescription": "Agrupe as threads por projeto ou status.",
+      "sidebarListModeDescription": "Agrupe as threads por projeto ou status."
+    },
+    "chat": {
+      "providers": "Provedores",
+      "providersDescription": "Cada provedor é uma instalação ou conta do Codex ou do Claude. Adicione um para usar uma segunda conta lado a lado.",
+      "addProvider": "Adicionar provedor",
+      "defaultInstall": "Instalação padrão do seu PATH",
+      "sharedInstall": "Compartilha a instalação e o login padrão",
+      "envCount": "{{count}} variável de ambiente",
+      "envCount_other": "{{count}} variáveis de ambiente",
+      "edit": "Editar provedor",
+      "remove": "Remover provedor",
+      "removeTitle": "Remover {{name}}?",
+      "removeMessage": "As threads que usaram este provedor mantêm o histórico, mas não podem enviar novas mensagens até que ele seja adicionado de novo.",
+      "saveFailed": "Não foi possível salvar o provedor.",
+      "removeFailed": "Não foi possível remover o provedor.",
+      "removed": "{{name}} removido.",
+      "composer": "Compositor",
+      "composerDescription": "Padrões do compositor de mensagens.",
       "composerPlanMode": "Modo plano no compositor",
       "composerPlanModeDescription": "Mostra o botão Plano ao lado do seletor de modelo.",
-      "composerPlanModeFailed": "Não foi possível atualizar a configuração do compositor."
+      "composerPlanModeFailed": "Não foi possível atualizar a configuração do compositor.",
+      "dialog": {
+        "addTitle": "Adicionar provedor",
+        "editTitle": "Editar {{name}}",
+        "description": "Um login e diretório de configuração separados permitem usar uma segunda conta junto com a padrão.",
+        "builtInDescription": "Ajustes da instalação padrão. Deixe os campos vazios para manter os padrões.",
+        "kind": "Tipo",
+        "displayName": "Nome",
+        "displayNamePlaceholder": "Claude (trabalho)",
+        "id": "Id do provedor",
+        "idHint": "Usado na configuração e no histórico de threads. Letras minúsculas, dígitos e hífens.",
+        "homePath": "Diretório inicial",
+        "homePathHintCodex": "Define CODEX_HOME para que esta instância tenha login e configuração próprios.",
+        "homePathHintClaude": "Define CLAUDE_CONFIG_DIR para que esta instância tenha login e configurações próprios.",
+        "binaryPath": "Caminho do binário",
+        "binaryPathHint": "Deixe vazio para usar o {{binary}} encontrado no seu PATH.",
+        "launchArgs": "Argumentos de inicialização",
+        "launchArgsHint": "Flags extras passadas quando o provedor inicia.",
+        "env": "Variáveis de ambiente",
+        "addVariable": "Adicionar variável",
+        "variableName": "NOME",
+        "variableValue": "valor",
+        "enabled": "Ativado",
+        "nameRequired": "O nome é obrigatório.",
+        "invalidSlug": "O id do provedor deve começar com uma letra e usar só letras minúsculas, dígitos e hífens.",
+        "duplicateId": "Já existe um provedor com o id {{id}}.",
+        "invalidVariable": "{{name}} não é um nome válido de variável de ambiente."
+      }
     },
     "usage": {
       "providerLimits": "Limites dos provedores conectados",

@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import type { ComposerRuntimeSnapshot } from "../../lib/newThreadRuntime";
 import type { EngineModel } from "../../types";
 import { resolveReasoningEffortForModel } from "./reasoningEffort";
@@ -36,7 +37,7 @@ export function buildComposerRuntimeSnapshot({
     modelId: selectedModel.id,
     reasoningEffort: resolveReasoningEffortForModel(selectedModel, selectedEffort),
     serviceTier:
-      selectedEngineId === "codex"
+      engineKind(selectedEngineId) === "codex"
         ? normalizeComposerServiceTier(selectedServiceTier)
         : null,
   };

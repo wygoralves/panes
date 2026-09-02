@@ -1,3 +1,4 @@
+import { engineKind } from "./engineKind";
 import type { ChatEngineId } from "../types";
 
 export type AutonomyPresetId = "inherit" | "read-only" | "ask" | "auto" | "full";
@@ -53,10 +54,10 @@ export function autonomyPresetDescriptionKey(
   engineId: ChatEngineId,
   options?: AutonomyPresetOptions,
 ): string {
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     return `autonomy.engineDescriptions.opencode.${preset}`;
   }
-  if (engineId === "claude") {
+  if (engineKind(engineId) === "claude") {
     return `autonomy.engineDescriptions.claude.${preset}`;
   }
   if (
@@ -74,7 +75,7 @@ export function autonomyPresetDescriptionKey(
  * autonomy there.
  */
 export function availableAutonomyPresets(engineId: ChatEngineId): AutonomyPresetId[] {
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     return ["inherit", "read-only", "ask", "full"];
   }
   return [...AUTONOMY_PRESET_IDS];
@@ -122,7 +123,7 @@ export function autonomyPresetPatch(
 ): AutonomyPresetPatch {
   const preset = resolveAutonomyPresetForEngine(requestedPreset, engineId);
 
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     switch (preset) {
       case "read-only":
         return { approvalPolicy: "deny" };
@@ -135,7 +136,7 @@ export function autonomyPresetPatch(
     }
   }
 
-  if (engineId === "claude") {
+  if (engineKind(engineId) === "claude") {
     switch (preset) {
       case "read-only":
         return { approvalPolicy: "restricted", sandboxMode: "read-only", networkPolicy: "restricted" };
@@ -190,7 +191,7 @@ export function detectAutonomyPreset(
   snapshot: AutonomyPolicySnapshot,
   options?: AutonomyPresetOptions,
 ): AutonomyPresetId | null {
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     switch (snapshot.approvalPolicy) {
       case "inherit":
         return "inherit";
@@ -208,7 +209,7 @@ export function detectAutonomyPreset(
   // Full access forces the network on for Codex, so the stored network value
   // is irrelevant on that rung.
   if (
-    engineId === "codex" &&
+    engineKind(engineId) === "codex" &&
     snapshot.approvalPolicy === "never" &&
     snapshot.sandboxMode === "danger-full-access"
   ) {
@@ -216,7 +217,7 @@ export function detectAutonomyPreset(
   }
 
   for (const preset of availableAutonomyPresets(engineId)) {
-    if (engineId === "codex" && preset === "full") {
+    if (engineKind(engineId) === "codex" && preset === "full") {
       continue;
     }
     const patch = autonomyPresetPatch(preset, engineId, options);
@@ -251,7 +252,7 @@ export function autonomyPresetExecutionPolicyRequest(
   }
 
   const patch = autonomyPresetPatch(preset, engineId, options);
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     return { approvalPolicy: patch.approvalPolicy };
   }
 

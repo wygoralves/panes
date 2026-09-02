@@ -8,6 +8,7 @@ import type { EngineInfo, Thread } from "../types";
 const engines: EngineInfo[] = [
   {
     id: "codex",
+    kind: "codex",
     name: "Codex",
     models: [
       {
@@ -53,6 +54,7 @@ const engines: EngineInfo[] = [
   },
   {
     id: "claude",
+    kind: "claude",
     name: "Claude",
     models: [
       {

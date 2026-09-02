@@ -33,6 +33,9 @@ import {
   Volume2,
   Zap,
   ListChecks,
+  MessageSquare,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
 import {
@@ -60,6 +63,10 @@ import { THEME_PREFERENCES, type ThemePreference } from "../../lib/theme";
 import { useKeepAwakeStore, canToggleKeepAwake } from "../../stores/keepAwakeStore";
 import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
 import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
+import { useChatProvidersStore } from "../../stores/chatProvidersStore";
+import { ChatProviderDialog, providerKindIcon } from "./ChatProviderDialog";
+import { ConfirmDialog } from "../shared/ConfirmDialog";
+import type { ChatProviderInstance } from "../../types";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
 import { useThemeStore } from "../../stores/themeStore";
 import { toast } from "../../stores/toastStore";
@@ -195,11 +202,21 @@ export function SettingsPage() {
   const composerPlanModeVisible = useComposerSettingsStore((state) => state.planModeVisible);
   const setComposerPlanModeVisible = useComposerSettingsStore((state) => state.setPlanModeVisible);
   const loadComposerSettings = useComposerSettingsStore((state) => state.load);
+  const chatProviders = useChatProvidersStore((state) => state.providers);
+  const chatProvidersSaving = useChatProvidersStore((state) => state.saving);
+  const loadChatProviders = useChatProvidersStore((state) => state.load);
+  const saveChatProvider = useChatProvidersStore((state) => state.save);
+  const removeChatProvider = useChatProvidersStore((state) => state.remove);
+  const [providerDialog, setProviderDialog] = useState<
+    { open: false } | { open: true; provider: ChatProviderInstance | null }
+  >({ open: false });
+  const [providerPendingRemoval, setProviderPendingRemoval] = useState<ChatProviderInstance | null>(null);
 
   useEffect(() => {
     void loadSidebarListMode();
     void loadComposerSettings();
-  }, [loadSidebarListMode, loadComposerSettings]);
+    void loadChatProviders();
+  }, [loadSidebarListMode, loadComposerSettings, loadChatProviders]);
   const updateStatus = useUpdateStore((state) => state.status);
   const availableVersion = useUpdateStore((state) => state.version);
   const updateError = useUpdateStore((state) => state.error);
@@ -331,6 +348,7 @@ export function SettingsPage() {
     () => [
       { id: "overview" as const, icon: <LayoutGrid size={15} />, label: t("app:settingsPage.nav.overview") },
       { id: "appearance" as const, icon: <Palette size={15} />, label: t("app:settingsPage.nav.appearance") },
+      { id: "chat" as const, icon: <MessageSquare size={15} />, label: t("app:settingsPage.nav.chat") },
       { id: "terminal" as const, icon: <TerminalSquare size={15} />, label: t("app:settingsPage.nav.terminal") },
       { id: "notifications" as const, icon: <BellRing size={15} />, label: t("app:settingsPage.nav.notifications") },
       { id: "usage" as const, icon: <Gauge size={15} />, label: t("app:settingsPage.nav.usage") },
@@ -470,7 +488,36 @@ export function SettingsPage() {
   async function changeComposerPlanModeVisible(visible: boolean) {
     if (visible === composerPlanModeVisible) return;
     const saved = await setComposerPlanModeVisible(visible);
-    if (!saved) toast.error(t("app:settingsPage.appearance.composerPlanModeFailed"));
+    if (!saved) toast.error(t("app:settingsPage.chat.composerPlanModeFailed"));
+  }
+
+  async function toggleChatProviderEnabled(provider: ChatProviderInstance, enabled: boolean) {
+    const saved = await saveChatProvider({ ...provider, enabled });
+    if (!saved) toast.error(t("app:settingsPage.chat.saveFailed"));
+  }
+
+  async function confirmRemoveChatProvider() {
+    const provider = providerPendingRemoval;
+    setProviderPendingRemoval(null);
+    if (!provider) return;
+    const removed = await removeChatProvider(provider.id);
+    if (removed) toast.success(t("app:settingsPage.chat.removed", { name: provider.displayName }));
+    else toast.error(t("app:settingsPage.chat.removeFailed"));
+  }
+
+  function describeChatProvider(provider: ChatProviderInstance): string {
+    const parts: string[] = [];
+    if (provider.homePath) parts.push(provider.homePath);
+    if (provider.binaryPath) parts.push(provider.binaryPath);
+    if (provider.launchArgs) parts.push(provider.launchArgs);
+    const envCount = Object.keys(provider.env).length;
+    if (envCount > 0) parts.push(t("app:settingsPage.chat.envCount", { count: envCount }));
+    if (parts.length === 0) {
+      return provider.builtIn
+        ? t("app:settingsPage.chat.defaultInstall")
+        : t("app:settingsPage.chat.sharedInstall");
+    }
+    return parts.join("  ·  ");
   }
 
   async function toggleAcceleratedRendering(enabled: boolean) {
@@ -781,17 +828,6 @@ export function SettingsPage() {
                     })}
                   </div>
                 </SettingsRow>
-                <SettingsRow
-                  icon={<ListChecks size={17} />}
-                  title={t("app:settingsPage.appearance.composerPlanMode")}
-                  description={t("app:settingsPage.appearance.composerPlanModeDescription")}
-                >
-                  <Toggle
-                    checked={composerPlanModeVisible}
-                    label={t("app:settingsPage.appearance.composerPlanMode")}
-                    onChange={(checked) => void changeComposerPlanModeVisible(checked)}
-                  />
-                </SettingsRow>
                 <SettingsRow icon={<Globe2 size={17} />} title={t("common:language.label")} description={t("app:settingsPage.appearance.languageDescription")}>
                   <Dropdown
                     value={activeLocale}
@@ -805,6 +841,111 @@ export function SettingsPage() {
                 </SettingsRow>
               </div>
             </section>
+          ) : null}
+
+          {section === "chat" ? (
+            <>
+              <section className="usp-section usp-section-first">
+                <div className="usp-section-header">
+                  <h2>{t("app:settingsPage.chat.providers")}</h2>
+                  <p>{t("app:settingsPage.chat.providersDescription")}</p>
+                </div>
+                <div className="usp-group">
+                  {chatProviders.map((provider) => (
+                    <div
+                      key={provider.id}
+                      className={provider.enabled ? undefined : "usp-provider-row-disabled"}
+                    >
+                      <SettingsRow
+                        icon={providerKindIcon(provider.kind, 17)}
+                        title={provider.displayName}
+                        description={describeChatProvider(provider)}
+                      >
+                        {!provider.builtIn ? (
+                          <Toggle
+                            checked={provider.enabled}
+                            disabled={chatProvidersSaving}
+                            label={t("app:settingsPage.chat.dialog.enabled")}
+                            onChange={(checked) => void toggleChatProviderEnabled(provider, checked)}
+                          />
+                        ) : null}
+                        <button
+                          type="button"
+                          className="usp-icon-button"
+                          aria-label={t("app:settingsPage.chat.edit")}
+                          title={t("app:settingsPage.chat.edit")}
+                          onClick={() => setProviderDialog({ open: true, provider })}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                        {!provider.builtIn ? (
+                          <button
+                            type="button"
+                            className="usp-icon-button"
+                            aria-label={t("app:settingsPage.chat.remove")}
+                            title={t("app:settingsPage.chat.remove")}
+                            onClick={() => setProviderPendingRemoval(provider)}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        ) : null}
+                      </SettingsRow>
+                    </div>
+                  ))}
+                  <div className="usp-group-footer">
+                    <button
+                      type="button"
+                      className="usp-button"
+                      onClick={() => setProviderDialog({ open: true, provider: null })}
+                    >
+                      <Plus size={13} />
+                      {t("app:settingsPage.chat.addProvider")}
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section className="usp-section">
+                <div className="usp-section-header">
+                  <h2>{t("app:settingsPage.chat.composer")}</h2>
+                  <p>{t("app:settingsPage.chat.composerDescription")}</p>
+                </div>
+                <div className="usp-group">
+                  <SettingsRow
+                    icon={<ListChecks size={17} />}
+                    title={t("app:settingsPage.chat.composerPlanMode")}
+                    description={t("app:settingsPage.chat.composerPlanModeDescription")}
+                  >
+                    <Toggle
+                      checked={composerPlanModeVisible}
+                      label={t("app:settingsPage.chat.composerPlanMode")}
+                      onChange={(checked) => void changeComposerPlanModeVisible(checked)}
+                    />
+                  </SettingsRow>
+                </div>
+              </section>
+
+              <ChatProviderDialog
+                open={providerDialog.open}
+                provider={providerDialog.open ? providerDialog.provider : null}
+                existingIds={chatProviders.map((provider) => provider.id)}
+                saving={chatProvidersSaving}
+                onSave={saveChatProvider}
+                onClose={() => setProviderDialog({ open: false })}
+              />
+              <ConfirmDialog
+                open={providerPendingRemoval !== null}
+                title={t("app:settingsPage.chat.removeTitle", {
+                  name: providerPendingRemoval?.displayName ?? "",
+                })}
+                message={t("app:settingsPage.chat.removeMessage")}
+                confirmLabel={t("common:actions.remove")}
+                cancelLabel={t("common:actions.cancel")}
+                onConfirm={() => void confirmRemoveChatProvider()}
+                onCancel={() => setProviderPendingRemoval(null)}
+                onDismiss={() => setProviderPendingRemoval(null)}
+              />
+            </>
           ) : null}
 
           {section === "terminal" ? (

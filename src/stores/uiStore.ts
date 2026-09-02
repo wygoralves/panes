@@ -23,6 +23,7 @@ export type ActiveView = "chat" | "harnesses" | "settings";
 export type SettingsSection =
   | "overview"
   | "appearance"
+  | "chat"
   | "terminal"
   | "notifications"
   | "usage"

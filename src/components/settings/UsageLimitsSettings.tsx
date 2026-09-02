@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import { useCallback, useEffect, useState } from "react";
 import { Gauge, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -113,7 +114,7 @@ export function UsageLimitsSettings({
         <div className="usp-usage-provider" key={provider.engineId}>
           <div className="usp-usage-provider-header">
             <span className="usp-row-icon">
-              {getHarnessIcon(provider.engineId === "claude" ? "claude-code" : provider.engineId, 17)}
+              {getHarnessIcon(engineKind(provider.engineId) === "claude" ? "claude-code" : engineKind(provider.engineId), 17)}
             </span>
             <span className="usp-usage-provider-copy">
               <strong>{provider.name}</strong>

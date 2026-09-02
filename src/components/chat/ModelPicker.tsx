@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -280,7 +281,7 @@ function shouldShowModelDescription(engineId: string, model: EngineModel): boole
   if (!model.description) {
     return false;
   }
-  return !(engineId === "opencode" && model.description.trim() === "OpenCode model");
+  return !(engineKind(engineId) === "opencode" && model.description.trim() === "OpenCode model");
 }
 
 function shortEffortLabel(t: TFunction<"chat">, effort: string): string {
@@ -318,14 +319,14 @@ export function getModelPickerSectionIds(
   model: EngineModel | null,
 ): ModelPickerSectionId[] {
   const sections: ModelPickerSectionId[] = ["harness"];
-  if (engineId === "opencode") {
+  if (engineKind(engineId) === "opencode") {
     sections.push("provider");
   }
   sections.push("model");
   if ((model?.supportedReasoningEfforts?.length ?? 0) > 0) {
     sections.push("reasoning");
   }
-  if (engineId === "codex") {
+  if (engineKind(engineId) === "codex") {
     sections.push("speed");
   }
   return sections;
@@ -433,7 +434,7 @@ export function ModelPicker({
     [currentModels],
   );
   const currentOpenCodeProviderId =
-    selectedEngineId === "opencode" && currentModel
+    engineKind(selectedEngineId) === "opencode" && currentModel
       ? getOpenCodeProviderId(currentModel.id)
       : null;
   const currentOpenCodeProvider =
@@ -450,7 +451,7 @@ export function ModelPicker({
 
   useEffect(() => {
     setLegacyExpanded(false);
-    if (selectedEngineId !== "opencode") {
+    if (engineKind(selectedEngineId) !== "opencode") {
       setOpenCodeModelQuery("");
     }
   }, [selectedEngineId, selectedModelId]);
@@ -473,7 +474,7 @@ export function ModelPicker({
       return;
     }
     onEngineModelChange(engine.id, nextModel.id);
-    setActiveSection(engine.id === "opencode" ? "provider" : "model");
+    setActiveSection(engineKind(engine.id) === "opencode" ? "provider" : "model");
   }
 
   function handleProviderSelect(group: OpenCodeProviderModelGroup) {
@@ -494,10 +495,10 @@ export function ModelPicker({
   }
 
   function renderModelOptions() {
-    const activeModels = selectedEngineId === "opencode"
+    const activeModels = engineKind(selectedEngineId) === "opencode"
       ? currentOpenCodeProvider?.activeModels ?? []
       : currentModels.filter((model) => !model.hidden);
-    const legacyModels = selectedEngineId === "opencode"
+    const legacyModels = engineKind(selectedEngineId) === "opencode"
       ? currentOpenCodeProvider?.legacyModels ?? []
       : currentModels.filter((model) => model.hidden);
     const filteredActiveModels = filterOpenCodeModelsForQuery(activeModels, openCodeModelQuery);
@@ -507,7 +508,7 @@ export function ModelPicker({
 
     return (
       <>
-        {selectedEngineId === "opencode" ? (
+        {engineKind(selectedEngineId) === "opencode" ? (
           <div className="mp-model-search">
             <Search size={12} className="mp-model-search-icon" />
             <input
@@ -588,7 +589,7 @@ export function ModelPicker({
                   onClick={() => handleHarnessSelect(engine)}
                   aria-pressed={selected}
                 >
-                  <span className="mp-option-icon">{getHarnessIcon(engine.id, 16)}</span>
+                  <span className="mp-option-icon">{getHarnessIcon(engineKind(engine.id), 16)}</span>
                   <span className="mp-option-label">{engine.name}</span>
                   <span
                     className={`mp-health-dot${available ? " mp-health-dot-ok" : " mp-health-dot-error"}`}
@@ -731,13 +732,13 @@ export function ModelPicker({
       aria-haspopup="dialog"
     >
       <span className="mp-trigger-icon">
-        {getHarnessIcon(selectedEngineId, 12)}
+        {getHarnessIcon(engineKind(selectedEngineId), 12)}
       </span>
       <span className="mp-trigger-label">{triggerLabel}</span>
       {selectedEffort && currentEfforts.length > 0 ? (
         <span className="mp-trigger-effort">{shortEffortLabel(t, selectedEffort)}</span>
       ) : null}
-      {selectedEngineId === "codex" && selectedServiceTier !== "inherit" ? (
+      {engineKind(selectedEngineId) === "codex" && selectedServiceTier !== "inherit" ? (
         <span className="mp-trigger-speed">
           <Zap size={9} />
           {speedLabel}
@@ -777,7 +778,7 @@ export function ModelPicker({
                 <span className="mp-runtime-row-value">
                   {sectionId === "harness" ? (
                     <span className="mp-runtime-row-harness-icon">
-                      {getHarnessIcon(selectedEngineId, 12)}
+                      {getHarnessIcon(engineKind(selectedEngineId), 12)}
                     </span>
                   ) : null}
                   <span>{sectionValues[sectionId]}</span>
