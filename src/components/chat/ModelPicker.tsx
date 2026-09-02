@@ -329,6 +329,9 @@ interface PickerGroup {
   totalCount: number;
 }
 
+const SLIDER_RESOLUTION = 1000;
+const SLIDER_THUMB_HALF = 13;
+
 function rowKey(engineId: string, modelId: string): string {
   return `model:${engineId}:${modelId}`;
 }
@@ -349,6 +352,7 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
+  const [dragPercent, setDragPercent] = useState<number | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -534,10 +538,12 @@ export function ModelPicker({
     element?.scrollIntoView({ block: "nearest" });
   }, [highlightedKey]);
 
+  // Picking a model keeps the popover open so the reasoning level can be
+  // adjusted for it right away; Escape, the trigger, or a click outside close.
   function handleModelSelect(engineId: string, modelId: string) {
     onEngineModelChange(engineId, modelId);
-    setOpen(false);
-    triggerRef.current?.focus();
+    setHighlightedKey(rowKey(engineId, modelId));
+    searchRef.current?.focus();
   }
 
   function moveHighlight(direction: 1 | -1) {
@@ -580,10 +586,53 @@ export function ModelPicker({
     0,
     currentEfforts.findIndex((option) => option.reasoningEffort === selectedEffort),
   );
-  // Stops sit inside the track with room for the thumb at both ends.
+  // Positions are percentages of the native range input's travel, which
+  // runs from half a thumb width in to half a thumb width from the end; the
+  // CSS maps that onto pixels so the visible thumb, fill, and stops all sit
+  // where the native thumb is.
   const stopPercent = (index: number) =>
-    currentEfforts.length < 2 ? 50 : 6 + (index / (currentEfforts.length - 1)) * 88;
-  const effortPercent = stopPercent(effortIndex);
+    currentEfforts.length < 2 ? 50 : (index / (currentEfforts.length - 1)) * 100;
+  const trackPosition = (percent: number) =>
+    `calc(${SLIDER_THUMB_HALF}px + (100% - ${SLIDER_THUMB_HALF * 2}px) * ${(percent / 100).toFixed(4)})`;
+  // While dragging, the thumb follows the pointer freely and magnetizes to
+  // the nearest stop when close; releasing commits that stop.
+  const nearestStopIndex = (pct: number) => {
+    let best = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    currentEfforts.forEach((_, index) => {
+      const distance = Math.abs(stopPercent(index) - pct);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+    });
+    return { index: best, distance: bestDistance };
+  };
+  const dragging = dragPercent !== null;
+  const previewIndex = dragging ? nearestStopIndex(dragPercent).index : effortIndex;
+  const effortPercent = dragging ? dragPercent : stopPercent(effortIndex);
+  // The top level turns the fill holographic.
+  const holo = currentEfforts.length > 1 && previewIndex === currentEfforts.length - 1;
+
+  function updateDrag(rawPercent: number) {
+    if (currentEfforts.length < 2) return;
+    const min = stopPercent(0);
+    const max = stopPercent(currentEfforts.length - 1);
+    // The thumb tracks the pointer 1:1; the magnet acts on release.
+    setDragPercent(Math.min(max, Math.max(min, rawPercent)));
+  }
+
+  function commitDrag() {
+    if (dragPercent === null) return;
+    const option = currentEfforts[nearestStopIndex(dragPercent).index];
+    setDragPercent(null);
+    if (option && option.reasoningEffort !== selectedEffort) onEffortChange(option.reasoningEffort);
+  }
+
+  function stepEffort(direction: 1 | -1) {
+    const option = currentEfforts[Math.min(currentEfforts.length - 1, Math.max(0, effortIndex + direction))];
+    if (option && option.reasoningEffort !== selectedEffort) onEffortChange(option.reasoningEffort);
+  }
   const selectedRowKey = currentModel ? rowKey(selectedEngineId, currentModel.id) : null;
   // When two accounts share a provider kind, the model name alone is
   // ambiguous, so favorites and the trigger carry the account name.
@@ -729,8 +778,8 @@ export function ModelPicker({
                 <div className="mp-effort">
                   <div className="mp-effort-head">
                     <span className="mp-effort-title">{t("modelPicker.reasoning")}</span>
-                    <span className="mp-effort-value">
-                      {effortDisplayLabel(t, currentEfforts[effortIndex]?.reasoningEffort ?? selectedEffort)}
+                    <span className="mp-effort-value" key={previewIndex}>
+                      {effortDisplayLabel(t, currentEfforts[previewIndex]?.reasoningEffort ?? selectedEffort)}
                     </span>
                   </div>
                   {currentEfforts.length > 1 ? (
@@ -739,30 +788,49 @@ export function ModelPicker({
                         <span>{t("modelPicker.faster")}</span>
                         <span>{t("modelPicker.smarter")}</span>
                       </div>
-                      <div className="mp-slider" style={{ "--mp-slider-pct": `${effortPercent}%` } as CSSProperties}>
+                      <div
+                        className={`mp-slider${holo ? " mp-slider-holo" : ""}${dragging ? " mp-slider-dragging" : ""}`}
+                        style={{ "--mp-slider-pos": trackPosition(effortPercent) } as CSSProperties}
+                      >
                         <div className="mp-slider-track">
                           <div className="mp-slider-fill" />
-                          <div className="mp-slider-dots" />
                           {currentEfforts.map((option, index) => (
                             <span
                               key={option.reasoningEffort}
-                              className={`mp-slider-stop${index <= effortIndex ? " mp-slider-stop-filled" : ""}`}
-                              style={{ left: `${stopPercent(index)}%` }}
+                              className={`mp-slider-stop${stopPercent(index) <= effortPercent + 0.5 ? " mp-slider-stop-filled" : ""}${dragging && index === previewIndex ? " mp-slider-stop-active" : ""}`}
+                              style={{ left: trackPosition(stopPercent(index)) }}
                             />
                           ))}
                         </div>
+                        <span className="mp-slider-thumb" aria-hidden="true" />
                         <input
                           type="range"
                           className="mp-slider-input"
                           min={0}
-                          max={currentEfforts.length - 1}
+                          max={SLIDER_RESOLUTION}
                           step={1}
-                          value={effortIndex}
+                          value={Math.round((effortPercent / 100) * SLIDER_RESOLUTION)}
                           aria-label={t("modelPicker.reasoning")}
-                          aria-valuetext={effortDisplayLabel(t, currentEfforts[effortIndex]?.reasoningEffort ?? "")}
-                          onChange={(event) => {
-                            const option = currentEfforts[Number(event.target.value)];
-                            if (option) onEffortChange(option.reasoningEffort);
+                          aria-valuemin={0}
+                          aria-valuemax={currentEfforts.length - 1}
+                          aria-valuenow={previewIndex}
+                          aria-valuetext={effortDisplayLabel(t, currentEfforts[previewIndex]?.reasoningEffort ?? "")}
+                          onChange={(event) => updateDrag((Number(event.target.value) / SLIDER_RESOLUTION) * 100)}
+                          onPointerUp={commitDrag}
+                          onPointerCancel={commitDrag}
+                          onBlur={commitDrag}
+                          onKeyDown={(event) => {
+                            if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+                              event.preventDefault();
+                              stepEffort(1);
+                            } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+                              event.preventDefault();
+                              stepEffort(-1);
+                            } else if (event.key === "Home" || event.key === "End") {
+                              event.preventDefault();
+                              const option = currentEfforts[event.key === "Home" ? 0 : currentEfforts.length - 1];
+                              if (option) onEffortChange(option.reasoningEffort);
+                            }
                           }}
                         />
                       </div>

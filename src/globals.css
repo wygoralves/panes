@@ -10337,6 +10337,12 @@ label.mp-footer-row {
 .mp-effort-value {
   color: var(--accent);
   font-weight: 550;
+  animation: mp-value-in var(--duration-normal) var(--ease-out) both;
+}
+
+@keyframes mp-value-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .mp-effort-ends {
@@ -10362,19 +10368,66 @@ label.mp-footer-row {
 .mp-slider-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  width: var(--mp-slider-pct);
+  width: var(--mp-slider-pos);
   background: rgba(var(--accent-rgb), 0.16);
-  transition: width var(--duration-fast) var(--ease-out);
+  transition: width var(--duration-slow) var(--ease-spring);
 }
 
-.mp-slider-dots {
+/* Top level: the fill turns into a slow holographic foil with a sheen sweep */
+.mp-slider-fill::before,
+.mp-slider-fill::after {
+  content: "";
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle, rgba(var(--accent-rgb), 0.55) 1px, transparent 1.6px);
-  background-size: 6px 6px;
-  background-position: 3px 1px;
-  -webkit-mask-image: linear-gradient(to right, transparent 20%, rgba(0, 0, 0, 0.5) 60%, #000 100%);
-  mask-image: linear-gradient(to right, transparent 20%, rgba(0, 0, 0, 0.5) 60%, #000 100%);
+  opacity: 0;
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+
+.mp-slider-fill::before {
+  background: linear-gradient(
+    100deg,
+    var(--brand-mint-400),
+    var(--brand-blue),
+    var(--brand-violet),
+    var(--brand-coral),
+    var(--brand-amber),
+    var(--brand-mint-400)
+  );
+  background-size: 300% 100%;
+}
+
+.mp-slider-fill::after {
+  background: linear-gradient(
+    115deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 62%
+  );
+  background-size: 260% 100%;
+}
+
+.mp-slider-holo .mp-slider-fill {
+  background: transparent;
+}
+
+.mp-slider-holo .mp-slider-fill::before {
+  opacity: 0.5;
+  animation: mp-holo-shift 8s linear infinite;
+}
+
+.mp-slider-holo .mp-slider-fill::after {
+  opacity: 1;
+  animation: mp-holo-sheen 3.4s ease-in-out infinite;
+}
+
+@keyframes mp-holo-shift {
+  from { background-position: 0% 50%; }
+  to { background-position: 300% 50%; }
+}
+
+@keyframes mp-holo-sheen {
+  0% { background-position: 130% 0; }
+  60%, 100% { background-position: -130% 0; }
 }
 
 .mp-slider-stop {
@@ -10385,10 +10438,27 @@ label.mp-footer-row {
   border-radius: 50%;
   background: var(--text-3);
   transform: translate(-50%, -50%);
+  transition: background var(--duration-normal) var(--ease-out);
 }
 
 .mp-slider-stop-filled {
   background: var(--accent);
+}
+
+.mp-slider-thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--mp-slider-pos);
+  width: 26px;
+  height: 20px;
+  border-radius: 7px;
+  background: var(--text-1);
+  box-shadow: var(--shadow-control);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition:
+    left 240ms var(--ease-spring),
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .mp-slider-input {
@@ -10409,21 +10479,17 @@ label.mp-footer-row {
   background: transparent;
 }
 
+/* The native thumb stays for dragging and hit testing; the visible thumb
+   above animates between stops. */
 .mp-slider-input::-webkit-slider-thumb {
   width: 26px;
   height: 20px;
   margin-top: 3px;
   border: none;
-  border-radius: 7px;
-  background: var(--text-1);
-  box-shadow: var(--shadow-control);
+  background: transparent;
+  opacity: 0;
   -webkit-appearance: none;
   appearance: none;
-  transition: transform var(--duration-fast) var(--ease-out);
-}
-
-.mp-slider-input:active::-webkit-slider-thumb {
-  transform: scale(0.96);
 }
 
 .mp-slider-input::-moz-range-track {
@@ -10435,17 +10501,55 @@ label.mp-footer-row {
   width: 26px;
   height: 20px;
   border: none;
-  border-radius: 7px;
-  background: var(--text-1);
-  box-shadow: var(--shadow-control);
+  background: transparent;
+  opacity: 0;
 }
 
 .mp-slider-input:focus-visible {
   outline: none;
 }
 
-.mp-slider-input:focus-visible::-webkit-slider-thumb {
+.mp-slider-input:focus-visible ~ .mp-slider-thumb,
+.mp-slider:has(.mp-slider-input:focus-visible) .mp-slider-thumb {
   box-shadow: var(--focus-ring-shadow), var(--shadow-control);
+}
+
+.mp-slider-dragging .mp-slider-thumb,
+.mp-slider-dragging .mp-slider-fill {
+  transition: none;
+}
+
+.mp-slider-dragging .mp-slider-thumb {
+  transform: translate(-50%, -50%) scale(1.08);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.mp-slider-stop {
+  transition:
+    background var(--duration-normal) var(--ease-out),
+    transform var(--duration-fast) var(--ease-spring);
+}
+
+.mp-slider-stop-active {
+  background: var(--accent);
+  transform: translate(-50%, -50%) scale(1.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-slider-fill,
+  .mp-slider-thumb,
+  .mp-slider-stop {
+    transition: none;
+  }
+
+  .mp-effort-value {
+    animation: none;
+  }
+
+  .mp-slider-holo .mp-slider-fill::before,
+  .mp-slider-holo .mp-slider-fill::after {
+    animation: none;
+  }
 }
 
 .mp-effort + .mp-footer-row {
