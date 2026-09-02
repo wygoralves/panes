@@ -181,9 +181,10 @@ export function StatusThreadList({
     groups.done.length === 0 &&
     groups.settled.length === 0;
   const quiet = groups.needsYou.length === 0 && groups.working.length === 0;
-  // With nothing left above it, the shelf is the list: it opens on its own so
-  // a fully settled project never shows a blank sidebar.
-  const shelfOpen = !settledCollapsed || (quiet && groups.done.length === 0);
+  // The shelf is the user's toggle, whatever sits above it. With everything
+  // settled the quiet line and the shelf header with its count still give the
+  // sidebar a shape, so a collapsed shelf never leaves it blank.
+  const shelfOpen = !settledCollapsed;
 
   function renderTrailing(thread: Thread, sectionId: InboxSectionId, isActive: boolean) {
     if (sectionId === "settled") {
