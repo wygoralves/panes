@@ -4,9 +4,7 @@ import {
   buildPermissionApprovalResponseForEngine,
   canBatchApproveApproval,
   canUseApprovalDecisionActions,
-  filterPendingApprovalBannerRows,
   isOpenCodeQuestionApproval,
-  resolvePendingToolInputApproval,
 } from "./ChatPanel";
 import { shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
 import {
@@ -30,7 +28,7 @@ function makeApprovalBlock(
 }
 
 describe("Claude tool-input gating", () => {
-  it("routes valid Claude AskUserQuestion approvals to the composer path", () => {
+  it("treats well-formed Claude AskUserQuestion approvals as supported", () => {
     const toolInputApproval = makeApprovalBlock("tool-input", {
       _serverMethod: "item/tool/requestuserinput",
       questions: [
@@ -45,96 +43,24 @@ describe("Claude tool-input gating", () => {
         },
       ],
     });
-    const standardApproval = makeApprovalBlock("standard", {});
-    const pendingApprovals = [standardApproval, toolInputApproval];
 
-    expect(resolvePendingToolInputApproval(pendingApprovals, "claude")).toEqual(
-      toolInputApproval,
-    );
-    expect(
-      filterPendingApprovalBannerRows(
-        pendingApprovals,
-        "claude",
-        toolInputApproval.approvalId,
-      ),
-    ).toEqual([standardApproval]);
     expect(
       shouldShowClaudeUnsupportedApproval(toolInputApproval.details, true, true),
     ).toBe(false);
   });
 
-  it("keeps older supported Claude questionnaires switchable in the banner", () => {
-    const olderApproval = makeApprovalBlock("tool-input-older", {
-      _serverMethod: "item/tool/requestuserinput",
-      questions: [
-        {
-          id: "question-1",
-          question: "Use the safer migration path?",
-          header: "Path",
-          options: [
-            { label: "Yes", description: "Keep compatibility first" },
-            { label: "No", description: "Prefer the shorter path" },
-          ],
-        },
-      ],
-    });
-    const newerApproval = makeApprovalBlock("tool-input-newer", {
-      _serverMethod: "item/tool/requestuserinput",
-      questions: [
-        {
-          id: "question-2",
-          question: "Should Claude update snapshots too?",
-          header: "Tests",
-          options: [
-            { label: "Update", description: "Refresh snapshots now" },
-            { label: "Skip", description: "Leave snapshots unchanged" },
-          ],
-        },
-      ],
-    });
-
-    expect(
-      resolvePendingToolInputApproval([olderApproval, newerApproval], "claude"),
-    ).toEqual(newerApproval);
-    expect(
-      filterPendingApprovalBannerRows(
-        [olderApproval, newerApproval],
-        "claude",
-        newerApproval.approvalId,
-      ),
-    ).toEqual([olderApproval]);
-    expect(
-      resolvePendingToolInputApproval(
-        [olderApproval, newerApproval],
-        "claude",
-        olderApproval.approvalId,
-      ),
-    ).toEqual(olderApproval);
-    expect(
-      filterPendingApprovalBannerRows(
-        [olderApproval, newerApproval],
-        "claude",
-        olderApproval.approvalId,
-      ),
-    ).toEqual([newerApproval]);
-  });
-
-  it("keeps malformed Claude tool-input approvals out of the composer path", () => {
+  it("flags malformed Claude tool-input approvals as unsupported", () => {
     const malformedApproval = makeApprovalBlock("tool-input-invalid", {
       _serverMethod: "item/tool/requestuserinput",
       questions: [],
     });
 
-    expect(resolvePendingToolInputApproval([malformedApproval], "claude")).toBeNull();
-    expect(filterPendingApprovalBannerRows([malformedApproval], "claude")).toEqual([
-      malformedApproval,
-    ]);
     expect(
       shouldShowClaudeUnsupportedApproval(malformedApproval.details, true, true),
     ).toBe(true);
   });
 
-  it("uses the same unsupported check for Claude mixed questionnaire payloads", () => {
+  it("flags Claude mixed questionnaire payloads as unsupported", () => {
     const mixedApproval = makeApprovalBlock("tool-input-mixed", {
       _serverMethod: "item/tool/requestuserinput",
       questions: [
@@ -151,10 +77,6 @@ describe("Claude tool-input gating", () => {
       proposedExecpolicyAmendment: ["allow npm test"],
     });
 
-    expect(resolvePendingToolInputApproval([mixedApproval], "claude")).toBeNull();
-    expect(filterPendingApprovalBannerRows([mixedApproval], "claude")).toEqual([
-      mixedApproval,
-    ]);
     expect(
       shouldShowClaudeUnsupportedApproval(mixedApproval.details, true, true),
     ).toBe(true);

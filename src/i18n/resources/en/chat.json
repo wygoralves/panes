@@ -385,7 +385,6 @@
     "workspaceChatTitle": "Workspace Chat",
     "repoChatTitle": "{{name}} Chat",
     "renameThread": "Click to rename thread",
-    "respondInCard": "Respond in the approval card below.",
     "respondInCustomCard": "This request requires custom JSON. Respond in the approval card below.",
     "claudeApprovalUnsupported": "This Claude approval type is not supported in Panes yet.",
     "allowWithPolicy": "Allow + policy",
@@ -447,7 +446,6 @@
     },
     "approvalActions": {
       "allow": "Allow",
-      "answerBelow": "Answer below",
       "cancel": "Cancel",
       "deny": "Deny",
       "allowSession": "Allow session",
@@ -494,10 +492,15 @@
       "speedChangeFailed": "Couldn't change the service tier",
       "retry": "Retry"
     },
-    "approvalBannerTitleCount_one": "{{count}} pending approval",
-    "approvalBannerTitleCount_other": "{{count}} pending approvals",
     "editResend": "Edit and resend",
-    "attachShort": "Attach"
+    "attachShort": "Attach",
+    "approvalDeck": {
+      "position": "{{index}} / {{count}}",
+      "previous": "Previous request",
+      "next": "Next request",
+      "question": "Question",
+      "request": "Approval"
+    }
   },
   "messageBlocks": {
     "diffFallback": "diff ({{scope}})",

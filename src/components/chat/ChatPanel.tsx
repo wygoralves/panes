@@ -1,5 +1,6 @@
 import { engineKind } from "../../lib/engineKind";
 import { WorkingIndicator } from "../shared/WorkingIndicator";
+import { ApprovalDeck } from "./ApprovalDeck";
 import {
   FormEvent,
   Suspense,
@@ -193,62 +194,6 @@ interface MeasuredMessageRowProps {
   messageId: string;
   onHeightChange: (messageId: string, height: number) => void;
   children: ReactNode;
-}
-
-export function resolvePendingToolInputApproval(
-  pendingApprovals: ApprovalBlock[],
-  engineId?: string,
-  preferredApprovalId?: string | null,
-): ApprovalBlock | null {
-  const eligibleApprovals = pendingApprovals.filter((approval) => {
-    const details = approval.details ?? {};
-    if (
-      !isRequestUserInputApproval(details) ||
-      parseToolInputQuestions(details).length === 0
-    ) {
-      return false;
-    }
-
-    return engineKind(engineId) !== "claude" || isSupportedClaudeToolInputApproval(details);
-  });
-
-  if (eligibleApprovals.length === 0) {
-    return null;
-  }
-
-  if (preferredApprovalId) {
-    const preferredApproval = eligibleApprovals.find(
-      (approval) => approval.approvalId === preferredApprovalId,
-    );
-    if (preferredApproval) {
-      return preferredApproval;
-    }
-  }
-
-  return eligibleApprovals[eligibleApprovals.length - 1] ?? null;
-}
-
-export function filterPendingApprovalBannerRows(
-  pendingApprovals: ApprovalBlock[],
-  engineId?: string,
-  activeToolInputApprovalId?: string | null,
-): ApprovalBlock[] {
-  return pendingApprovals.filter((approval) => {
-    const details = approval.details ?? {};
-    if (!isRequestUserInputApproval(details)) {
-      return true;
-    }
-
-    if (parseToolInputQuestions(details).length === 0) {
-      return true;
-    }
-
-    if (approval.approvalId === activeToolInputApprovalId) {
-      return false;
-    }
-
-    return engineKind(engineId) === "claude";
-  });
 }
 
 export function isOpenCodeQuestionApproval(details?: Record<string, unknown>): boolean {
@@ -2397,33 +2342,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
     return approvals;
   }, [messages]);
-  const [selectedPendingToolInputApprovalId, setSelectedPendingToolInputApprovalId] =
-    useState<string | null>(null);
-
-  const pendingToolInputApproval = useMemo(
-    () =>
-      resolvePendingToolInputApproval(
-        pendingApprovals,
-        activeThread?.engineId,
-        selectedPendingToolInputApprovalId,
-      ),
-    [activeThread?.engineId, pendingApprovals, selectedPendingToolInputApprovalId],
+  // One request in focus at a time; the rest of the queue waits behind it.
+  const [activeApprovalIndex, setActiveApprovalIndex] = useState(0);
+  const activeApprovalIndexClamped = Math.min(
+    activeApprovalIndex,
+    Math.max(0, pendingApprovals.length - 1),
   );
+  const activeApproval = pendingApprovals[activeApprovalIndexClamped] ?? null;
   const pendingPlanImplementationThreadIdRef = useRef<string | null>(null);
   const previousStreamingRef = useRef(false);
 
   useEffect(() => {
-    if (!selectedPendingToolInputApprovalId) {
-      return;
+    if (activeApprovalIndex !== activeApprovalIndexClamped) {
+      setActiveApprovalIndex(activeApprovalIndexClamped);
     }
-
-    const selectedApprovalStillPending = pendingApprovals.some(
-      (approval) => approval.approvalId === selectedPendingToolInputApprovalId,
-    );
-    if (!selectedApprovalStillPending) {
-      setSelectedPendingToolInputApprovalId(null);
-    }
-  }, [pendingApprovals, selectedPendingToolInputApprovalId]);
+  }, [activeApprovalIndex, activeApprovalIndexClamped]);
 
   useEffect(() => {
     if (planImplementationPrompt && planImplementationPrompt.threadId !== threadId) {
@@ -2503,38 +2436,30 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     threadId,
   ]);
 
-  const pendingApprovalBannerRows = useMemo(
-    () =>
-      filterPendingApprovalBannerRows(
-        pendingApprovals,
-        activeThread?.engineId,
-        pendingToolInputApproval?.approvalId,
-      ),
-    [activeThread?.engineId, pendingApprovals, pendingToolInputApproval?.approvalId],
-  );
   const batchApprovableRows = useMemo(
     () =>
-      pendingApprovalBannerRows.filter((approval) =>
+      pendingApprovals.filter((approval) =>
         canBatchApproveApproval(approval, activeThread?.engineId),
       ),
-    [activeThread?.engineId, pendingApprovalBannerRows],
+    [activeThread?.engineId, pendingApprovals],
   );
   const canTrustApprovalScope = activeRepo
     ? activeRepo.trustLevel !== "trusted"
     : repos.length > 0 && workspaceTrustLevel !== "trusted";
-  const showApprovalBannerHeader =
-    pendingApprovalBannerRows.length > 1 || canTrustApprovalScope;
 
-  const pendingToolInputQuestions = useMemo(
+  const activeApprovalQuestions = useMemo(
     () =>
-      pendingToolInputApproval
-        ? parseToolInputQuestions(pendingToolInputApproval.details ?? {})
+      activeApproval && isRequestUserInputApproval(activeApproval.details ?? {})
+        ? parseToolInputQuestions(activeApproval.details ?? {})
         : [],
-    [pendingToolInputApproval],
+    [activeApproval],
   );
-
-  const showPendingToolInputComposer = Boolean(
-    pendingToolInputApproval && pendingToolInputQuestions.length > 0,
+  // Question-style requests answer through the questionnaire inside the deck.
+  const activeApprovalUsesQuestionnaire = Boolean(
+    activeApproval &&
+      activeApprovalQuestions.length > 0 &&
+      (engineKind(activeThread?.engineId) !== "claude" ||
+        isSupportedClaudeToolInputApproval(activeApproval.details ?? {})),
   );
   const planImplementationQuestionChoiceImplement = useMemo(
     () => t("panel.planImplementationOptionImplement"),
@@ -2570,18 +2495,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       t,
     ],
   );
-  const showPlanImplementationComposer = Boolean(
-    planImplementationPrompt && !showPendingToolInputComposer,
-  );
-  const showSpecialInputComposer =
-    showPendingToolInputComposer || showPlanImplementationComposer;
+  const showPlanImplementationComposer = Boolean(planImplementationPrompt);
+  const showSpecialInputComposer = showPlanImplementationComposer;
   const pendingToolInputCanUseDecisionActions = canUseApprovalDecisionActions(
     activeThread?.engineId,
-    pendingToolInputApproval?.details,
+    activeApproval?.details,
   );
   const pendingToolInputIsOpenCodeQuestion =
     engineKind(activeThread?.engineId) === "opencode" &&
-    isOpenCodeQuestionApproval(pendingToolInputApproval?.details);
+    isOpenCodeQuestionApproval(activeApproval?.details);
   const pendingToolInputSupportsDecline =
     (pendingToolInputCanUseDecisionActions || pendingToolInputIsOpenCodeQuestion) &&
     activeThreadApprovalDecisionCapabilities.includes("decline");
@@ -5542,351 +5464,263 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             gap: 8,
           }}
         >
-          {/* Pending approvals */}
-          {pendingApprovalBannerRows.length > 0 && (
-            <div className="chat-approval-banner">
-              {showApprovalBannerHeader && (
-                <div className="approval-header">
-                  <span className="approval-header-icon">
-                    <Shield size={11} />
-                  </span>
-                  <span className="approval-header-title">
-                    {t("panel.approvalBannerTitleCount", {
-                      count: pendingApprovalBannerRows.length,
-                    })}
-                  </span>
-                  <span className="approval-header-spacer" />
-                  {batchApprovableRows.length > 1 &&
-                    activeThreadApprovalDecisionCapabilities.includes("accept") && (
-                      <>
+          {/* Pending approvals: one request in focus, lifted above the composer */}
+          {activeApproval && (() => {
+            const approval = activeApproval;
+            const details = approval.details ?? {};
+            const isPermissionsRequest = isPermissionsRequestApproval(details);
+            const isToolInputRequest = isRequestUserInputApproval(details);
+            const requiresCustomPayload = requiresCustomApprovalPayload(details);
+            const canUseDecisionActions = canUseApprovalDecisionActions(
+              activeThread?.engineId,
+              details,
+            );
+            const isClaudeApproval = engineKind(activeThread?.engineId) === "claude";
+            const supportsDecline =
+              canUseDecisionActions &&
+              activeThreadApprovalDecisionCapabilities.includes("decline");
+            const supportsCancel =
+              canUseDecisionActions &&
+              activeThreadApprovalDecisionCapabilities.includes("cancel");
+            const supportsSession =
+              activeThreadApprovalDecisionCapabilities.includes("accept_for_session");
+            const supportsAccept =
+              activeThreadApprovalDecisionCapabilities.includes("accept");
+            const proposedExecpolicyAmendment = parseProposedExecpolicyAmendment(details);
+            const proposedNetworkPolicyAmendments =
+              parseProposedNetworkPolicyAmendments(details);
+            const hasUnsupportedClaudePayload = shouldShowClaudeUnsupportedApproval(
+              details,
+              true,
+              isClaudeApproval,
+            );
+            const useQuestionnaire = activeApprovalUsesQuestionnaire && !hasUnsupportedClaudePayload;
+            const hidePositiveApprovalActions =
+              isToolInputRequest && activeApprovalQuestions.length === 0;
+            const showPositiveActions =
+              !hasUnsupportedClaudePayload &&
+              !requiresCustomPayload &&
+              !hidePositiveApprovalActions;
+            const command = parseApprovalCommand(details);
+            const reason = parseApprovalReason(details);
+
+            const decide = (decision: "accept" | "decline" | "accept_for_session") =>
+              void respondApproval(approval.approvalId, {
+                ...(isPermissionsRequest
+                  ? buildPermissionApprovalResponseForEngine(
+                      activeThread?.engineId,
+                      details,
+                      decision,
+                    )
+                  : isToolInputRequest && decision === "decline"
+                    ? { action: "decline" }
+                    : { decision }),
+              });
+            const allow = showPositiveActions && supportsAccept ? () => decide("accept") : undefined;
+            const allowSession =
+              showPositiveActions && supportsSession ? () => decide("accept_for_session") : undefined;
+            const deny = supportsDecline ? () => decide("decline") : undefined;
+
+            const headerActions = (
+              <>
+                {batchApprovableRows.length > 1 &&
+                  activeThreadApprovalDecisionCapabilities.includes("accept") && (
+                    <>
+                      <button
+                        type="button"
+                        className="approval-batch-btn"
+                        onClick={() => void allowAllPendingApprovals(false)}
+                      >
+                        {t("autonomy.allowAll")}
+                      </button>
+                      {activeThreadAutonomyEngineId && (
                         <button
                           type="button"
                           className="approval-batch-btn"
-                          onClick={() => void allowAllPendingApprovals(false)}
+                          onClick={() => void allowAllPendingApprovals(true)}
+                          title={t(
+                            autonomyPresetDescriptionKey(
+                              stopAskingAutonomyPreset(activeThreadAutonomyEngineId),
+                              activeThreadAutonomyEngineId,
+                              { codexExternalSandbox: codexExternalSandboxActive },
+                            ),
+                          )}
                         >
-                          {t("autonomy.allowAll")}
-                        </button>
-                        {activeThreadAutonomyEngineId && (
-                          <button
-                            type="button"
-                            className="approval-batch-btn"
-                            onClick={() => void allowAllPendingApprovals(true)}
-                            title={t(
-                              autonomyPresetDescriptionKey(
-                                stopAskingAutonomyPreset(activeThreadAutonomyEngineId),
+                          {t("autonomy.allowAllAndSwitch", {
+                            preset: t(
+                              `autonomy.presets.${stopAskingAutonomyPreset(
                                 activeThreadAutonomyEngineId,
-                                { codexExternalSandbox: codexExternalSandboxActive },
-                              ),
-                            )}
-                          >
-                            {t("autonomy.allowAllAndSwitch", {
-                              preset: t(
-                                `autonomy.presets.${stopAskingAutonomyPreset(
-                                  activeThreadAutonomyEngineId,
-                                )}.label`,
-                              ),
-                            })}
-                          </button>
-                        )}
-                      </>
-                    )}
-                  {activeRepo && activeRepo.trustLevel !== "trusted" && (
-                    <button
-                      type="button"
-                      className="approval-trust-btn"
-                      onClick={() => void onRepoTrustLevelChange("trusted")}
-                      title={t("panel.setRepoTrusted")}
-                    >
-                      {t("panel.trustRepo")}
-                    </button>
+                              )}.label`,
+                            ),
+                          })}
+                        </button>
+                      )}
+                    </>
                   )}
-                  {!activeRepo && repos.length > 0 && workspaceTrustLevel !== "trusted" && (
-                    <button
-                      type="button"
-                      className="approval-trust-btn"
-                      onClick={() => void onWorkspaceTrustLevelChange("trusted")}
-                      title={t("panel.setWorkspaceTrusted")}
-                    >
-                      {t("panel.trustWorkspace")}
-                    </button>
-                  )}
-                </div>
-              )}
+                {canTrustApprovalScope && activeRepo && (
+                  <button
+                    type="button"
+                    className="approval-trust-btn"
+                    onClick={() => void onRepoTrustLevelChange("trusted")}
+                    title={t("panel.setRepoTrusted")}
+                  >
+                    {t("panel.trustRepo")}
+                  </button>
+                )}
+                {canTrustApprovalScope && !activeRepo && (
+                  <button
+                    type="button"
+                    className="approval-trust-btn"
+                    onClick={() => void onWorkspaceTrustLevelChange("trusted")}
+                    title={t("panel.setWorkspaceTrusted")}
+                  >
+                    {t("panel.trustWorkspace")}
+                  </button>
+                )}
+              </>
+            );
 
-              <div className="approval-rows">
-                {pendingApprovalBannerRows.slice(-3).map((approval) => {
-                  const details = approval.details ?? {};
-                  const isPermissionsRequest = isPermissionsRequestApproval(details);
-                  const isToolInputRequest = isRequestUserInputApproval(details);
-                  const requiresCustomPayload = requiresCustomApprovalPayload(details);
-                  const canUseDecisionActions = canUseApprovalDecisionActions(
-                    activeThread?.engineId,
-                    details,
-                  );
-                  const toolInputQuestionCount = isToolInputRequest
-                    ? parseToolInputQuestions(details).length
-                    : 0;
-                  const isClaudeApproval = engineKind(activeThread?.engineId) === "claude";
-                  const supportsDecline =
-                    canUseDecisionActions &&
-                    activeThreadApprovalDecisionCapabilities.includes("decline");
-                  const supportsCancel =
-                    canUseDecisionActions &&
-                    activeThreadApprovalDecisionCapabilities.includes("cancel");
-                  const supportsSession =
-                    activeThreadApprovalDecisionCapabilities.includes("accept_for_session");
-                  const supportsAccept =
-                    activeThreadApprovalDecisionCapabilities.includes("accept");
-                  const proposedExecpolicyAmendment =
-                    parseProposedExecpolicyAmendment(details);
-                  const proposedNetworkPolicyAmendments =
-                    parseProposedNetworkPolicyAmendments(details);
-                  const hasUnsupportedClaudePayload = shouldShowClaudeUnsupportedApproval(
-                    details,
-                    true,
-                    isClaudeApproval,
-                  );
-                  const canUseToolInputComposer =
-                    isToolInputRequest &&
-                    toolInputQuestionCount > 0 &&
-                    (!isClaudeApproval || isSupportedClaudeToolInputApproval(details));
-                  const showToolInputComposerHint = canUseToolInputComposer;
-                  const canSelectToolInputComposer =
-                    isClaudeApproval &&
-                    canUseToolInputComposer &&
-                    approval.approvalId !== pendingToolInputApproval?.approvalId;
-                  const hidePositiveApprovalActions =
-                    isToolInputRequest && toolInputQuestionCount === 0;
-                  const command = parseApprovalCommand(details);
-                  const reason = parseApprovalReason(details);
-
-                  return (
-                    <div
-                      key={approval.approvalId}
-                      className="chat-approval-row"
-                    >
-                      <div className="approval-row-info">
-                        <div className="approval-row-head">
-                          <span className="approval-row-icon">
-                            {approvalRowIcon(approval.actionType)}
-                          </span>
-                          <div
-                            className="approval-row-summary"
-                            title={approval.summary}
-                          >
-                            {approval.summary}
-                          </div>
-                        </div>
-                        {command && (
-                          <div className="approval-row-command">{command}</div>
-                        )}
-                        {reason && (
-                          <div className="approval-row-reason">{reason}</div>
-                        )}
-                      </div>
-
-                      <div className="approval-actions">
-                        {hasUnsupportedClaudePayload ? (
-                          <>
-                            <span className="approval-row-hint">
-                              {t("panel.claudeApprovalUnsupported")}
-                            </span>
-                            {supportsDecline && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-deny"
-                                onClick={() =>
-                                  void respondApproval(approval.approvalId, {
-                                    decision: "decline",
-                                  })
-                                }
-                              >
-                                {t("panel.approvalActions.deny")}
-                              </button>
-                            )}
-                          </>
-                        ) : showToolInputComposerHint || requiresCustomPayload ? (
-                          <>
-                            <span className="approval-row-hint">
-                              {showToolInputComposerHint
-                                ? t("panel.respondInCard")
-                                : t("panel.respondInCustomCard")}
-                            </span>
-                            {canSelectToolInputComposer && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-allow"
-                                onClick={() =>
-                                  setSelectedPendingToolInputApprovalId(
-                                    approval.approvalId,
-                                  )
-                                }
-                              >
-                                {t("panel.approvalActions.answerBelow")}
-                              </button>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {supportsDecline && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-deny"
-                                onClick={() =>
-                                  void respondApproval(approval.approvalId, {
-                                    ...(isPermissionsRequest
-                                      ? buildPermissionApprovalResponseForEngine(
-                                          activeThread?.engineId,
-                                          details,
-                                          "decline",
-                                        )
-                                      : isToolInputRequest
-                                        ? { action: "decline" }
-                                        : { decision: "decline" }),
-                                  })
-                                }
-                              >
-                                {t("panel.approvalActions.deny")}
-                              </button>
-                            )}
-                            {supportsCancel && !isPermissionsRequest && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-cancel"
-                                onClick={() =>
-                                  void respondApproval(
-                                    approval.approvalId,
-                                    isToolInputRequest
-                                      ? { action: "cancel" }
-                                      : { decision: "cancel" },
-                                  )
-                                }
-                              >
-                                {t("panel.approvalActions.cancel")}
-                              </button>
-                            )}
-                            {!hidePositiveApprovalActions && (
-                              <span className="approval-actions-gap" />
-                            )}
-                            {!hidePositiveApprovalActions && supportsSession && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-session"
-                                onClick={() =>
-                                  void respondApproval(approval.approvalId, {
-                                    ...(isPermissionsRequest
-                                      ? buildPermissionApprovalResponseForEngine(
-                                          activeThread?.engineId,
-                                          details,
-                                          "accept_for_session",
-                                        )
-                                      : { decision: "accept_for_session" }),
-                                  })
-                                }
-                              >
-                                {t("panel.approvalActions.allowSession")}
-                              </button>
-                            )}
-                            {!hidePositiveApprovalActions && !isClaudeApproval && !isPermissionsRequest && proposedExecpolicyAmendment.length > 0 && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-session"
-                                onClick={() =>
-                                  void respondApproval(approval.approvalId, {
-                                    acceptWithExecpolicyAmendment: {
-                                      execpolicy_amendment: proposedExecpolicyAmendment,
-                                    },
-                                  })
-                                }
-                              >
-                                {t("panel.allowWithPolicy")}
-                              </button>
-                            )}
-                            {!hidePositiveApprovalActions && !isClaudeApproval && !isPermissionsRequest && proposedNetworkPolicyAmendments.map((amendment) => (
-                              <button
-                                key={`${amendment.action}:${amendment.host}`}
-                                type="button"
-                                className="approval-btn approval-btn-session"
-                                onClick={() =>
-                                  void respondApproval(approval.approvalId, {
-                                    applyNetworkPolicyAmendment: {
-                                      network_policy_amendment: amendment,
-                                    },
-                                  })
-                                }
-                                title={t("panel.approvalActions.hostActionTitle", {
-                                  action: amendment.action === "allow"
-                                    ? t("panel.approvalActions.allow")
-                                    : t("panel.approvalActions.block"),
-                                  host: amendment.host,
-                                })}
-                              >
-                                {amendment.action === "allow"
-                                  ? t("panel.approvalActions.allowHost")
-                                  : t("panel.approvalActions.blockHost")}
-                              </button>
-                            ))}
-                            {!hidePositiveApprovalActions && supportsAccept && (
-                              <button
-                                type="button"
-                                className="approval-btn approval-btn-allow"
-                                onClick={() =>
-                                  void respondApproval(
-                                    approval.approvalId,
-                                    isPermissionsRequest
-                                      ? buildPermissionApprovalResponseForEngine(
-                                          activeThread?.engineId,
-                                          details,
-                                          "accept",
-                                        )
-                                      : { decision: "accept" },
-                                  )
-                                }
-                              >
-                                {t("panel.approvalActions.allow")}
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+            return (
+              <ApprovalDeck
+                focusKey={approval.approvalId}
+                index={activeApprovalIndexClamped}
+                count={pendingApprovals.length}
+                onIndexChange={setActiveApprovalIndex}
+                icon={useQuestionnaire ? <MessageSquare size={12} /> : approvalRowIcon(approval.actionType)}
+                tone={useQuestionnaire ? "info" : "amber"}
+                title={approval.summary || (useQuestionnaire ? t("panel.approvalDeck.question") : t("panel.approvalDeck.request"))}
+                headerActions={headerActions}
+                onPrimary={useQuestionnaire ? undefined : allow}
+                onSecondary={useQuestionnaire ? undefined : allowSession}
+                onDeny={useQuestionnaire ? undefined : deny}
+                onEscape={() => inputRef.current?.focus()}
+                footer={
+                  useQuestionnaire ? undefined : (
+                    <>
+                      {hasUnsupportedClaudePayload ? (
+                        <span className="approval-row-hint">
+                          {t("panel.claudeApprovalUnsupported")}
+                        </span>
+                      ) : requiresCustomPayload ? (
+                        <span className="approval-row-hint">
+                          {t("panel.respondInCustomCard")}
+                        </span>
+                      ) : null}
+                      {deny && (
+                        <button type="button" className="approval-btn approval-btn-deny" onClick={deny}>
+                          {t("panel.approvalActions.deny")}
+                        </button>
+                      )}
+                      {supportsCancel && !isPermissionsRequest && !hasUnsupportedClaudePayload && (
+                        <button
+                          type="button"
+                          className="approval-btn approval-btn-cancel"
+                          onClick={() =>
+                            void respondApproval(
+                              approval.approvalId,
+                              isToolInputRequest ? { action: "cancel" } : { decision: "cancel" },
+                            )
+                          }
+                        >
+                          {t("panel.approvalActions.cancel")}
+                        </button>
+                      )}
+                      <span className="approval-deck-gap" />
+                      {allowSession && (
+                        <button type="button" className="approval-btn approval-btn-session" onClick={allowSession}>
+                          {t("panel.approvalActions.allowSession")}
+                        </button>
+                      )}
+                      {showPositiveActions && !isClaudeApproval && !isPermissionsRequest && proposedExecpolicyAmendment.length > 0 && (
+                        <button
+                          type="button"
+                          className="approval-btn approval-btn-session"
+                          onClick={() =>
+                            void respondApproval(approval.approvalId, {
+                              acceptWithExecpolicyAmendment: {
+                                execpolicy_amendment: proposedExecpolicyAmendment,
+                              },
+                            })
+                          }
+                        >
+                          {t("panel.allowWithPolicy")}
+                        </button>
+                      )}
+                      {showPositiveActions && !isClaudeApproval && !isPermissionsRequest && proposedNetworkPolicyAmendments.map((amendment) => (
+                        <button
+                          key={`${amendment.action}:${amendment.host}`}
+                          type="button"
+                          className="approval-btn approval-btn-session"
+                          onClick={() =>
+                            void respondApproval(approval.approvalId, {
+                              applyNetworkPolicyAmendment: {
+                                network_policy_amendment: amendment,
+                              },
+                            })
+                          }
+                          title={t("panel.approvalActions.hostActionTitle", {
+                            action: amendment.action === "allow"
+                              ? t("panel.approvalActions.allow")
+                              : t("panel.approvalActions.block"),
+                            host: amendment.host,
+                          })}
+                        >
+                          {amendment.action === "allow"
+                            ? t("panel.approvalActions.allowHost")
+                            : t("panel.approvalActions.blockHost")}
+                        </button>
+                      ))}
+                      {allow && (
+                        <button type="button" className="approval-btn approval-btn-allow" onClick={allow}>
+                          {t("panel.approvalActions.allow")}
+                          <kbd className="approval-btn-kbd" aria-hidden="true">⏎</kbd>
+                        </button>
+                      )}
+                    </>
+                  )
+                }
+              >
+                {useQuestionnaire ? (
+                  <ToolInputQuestionnaire
+                    details={details}
+                    onCancel={
+                      pendingToolInputSupportsCancel
+                        ? () =>
+                            void respondApproval(approval.approvalId, {
+                              [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
+                                "cancel",
+                            })
+                        : undefined
+                    }
+                    onDecline={
+                      pendingToolInputSupportsDecline
+                        ? () =>
+                            void respondApproval(approval.approvalId, {
+                              [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
+                                "decline",
+                            })
+                        : undefined
+                    }
+                    onSubmit={(response) => {
+                      void respondApproval(approval.approvalId, response);
+                    }}
+                  />
+                ) : (
+                  <>
+                    {command && <div className="approval-row-command">{command}</div>}
+                    {reason && <div className="approval-row-reason">{reason}</div>}
+                  </>
+                )}
+              </ApprovalDeck>
+            );
+          })()}
 
           {/* Input container */}
           <div
-            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""}`.trim()}
+            className={`chat-input-box ${activePlanMode && !showSpecialInputComposer ? "chat-input-box-plan" : ""} ${showSpecialInputComposer ? "chat-input-box-tool-input" : ""} ${activeApproval ? "chat-input-box--receded" : ""}`.trim()}
             onPaste={handleInputPaste}
           >
-            {showPendingToolInputComposer && pendingToolInputApproval ? (
-              <ToolInputQuestionnaire
-                details={pendingToolInputApproval.details ?? {}}
-                onCancel={
-                  pendingToolInputSupportsCancel
-                    ? () =>
-                        void respondApproval(pendingToolInputApproval.approvalId, {
-                          [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
-                            "cancel",
-                        })
-                    : undefined
-                }
-                onDecline={
-                  pendingToolInputSupportsDecline
-                    ? () =>
-                        void respondApproval(pendingToolInputApproval.approvalId, {
-                          [pendingToolInputIsOpenCodeQuestion ? "decision" : "action"]:
-                            "decline",
-                        })
-                    : undefined
-                }
-                onSubmit={(response) => {
-                  void respondApproval(pendingToolInputApproval.approvalId, response);
-                }}
-              />
-            ) : showPlanImplementationComposer ? (
+            {showPlanImplementationComposer ? (
               <ToolInputQuestionnaire
                 details={planImplementationQuestionDetails}
                 allowCustomAnswer={false}

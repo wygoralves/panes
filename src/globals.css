@@ -5336,35 +5336,82 @@ button, input, textarea, select {
   flex-shrink: 0;
 }
 
-/* ── Approval Banner: stacked cards above the composer ── */
+/* ── Approval deck: one request lifted above the composer, the queue behind it ── */
 
-.chat-approval-banner {
-  padding: 0;
+.approval-deck {
+  position: relative;
+  padding-top: 10px;
   animation: slide-up var(--duration-normal) var(--ease-out) both;
 }
-
-.approval-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 3px 5px;
+.approval-deck-card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  background: var(--bg-3);
+  border: 1px solid var(--border-active);
+  box-shadow: var(--shadow-popover);
+  outline: none;
+}
+.approval-deck-card:focus-visible { box-shadow: var(--shadow-popover), 0 0 0 1px var(--focus-ring); }
+/* The rest of the queue peeks out as stacked card edges */
+.approval-deck-card--stack::before,
+.approval-deck-card--stack::after {
+  content: ""; position: absolute; left: 10px; right: 10px; top: -6px; height: 10px; z-index: -1;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--bg-3); border: 1px solid var(--border); border-bottom: 0;
+}
+.approval-deck-card--stack::after { left: 20px; right: 20px; top: -11px; opacity: 0.6; }
+.approval-deck-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px 6px;
+  min-width: 0;
+}
+.approval-deck-tile {
+  width: 18px; height: 18px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 5px;
+}
+.approval-deck-tile--amber { color: var(--warning); background: var(--warning-surface); }
+.approval-deck-tile--info { color: var(--info); background: var(--info-surface); }
+.approval-deck-title {
+  font-size: 12.5px; font-weight: 600; color: var(--text-1);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.approval-deck-right { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.approval-deck-stepper {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.approval-deck-stepper button {
+  width: 18px; height: 18px; border-radius: 5px; border: none; background: none;
+  display: inline-grid; place-items: center; color: var(--text-3); cursor: pointer;
+}
+.approval-deck-stepper button:hover:not(:disabled) { color: var(--text-1); background: var(--wash-06); }
+.approval-deck-stepper button:disabled { opacity: 0.3; cursor: default; }
+.approval-deck-body { padding: 0 10px 8px; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.approval-deck-body .chat-tool-input-panel { padding: 0 0 2px; animation: none; }
+.approval-deck-foot {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 0 10px 10px;
+}
+.approval-deck-gap { flex: 1; }
+.approval-btn-kbd {
+  margin-left: 6px; padding: 0 3px; border-radius: 3px;
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 500;
+  background: rgba(0, 0, 0, 0.18); opacity: 0.8;
+}
+/* The composer steps back while a request waits, but stays typable for a steer */
+.chat-input-box--receded {
+  transform: scale(0.985) translateY(2px);
+  opacity: 0.72;
+  transition: transform var(--duration-slow) var(--ease-out), opacity var(--duration-slow) var(--ease-out);
+}
+.chat-input-box--receded:focus-within { transform: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-input-box--receded { transform: none; }
+  .approval-deck { animation: none; }
 }
 
-.approval-header-icon {
-  color: var(--warning);
-  flex-shrink: 0;
-  display: inline-flex;
-}
-
-.approval-header-title {
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--text-3);
-}
-
-.approval-header-spacer {
-  flex: 1;
-}
 
 .approval-trust-btn {
   padding: 2px 8px;
@@ -5403,61 +5450,6 @@ button, input, textarea, select {
   border-color: var(--border-active);
 }
 
-.approval-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.chat-approval-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px 12px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  border: 1px solid var(--wash-08);
-  animation: fade-in var(--duration-fast) var(--ease-out) both;
-}
-
-.approval-row-info {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.approval-row-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  min-width: 0;
-}
-
-.approval-row-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  color: var(--warning);
-  background: var(--warning-surface);
-  flex-shrink: 0;
-}
-
-.approval-row-summary {
-  font-size: 11.5px;
-  font-weight: 550;
-  color: var(--text-1);
-  line-height: 1.4;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .approval-row-command {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -5483,22 +5475,6 @@ button, input, textarea, select {
   font-size: 10.5px;
   color: var(--text-3);
   line-height: 1.4;
-}
-
-.approval-actions {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 4px;
-}
-
-/* Spacer between allow-group and deny-group */
-.approval-actions-gap {
-  width: 4px;
-  flex: 0 0 4px;
 }
 
 .approval-btn {
@@ -5556,19 +5532,6 @@ button, input, textarea, select {
 
 .approval-btn-cancel:hover {
   color: var(--text-2);
-}
-
-@media (max-width: 720px) {
-  .chat-approval-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .approval-actions {
-    grid-column: 1;
-    grid-row: auto;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-  }
 }
 
 /* ── Approval details (in-message) ── */
