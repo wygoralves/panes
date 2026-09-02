@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useContext, useLayoutEffect } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, useContext, useLayoutEffect } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
@@ -29,6 +29,24 @@ interface DropdownProps {
   triggerStyle?: CSSProperties;
   selectedLabel?: string;
   selectedIcon?: ReactNode;
+  /** Adds a filter field at the top of the menu; matching is by label. */
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  noResultsLabel?: string;
+}
+
+/** Case-insensitive label match across flat options and group options. An
+ * empty query returns no results so callers fall back to the normal menu. */
+export function filterDropdownOptions(
+  options: DropdownOption[],
+  groups: DropdownGroup[] | undefined,
+  query: string,
+): DropdownOption[] {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return [];
+  return [...options, ...(groups?.flatMap((group) => group.options) ?? [])].filter(
+    (option) => option.label.toLocaleLowerCase().includes(needle),
+  );
 }
 
 interface MenuPosition {
@@ -52,8 +70,14 @@ export function Dropdown({
   triggerStyle,
   selectedLabel: selectedLabelOverride,
   selectedIcon,
+  searchable = false,
+  searchPlaceholder,
+  noResultsLabel,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [highlightIndex, setHighlightIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
@@ -73,18 +97,34 @@ export function Dropdown({
 
   const totalItems = options.length + (groups?.length ?? 0);
   const hasGroups = groups && groups.length > 0;
+  const isSearching = searchable && query.trim().length > 0;
+  const searchResults = useMemo(
+    () => (isSearching ? filterDropdownOptions(options, groups, query) : []),
+    [groups, isSearching, options, query],
+  );
 
   const toggle = useCallback(() => {
     if (disabled) return;
     setOpen((prev) => !prev);
     setActiveGroup(null);
+    setQuery("");
+    setHighlightIndex(0);
   }, [disabled]);
+
+  useEffect(() => {
+    if (open && searchable) searchInputRef.current?.focus();
+  }, [open, searchable]);
+
+  useEffect(() => {
+    setHighlightIndex(0);
+  }, [query]);
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
 
     const rect = triggerRef.current.getBoundingClientRect();
-    const estimatedMenuHeight = totalItems * 32 + 8 + (hasGroups ? 9 : 0);
+    const estimatedMenuHeight =
+      totalItems * 32 + 8 + (hasGroups ? 9 : 0) + (searchable ? 38 : 0);
     const spaceBelow = window.innerHeight - rect.bottom;
     const goUp = spaceBelow < estimatedMenuHeight && rect.top > spaceBelow;
 
@@ -93,7 +133,7 @@ export function Dropdown({
       left: rect.left,
       direction: goUp ? "top" : "bottom",
     });
-  }, [open, totalItems, hasGroups]);
+  }, [open, totalItems, hasGroups, searchable]);
 
   useEffect(() => {
     if (!open) return;
@@ -136,6 +176,46 @@ export function Dropdown({
     onChange(optionValue);
     setOpen(false);
     setActiveGroup(null);
+    setQuery("");
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    const list = isSearching ? searchResults : options;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIndex((index) => (list.length === 0 ? 0 : (index + 1) % list.length));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIndex((index) =>
+        list.length === 0 ? 0 : (index - 1 + list.length) % list.length,
+      );
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const target = list[highlightIndex];
+      if (target) handleSelect(target.value);
+    }
+  }
+
+  function renderOption(option: DropdownOption, index: number) {
+    const isSelected = option.value === value;
+    const isHighlighted = searchable && index === highlightIndex;
+    return (
+      <button
+        key={option.value}
+        type="button"
+        className={`dropdown-item ${isSelected ? "dropdown-item-selected" : ""}${isHighlighted ? " dropdown-item-highlighted" : ""}`}
+        onClick={() => handleSelect(option.value)}
+        onMouseEnter={() => {
+          handleItemEnter();
+          if (searchable) setHighlightIndex(index);
+        }}
+      >
+        {option.icon && <span className="dropdown-item-icon">{option.icon}</span>}
+        <span className="dropdown-item-label">{option.label}</span>
+        {option.shortcut && <span className="dropdown-item-shortcut">{option.shortcut}</span>}
+        {isSelected && <Check size={12} className="dropdown-item-check" />}
+      </button>
+    );
   }
 
   function handleGroupEnter(groupIndex: number, e: React.MouseEvent<HTMLButtonElement>) {
@@ -209,31 +289,30 @@ export function Dropdown({
             closeGitFlyoutIfFocusLeft(gitFlyoutContext, event.relatedTarget)
           }
         >
-          {options.map((option) => {
-            const isSelected = option.value === value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                className={`dropdown-item ${isSelected ? "dropdown-item-selected" : ""}`}
-                onClick={() => handleSelect(option.value)}
-                onMouseEnter={handleItemEnter}
-              >
-                {option.icon && (
-                  <span className="dropdown-item-icon">{option.icon}</span>
-                )}
-                <span className="dropdown-item-label">{option.label}</span>
-                {option.shortcut && (
-                  <span className="dropdown-item-shortcut">{option.shortcut}</span>
-                )}
-                {isSelected && (
-                  <Check size={12} className="dropdown-item-check" />
-                )}
-              </button>
-            );
-          })}
+          {searchable && (
+            <div className="dropdown-search">
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="dropdown-search-input"
+                value={query}
+                placeholder={searchPlaceholder}
+                aria-label={searchPlaceholder}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+              />
+            </div>
+          )}
 
-          {hasGroups && (
+          {isSearching
+            ? searchResults.length > 0
+              ? searchResults.map(renderOption)
+              : noResultsLabel && <div className="dropdown-empty">{noResultsLabel}</div>
+            : options.map(renderOption)}
+
+          {hasGroups && !isSearching && (
             <>
               <div className="dropdown-divider" />
               {groups.map((group, i) => (

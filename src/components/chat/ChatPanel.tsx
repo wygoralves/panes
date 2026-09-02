@@ -48,7 +48,8 @@ import {
   Compass,
   BookOpen,
 } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
+import { DraftScopePicker } from "./DraftScopePicker";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useChatComposerStore } from "../../stores/chatComposerStore";
@@ -69,10 +70,11 @@ import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { ipc } from "../../lib/ipc";
 import {
-  autonomyPresetExecutionPolicyRequest,
+  autonomyPresetDescriptionKey,
   autonomyPresetPatch,
   detectAutonomyPreset,
   isAutonomyPresetId,
+  stopAskingAutonomyPreset,
 } from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
 import {
@@ -83,6 +85,10 @@ import { resolvePreferredOnboardingChatSelection } from "../../lib/onboarding";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import { isMacDesktop, usesCustomWindowFrame } from "../../lib/windowActions";
 import { MessageBlocks, shouldShowClaudeUnsupportedApproval } from "./MessageBlocks";
+import {
+  hasVisibleMessageContent,
+  isRenderableMessageRow,
+} from "./messageBlockVisibility";
 import { resolveEngineCapabilities } from "./engineCapabilities";
 import { buildCodexInputItems } from "./codexInputItems";
 import {
@@ -1137,14 +1143,6 @@ function readThreadLastModelId(thread: {
   return normalized.length > 0 ? normalized : null;
 }
 
-function hasVisibleContent(blocks?: ContentBlock[]): boolean {
-  if (!blocks || blocks.length === 0) return false;
-  return blocks.some((b) => {
-    if (b.type === "text" || b.type === "thinking") return Boolean(b.content?.trim());
-    return true;
-  });
-}
-
 function parseMessageDate(raw?: string): Date | null {
   if (!raw) {
     return null;
@@ -1341,10 +1339,14 @@ function MessageRowView({
       ),
     [message.blocks],
   );
-  const hasAssistantContent = !isUser && hasVisibleContent(message.blocks);
+  const hasAssistantContent = !isUser && hasVisibleMessageContent(message.blocks);
   const showAssistantShell = !isUser && (hasAssistantContent || message.status === "streaming");
   const showThinkingPlaceholder = showAssistantShell && !hasAssistantContent;
   const thinkingVariant = useThinkingVariant(showThinkingPlaceholder);
+
+  if (!isUser && !showAssistantShell) {
+    return null;
+  }
 
   return (
     <div
@@ -1699,7 +1701,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     null,
   );
   const {
-    messages,
     status,
     hasOlderMessages,
     loadingOlderMessages,
@@ -1715,6 +1716,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     error,
     setActiveThread: bindChatThread,
     threadId,
+    messages: allMessages,
   } = useChatStore(
     useShallow((state) => ({
       messages: state.messages,
@@ -1734,6 +1736,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       setActiveThread: state.setActiveThread,
       threadId: state.threadId,
     })),
+  );
+  // Rows the transcript never paints (an assistant shell with nothing to show
+  // yet) are dropped here so the virtualized measurements, the plain list, and
+  // the empty state all work from the same set.
+  const messages = useMemo(
+    () => allMessages.filter(isRenderableMessageRow),
+    [allMessages],
   );
   const messageFocusTarget = useUiStore((s) => s.messageFocusTarget);
   const clearMessageFocusTarget = useUiStore((s) => s.clearMessageFocusTarget);
@@ -4709,25 +4718,17 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         }
       }
 
-      if (stopAsking && autonomyEngineId) {
-        const request = autonomyPresetExecutionPolicyRequest("full", autonomyEngineId, {
-          codexExternalSandbox: codexExternalSandboxActive,
-        });
-        if (request) {
-          const requestId =
-            (threadExecutionPolicyRequestIdsRef.current[targetThreadId] ?? 0) + 1;
-          threadExecutionPolicyRequestIdsRef.current[targetThreadId] = requestId;
-          try {
-            const updatedThread = await ipc.setThreadExecutionPolicy(targetThreadId, request);
-            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
-              applyThreadUpdateLocal(updatedThread);
-            }
-          } catch (error) {
-            if (threadExecutionPolicyRequestIdsRef.current[targetThreadId] === requestId) {
-              toast.error(t("panel.toasts.updateExecutionPolicyFailed", { error: String(error) }));
-            }
-          }
-        }
+      if (stopAsking && autonomyEngineId && activeThread?.id === targetThreadId) {
+        // Route through the shared handler so the engine guards, the external
+        // sandbox retry, and the failure toast all apply. The rung is never
+        // "full": this button grants workspace autonomy, not disk and network.
+        await onThreadExecutionPolicyChange(
+          autonomyPresetPatch(
+            stopAskingAutonomyPreset(autonomyEngineId),
+            autonomyEngineId,
+            { codexExternalSandbox: codexExternalSandboxActive },
+          ) as ThreadExecutionPolicyPatch,
+        );
       }
     } finally {
       batchApprovalInFlightRef.current = false;
@@ -5386,7 +5387,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         {/* Chat section */}
         <div
           ref={chatSectionRef}
-          className="chat-section"
+          className={`chat-section${messages.length === 0 && !pendingSubmission ? " chat-section-draft" : ""}`}
           style={{
             flex: (layoutMode === "terminal" || layoutMode === "editor") ? "0 0 0px"
                  : layoutMode === "chat" ? "1 1 0px"
@@ -5424,65 +5425,22 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             {/* ── Messages ── */}
             <div
               ref={viewportRef}
-              style={{
-                position: "relative",
-                flex: 1,
-                overflow: "auto",
-                padding: "20px 24px",
-              }}
+              className="chat-messages-viewport"
             >
         {messages.length === 0 && !pendingSubmission ? (
-          <div
-            className="animate-fade-in"
-            style={{
-              height: "100%",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 14,
-              color: "var(--text-3)",
-              textAlign: "center",
-            }}
-          >
-            <div className="chat-empty-tile">
-              <MessageSquare size={18} />
-            </div>
-            <div>
-              <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 500, color: "var(--text-2)" }}>
-                {t("panel.startConversation")}
-              </p>
-              <p style={{ margin: 0, fontSize: 12.5 }}>
-                {activeWorkspaceId && (activeRepo || gitStatus?.branch)
-                  ? activeRepo && gitStatus?.branch
-                    ? t("panel.emptyScopeRepoBranch", { repo: activeRepo.name, branch: gitStatus.branch })
-                    : t("panel.emptyScopeRepo", { repo: activeRepo?.name ?? workspaceName })
-                  : t("panel.emptyHint")}
-              </p>
-            </div>
-            {activeWorkspaceId && (
-              <div className="chat-empty-suggestions">
-                <button
-                  type="button"
-                  className="chat-empty-suggestion"
-                  onClick={() => handleEditResend(t("panel.emptySuggestionSummarize"))}
-                >
-                  {t("panel.emptySuggestionSummarize")}
-                </button>
-                <button
-                  type="button"
-                  className="chat-empty-suggestion"
-                  onClick={() => handleEditResend(t("panel.emptySuggestionTests"))}
-                >
-                  {t("panel.emptySuggestionTests")}
-                </button>
-              </div>
-            )}
-            <p style={{ margin: 0, fontSize: 11 }}>
-              <span className="chat-empty-kbd">⌘K</span> {t("panel.emptyHintCommands")}
-              <span style={{ opacity: 0.5, padding: "0 5px" }}>·</span>
-              <span className="chat-empty-kbd">/</span> {t("panel.emptyHintSlash")}
-            </p>
+          <div className="chat-draft-hero animate-fade-in">
+            <h1 className="chat-draft-headline">
+              {activeWorkspaceId ? (
+                <Trans
+                  t={t}
+                  i18nKey="panel.draftHeadline"
+                  values={{ scope: activeRepo?.name ?? workspaceName }}
+                  components={{ scope: <DraftScopePicker /> }}
+                />
+              ) : (
+                t("panel.draftHeadlineNoWorkspace")
+              )}
+            </h1>
           </div>
         ) : virtualizationEnabled && virtualWindow ? (
           <div style={{ display: "flex", flexDirection: "column" }}>
@@ -5638,9 +5596,21 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                             type="button"
                             className="approval-batch-btn"
                             onClick={() => void allowAllPendingApprovals(true)}
-                            title={t("autonomy.presets.full.description")}
+                            title={t(
+                              autonomyPresetDescriptionKey(
+                                stopAskingAutonomyPreset(activeThreadAutonomyEngineId),
+                                activeThreadAutonomyEngineId,
+                                { codexExternalSandbox: codexExternalSandboxActive },
+                              ),
+                            )}
                           >
-                            {t("autonomy.allowAllStopAsking")}
+                            {t("autonomy.allowAllAndSwitch", {
+                              preset: t(
+                                `autonomy.presets.${stopAskingAutonomyPreset(
+                                  activeThreadAutonomyEngineId,
+                                )}.label`,
+                              ),
+                            })}
                           </button>
                         )}
                       </>
@@ -6552,14 +6522,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     </>
                   )}
                 </div>
-              ) : (
+              ) : hasUserMessage ? (
                 <div className="chat-context-section">
                   <Clock size={10} />
-                  <span>
-                    {t(resolveUsageStatusKey(hasUserMessage, streaming || usageLimitsLoading))}
-                  </span>
+                  <span>{t(resolveUsageStatusKey(streaming || usageLimitsLoading))}</span>
                 </div>
-              )
+              ) : null
             )}
 
             {/* Branch */}
