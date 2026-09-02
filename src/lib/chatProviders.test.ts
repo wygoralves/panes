@@ -20,7 +20,7 @@ describe("chat provider helpers", () => {
   });
 
   it("builds the sign-in command with the instance environment", () => {
-    expect(chatProviderSignInCommand(base)).toBe('CLAUDE_CONFIG_DIR="~/.claude-work" claude auth login');
+    expect(chatProviderSignInCommand(base)).toBe('CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude auth login');
     expect(
       chatProviderSignInCommand({
         ...base,
