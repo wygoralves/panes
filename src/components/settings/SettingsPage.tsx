@@ -37,6 +37,7 @@ import {
   Pencil,
   Trash2,
   KeyRound,
+  ZoomIn,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
 import {
@@ -66,8 +67,9 @@ import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
 import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
 import { useChatProvidersStore } from "../../stores/chatProvidersStore";
 import { ChatProviderDialog, providerKindIcon } from "./ChatProviderDialog";
-import { chatProviderSignInCommand } from "../../lib/chatProviders";
-import { useTerminalStore } from "../../stores/terminalStore";
+import { signInChatProviderInTerminal } from "../../lib/chatProviderSignIn";
+import { useUiZoomStore } from "../../stores/uiZoomStore";
+import { MAX_UI_ZOOM_PERCENT, MIN_UI_ZOOM_PERCENT } from "../../lib/uiZoom";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import type { ChatProviderInstance } from "../../types";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
@@ -215,7 +217,9 @@ export function SettingsPage() {
   >({ open: false });
   const [providerPendingRemoval, setProviderPendingRemoval] = useState<ChatProviderInstance | null>(null);
   const [providerPendingSignIn, setProviderPendingSignIn] = useState<ChatProviderInstance | null>(null);
-  const runCommandInTerminal = useTerminalStore((state) => state.runCommandInTerminal);
+  const uiZoomPercent = useUiZoomStore((state) => state.percent);
+  const stepUiZoom = useUiZoomStore((state) => state.step);
+  const resetUiZoom = useUiZoomStore((state) => state.reset);
 
   useEffect(() => {
     void loadSidebarListMode();
@@ -514,17 +518,7 @@ export function SettingsPage() {
     const provider = providerPendingSignIn;
     setProviderPendingSignIn(null);
     if (!provider) return;
-    const workspaceId = selectedWorkspace?.id ?? activeWorkspaceId ?? null;
-    if (!workspaceId) {
-      toast.error(t("app:settingsPage.chat.signInNoWorkspace"));
-      return;
-    }
-    const started = await runCommandInTerminal(workspaceId, chatProviderSignInCommand(provider));
-    if (!started) {
-      toast.error(t("app:settingsPage.chat.signInFailed"));
-      return;
-    }
-    setActiveView("chat");
+    await signInChatProviderInTerminal(provider, selectedWorkspace?.id ?? activeWorkspaceId ?? null);
   }
 
   function describeChatProvider(provider: ChatProviderInstance): string {
@@ -829,6 +823,39 @@ export function SettingsPage() {
                         </button>
                       );
                     })}
+                  </div>
+                </SettingsRow>
+                <SettingsRow
+                  icon={<ZoomIn size={17} />}
+                  title={t("app:settingsPage.appearance.zoom")}
+                  description={t("app:settingsPage.appearance.zoomDescription")}
+                >
+                  <div className="usp-stepper">
+                    <button
+                      type="button"
+                      aria-label={t("app:settingsPage.appearance.zoomOut")}
+                      disabled={uiZoomPercent <= MIN_UI_ZOOM_PERCENT}
+                      onClick={() => void stepUiZoom(-1).then((ok) => { if (!ok) toast.error(t("app:settingsPage.appearance.zoomFailed")); })}
+                    >
+                      <Minus size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="usp-stepper-value"
+                      title={t("app:settingsPage.appearance.zoomReset")}
+                      disabled={uiZoomPercent === 100}
+                      onClick={() => void resetUiZoom()}
+                    >
+                      {uiZoomPercent}%
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("app:settingsPage.appearance.zoomIn")}
+                      disabled={uiZoomPercent >= MAX_UI_ZOOM_PERCENT}
+                      onClick={() => void stepUiZoom(1).then((ok) => { if (!ok) toast.error(t("app:settingsPage.appearance.zoomFailed")); })}
+                    >
+                      <Plus size={13} />
+                    </button>
                   </div>
                 </SettingsRow>
                 <SettingsRow

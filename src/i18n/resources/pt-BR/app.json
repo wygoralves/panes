@@ -111,7 +111,8 @@
     "markThreadUnread": "Marcar thread como não lida",
     "markUnreadUnavailable": "Só uma thread finalizada pode ser marcada como não lida.",
     "undo": "Desfazer",
-    "settleUnavailable": "Uma thread em andamento ainda não pode ser concluída."
+    "settleUnavailable": "Uma thread em andamento ainda não pode ser concluída.",
+    "showArchived": "Mostrar arquivados"
   },
   "commandPalette": {
     "placeholder": "Busque comandos, threads, workspaces ou arquivos...",
@@ -595,7 +596,7 @@
       },
       "usage": {
         "title": "Limites de uso",
-        "description": "Confira os limites atuais informados pelas contas conectadas dos provedores de chat."
+        "description": "Quanto cada conta conectada ainda tem antes dos limites renovarem."
       },
       "power": {
         "title": "Energia e suspensão",
@@ -640,7 +641,13 @@
       "interfaceDescription": "Mudanças de tema se aplicam ao chat, terminal, Git e editor.",
       "themeDescription": "Use um tema fixo ou acompanhe o sistema operacional.",
       "languageDescription": "Usado na navegação, diálogos e mensagens de status.",
-      "sidebarListModeDescription": "Agrupe as threads por projeto ou status."
+      "sidebarListModeDescription": "Agrupe as threads por projeto ou status.",
+      "zoom": "Zoom da interface",
+      "zoomDescription": "Redimensiona a janela inteira. Aumente e diminua com os atalhos de teclado habituais e clique no valor para redefinir.",
+      "zoomIn": "Aumentar zoom",
+      "zoomOut": "Diminuir zoom",
+      "zoomReset": "Redefinir para 100%",
+      "zoomFailed": "Falha ao salvar o zoom da interface."
     },
     "chat": {
       "providers": "Provedores",
@@ -702,9 +709,9 @@
     },
     "usage": {
       "providerLimits": "Limites dos provedores conectados",
-      "providerLimitsDescription": "As porcentagens vêm diretamente de cada provedor e são atualizadas a cada minuto.",
+      "providerLimitsDescription": "Os limites vêm direto de cada conta conectada e atualizam a cada minuto.",
       "connected": "Uso da conta disponível",
-      "unavailable": "Dados de uso indisponíveis. Verifique se o provedor está conectado a uma conta com assinatura.",
+      "unavailable": "Sem dados de uso. Entre com uma conta de assinatura para ver os limites aqui.",
       "loading": "Carregando limites de uso dos provedores",
       "loadFailed": "Não foi possível carregar os limites de uso dos provedores.",
       "percentLeft": "{{percent}}% restantes",
@@ -715,7 +722,11 @@
         "fableWeekly": "Limite semanal do Fable",
         "opusWeekly": "Limite semanal do Opus",
         "sonnetWeekly": "Limite semanal do Sonnet"
-      }
+      },
+      "noWindows": "Esta conta não informa limites no momento.",
+      "resetsIn": "Renova em {{duration}}",
+      "minutes": "{{minutes}} min",
+      "hoursMinutes": "{{hours}}h {{minutes}}min"
     },
     "terminal": {
       "display": "Texto e renderização",

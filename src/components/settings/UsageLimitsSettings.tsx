@@ -1,8 +1,17 @@
-import { engineKind } from "../../lib/engineKind";
 import { useCallback, useEffect, useState } from "react";
-import { Gauge, RefreshCw, X } from "lucide-react";
+import { Gauge, KeyRound, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ipc } from "../../lib/ipc";
+import { engineKind } from "../../lib/engineKind";
+import { chatProviderForEngine, signInChatProviderInTerminal } from "../../lib/chatProviderSignIn";
+import {
+  clampRemainingPercent,
+  describeUsageReset,
+  usageLevel,
+  usageResetDate,
+} from "../../lib/usageWindows";
+import { useChatProvidersStore } from "../../stores/chatProvidersStore";
+import { useUiStore } from "../../stores/uiStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { Ref } from "react";
 import type { ChatProviderUsage, ChatProviderUsageWindow } from "../../types";
@@ -12,6 +21,8 @@ interface Props {
   onClose?: () => void;
   closeButtonRef?: Ref<HTMLButtonElement>;
 }
+
+const REFRESH_INTERVAL_MS = 60_000;
 
 function windowLabelKey(kind: ChatProviderUsageWindow["kind"]) {
   switch (kind) {
@@ -28,6 +39,11 @@ function windowLabelKey(kind: ChatProviderUsageWindow["kind"]) {
   }
 }
 
+function providerIconId(engineId: string): string {
+  const kind = engineKind(engineId);
+  return kind === "claude" ? "claude-code" : kind;
+}
+
 export function UsageLimitsSettings({
   surface = "settings",
   onClose,
@@ -37,12 +53,17 @@ export function UsageLimitsSettings({
   const [providers, setProviders] = useState<ChatProviderUsage[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const providerInstances = useChatProvidersStore((state) => state.providers);
+  const loadProviderInstances = useChatProvidersStore((state) => state.load);
+  const closeUsageLimitsModal = useUiStore((state) => state.closeUsageLimitsModal);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setFailed(false);
     try {
       setProviders(await ipc.getChatProviderUsage());
+      setNow(Date.now());
     } catch {
       setFailed(true);
     } finally {
@@ -52,17 +73,38 @@ export function UsageLimitsSettings({
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void loadProviderInstances();
+    const timer = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadProviderInstances, refresh]);
 
-  const formatReset = (timestamp: number | null) => {
-    if (timestamp == null) return null;
-    const date = new Date(timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp);
-    if (Number.isNaN(date.getTime())) return null;
-    return new Intl.DateTimeFormat(i18n.language, {
+  const formatAbsolute = (date: Date) =>
+    new Intl.DateTimeFormat(i18n.language, {
       weekday: "short",
       hour: "numeric",
       minute: "2-digit",
     }).format(date);
+
+  const formatReset = (timestamp: number | null): string | null => {
+    const reset = describeUsageReset(timestamp, now);
+    if (!reset) return null;
+    if (reset.kind === "minutes") {
+      return t("app:settingsPage.usage.resetsIn", {
+        duration: t("app:settingsPage.usage.minutes", { minutes: reset.minutes }),
+      });
+    }
+    if (reset.kind === "hours") {
+      return t("app:settingsPage.usage.resetsIn", {
+        duration: t("app:settingsPage.usage.hoursMinutes", { hours: reset.hours, minutes: reset.minutes }),
+      });
+    }
+    return t("app:settingsPage.usage.resets", { time: formatAbsolute(reset.date) });
+  };
+
+  const handleSignIn = async (engineId: string) => {
+    const provider = chatProviderForEngine(engineId, providerInstances);
+    const started = await signInChatProviderInTerminal(provider);
+    if (started && surface === "modal") closeUsageLimitsModal();
   };
 
   const isModal = surface === "modal";
@@ -110,62 +152,103 @@ export function UsageLimitsSettings({
         </div>
       ) : null}
 
-      {!failed && providers.map((provider) => (
-        <div className="usp-usage-provider" key={provider.engineId}>
-          <div className="usp-usage-provider-header">
-            <span className="usp-row-icon">
-              {getHarnessIcon(engineKind(provider.engineId) === "claude" ? "claude-code" : engineKind(provider.engineId), 17)}
-            </span>
-            <span className="usp-usage-provider-copy">
-              <strong>{provider.name}</strong>
-              <span>
-                {provider.available
-                  ? t("app:settingsPage.usage.connected")
-                  : t("app:settingsPage.usage.unavailable")}
-              </span>
-            </span>
-          </div>
+      {!failed &&
+        providers.map((provider) => {
+          const instance = providerInstances.find((entry) => entry.id === provider.engineId);
+          const detail = instance && !instance.builtIn && instance.homePath
+            ? t("app:settingsPage.chat.ownLogin", { path: instance.homePath })
+            : instance && !instance.builtIn
+              ? t("app:settingsPage.chat.sharedInstall")
+              : t("app:settingsPage.chat.defaultInstall");
+          const windows = provider.available ? provider.windows : [];
+          const primary = windows.find((window) => window.kind === "five_hour") ?? windows[0] ?? null;
+          const secondary = windows.filter((window) => window !== primary);
+          return (
+            <div className="usp-usage-provider" key={provider.engineId}>
+              <div className="usp-usage-provider-header">
+                <span className="usp-row-icon">{getHarnessIcon(providerIconId(provider.engineId), 17)}</span>
+                <span className="usp-usage-provider-copy">
+                  <strong>{provider.name}</strong>
+                  <span>{detail}</span>
+                </span>
+                {!provider.available ? (
+                  <button
+                    type="button"
+                    className="usp-button usp-usage-signin"
+                    onClick={() => void handleSignIn(provider.engineId)}
+                  >
+                    <KeyRound size={13} />
+                    {t("app:settingsPage.chat.signIn")}
+                  </button>
+                ) : null}
+              </div>
 
-          {provider.available ? (
-            <div className="usp-usage-window-list">
-              {provider.windows.map((window) => {
-                const remainingPercent = Math.max(0, Math.min(100, 100 - window.usedPercent));
-                const level = remainingPercent <= 10
-                  ? "critical"
-                  : remainingPercent <= 25
-                    ? "warning"
-                    : "normal";
-                const reset = formatReset(window.resetsAt);
-                return (
-                  <div className="usp-usage-window" key={window.kind} data-level={level}>
-                    <div className="usp-usage-window-heading">
-                      <span>{t(windowLabelKey(window.kind))}</span>
-                      <strong>{t("app:settingsPage.usage.percentLeft", { percent: remainingPercent })}</strong>
+              {provider.available ? (
+                <div className="usp-usage-window-list">
+                  {primary ? <UsageWindowMeter window={primary} primary formatReset={formatReset} /> : null}
+                  {secondary.length > 0 ? (
+                    <div className={secondary.length > 1 ? "usp-usage-window-grid" : undefined}>
+                      {secondary.map((window) => (
+                        <UsageWindowMeter key={window.kind} window={window} formatReset={formatReset} />
+                      ))}
                     </div>
-                    <div
-                      className="usp-usage-progress"
-                      role="progressbar"
-                      aria-label={t(windowLabelKey(window.kind))}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={remainingPercent}
-                    >
-                      <span style={{ width: `${remainingPercent}%` }} />
-                    </div>
-                    {reset ? (
-                      <span className="usp-usage-reset">
-                        {t("app:settingsPage.usage.resets", { time: reset })}
-                      </span>
-                    ) : null}
-                  </div>
-                );
-              })}
+                  ) : null}
+                  {windows.length === 0 ? (
+                    <p className="usp-usage-note">{t("app:settingsPage.usage.noWindows")}</p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="usp-usage-note">{t("app:settingsPage.usage.unavailable")}</p>
+              )}
             </div>
-          ) : null}
-        </div>
-      ))}
+          );
+        })}
     </div>
   );
+
+  function UsageWindowMeter({
+    window,
+    primary = false,
+    formatReset,
+  }: {
+    window: ChatProviderUsageWindow;
+    primary?: boolean;
+    formatReset: (timestamp: number | null) => string | null;
+  }) {
+    const remainingPercent = clampRemainingPercent(window.usedPercent);
+    const level = usageLevel(remainingPercent);
+    const reset = formatReset(window.resetsAt);
+    const resetDate = usageResetDate(window.resetsAt);
+    const label = t(windowLabelKey(window.kind));
+    return (
+      <div
+        className={`usp-usage-window${primary ? " usp-usage-window-primary" : ""}`}
+        data-level={level}
+      >
+        <div className="usp-usage-window-heading">
+          <span className="usp-usage-window-label">{label}</span>
+          <span className="usp-usage-window-value">
+            {t("app:settingsPage.usage.percentLeft", { percent: remainingPercent })}
+          </span>
+        </div>
+        <div
+          className="usp-usage-progress"
+          role="progressbar"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={remainingPercent}
+        >
+          <span style={{ width: `${remainingPercent}%` }} />
+        </div>
+        {reset ? (
+          <span className="usp-usage-reset" title={resetDate ? formatAbsolute(resetDate) : undefined}>
+            {reset}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <section className={`usp-section usp-section-first${isModal ? " usage-limits-modal-content" : ""}`}>

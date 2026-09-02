@@ -4862,7 +4862,7 @@ button, input, textarea, select {
 /* Footer settings */
 .sb-footer {
   padding: 8px 12px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--wash-06);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5195,7 +5195,6 @@ button, input, textarea, select {
 
 .chat-composer-surface {
   padding: 8px 24px 10px;
-  border-top: 1px solid var(--divider);
   background: var(--content-bg);
 }
 
@@ -8282,7 +8281,6 @@ button, input, textarea, select {
 }
 
 .chat-section-draft .chat-composer-surface {
-  border-top-color: transparent;
   background: transparent;
 }
 
@@ -11106,7 +11104,7 @@ button.chat-context-section:hover {
 }
 
 .usp-usage-provider {
-  padding: 14px 15px;
+  padding: 14px 16px 16px;
 }
 
 .usp-usage-provider + .usp-usage-provider {
@@ -11121,6 +11119,7 @@ button.chat-context-section:hover {
 
 .usp-usage-provider-copy {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -11128,21 +11127,43 @@ button.chat-context-section:hover {
 
 .usp-usage-provider-copy strong {
   color: var(--text-1);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 .usp-usage-provider-copy span {
+  overflow: hidden;
   color: var(--text-3);
   font-size: 10.5px;
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usp-usage-signin {
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.usp-usage-note {
+  margin: 10px 0 0 44px;
+  max-width: 52ch;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .usp-usage-window-list {
   margin: 14px 0 0 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.usp-usage-window-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 13px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
 }
 
 .usp-usage-window {
@@ -11154,16 +11175,39 @@ button.chat-context-section:hover {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  color: var(--text-2);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
-.usp-usage-window-heading strong {
+.usp-usage-window-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usp-usage-window-value {
   flex: 0 0 auto;
   color: var(--text-1);
-  font-family: var(--font-mono);
-  font-size: 10px;
   font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.usp-usage-window-primary .usp-usage-window-label {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+.usp-usage-window-primary .usp-usage-window-value {
+  font-size: 12.5px;
+}
+
+.usp-usage-window[data-level="warning"] .usp-usage-window-value {
+  color: var(--warning);
+}
+
+.usp-usage-window[data-level="critical"] .usp-usage-window-value {
+  color: var(--danger);
 }
 
 .usp-usage-progress {
@@ -11172,6 +11216,10 @@ button.chat-context-section:hover {
   overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--bg-4);
+}
+
+.usp-usage-window-primary .usp-usage-progress {
+  height: 6px;
 }
 
 .usp-usage-progress > span {
@@ -11194,7 +11242,8 @@ button.chat-context-section:hover {
   display: block;
   margin-top: 5px;
   color: var(--text-3);
-  font-size: 9.5px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .usp-usage-loading {
@@ -11510,6 +11559,22 @@ button.chat-context-section:hover {
 .usp-stepper button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.usp-stepper .usp-stepper-value {
+  width: auto;
+  min-width: 48px;
+  padding: 0 6px;
+  color: var(--text-2);
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usp-stepper .usp-stepper-value:disabled {
+  opacity: 1;
+  color: var(--text-2);
+  cursor: default;
 }
 
 .usp-stepper span {
@@ -11848,8 +11913,13 @@ button.chat-context-section:hover {
   }
 
   .usp-usage-window-list,
+  .usp-usage-note,
   .usp-usage-skeleton-windows {
     margin-left: 0;
+  }
+
+  .usp-usage-window-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
