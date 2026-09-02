@@ -36,17 +36,22 @@ interface PopoverPosition {
 }
 
 /**
- * Open above the trigger when there is room, otherwise below it, and cap the
- * height to the side that was chosen so the list scrolls instead of leaving
- * the viewport (the composer sits mid-screen on a new thread).
+ * Open below the trigger when the list fits there, otherwise above it, and cap
+ * the height to the side that was chosen so the list scrolls instead of
+ * leaving the viewport (the composer sits mid-screen on a new thread).
  */
 export function placePopover(
   rect: Pick<DOMRect, "top" | "bottom">,
   viewportHeight: number,
+  contentHeight = POPOVER_MAX_HEIGHT,
 ): Omit<PopoverPosition, "left"> {
   const above = rect.top - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_GAP;
   const below = viewportHeight - rect.bottom - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_GAP;
-  const openAbove = above >= POPOVER_MAX_HEIGHT || above >= below;
+  const needed = Math.min(POPOVER_MAX_HEIGHT, Math.max(120, contentHeight));
+  // Below is the natural direction. It flips up only when the list does not
+  // fit below and there is more room above, which is the case for a composer
+  // docked at the bottom of a conversation.
+  const openAbove = below < needed && above > below;
   const room = Math.max(120, openAbove ? above : below);
   const maxHeight = Math.min(POPOVER_MAX_HEIGHT, room);
   return openAbove
@@ -427,7 +432,8 @@ export function ModelPicker({
     const rect = triggerRef.current.getBoundingClientRect();
     const popoverWidth = Math.min(340, window.innerWidth - 16);
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
-    setPos({ ...placePopover(rect, window.innerHeight), left });
+    const contentHeight = popoverRef.current?.scrollHeight ?? POPOVER_MAX_HEIGHT;
+    setPos({ ...placePopover(rect, window.innerHeight, contentHeight), left });
   }, [open]);
 
   useEffect(() => {
