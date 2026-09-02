@@ -378,7 +378,11 @@ impl ClaudeTransport {
                     match lines.next_line().await {
                         Ok(Some(line)) => {
                             if !line.trim().is_empty() {
-                                log::debug!("claude sidecar stderr: {line}");
+                                if line.contains("CLAUDE_SDK_") {
+                                    log::warn!("claude sidecar stderr: {line}");
+                                } else {
+                                    log::debug!("claude sidecar stderr: {line}");
+                                }
                             }
                         }
                         Ok(None) | Err(_) => break,
@@ -1465,21 +1469,10 @@ fn default_effort_for_claude_model(
         return String::new();
     }
 
-    let identity = format!(
-        "{} {} {} {}",
-        model.value,
-        model.display_name,
-        model.description,
-        model.resolved_model.as_deref().unwrap_or_default()
-    )
-    .to_lowercase();
-    let preferred = if identity.contains("haiku") {
-        "low"
-    } else if identity.contains("sonnet") {
-        "medium"
-    } else {
-        "high"
-    };
+    // Claude Code defaults every model to "high" effort. Mirror that so Panes
+    // does not quietly run Sonnet or Haiku at a lower effort than the CLI.
+    let _ = model;
+    let preferred = "high";
 
     supported_efforts
         .iter()

@@ -377,9 +377,15 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations).toHaveLength(1);
     expect(observations[0]?.type).toBe("query_options");
     expect(observations[0]?.result.permissionMode).toBe("default");
-    expect(observations[0]?.result.allowedTools).toEqual(
-      expect.arrayContaining(["TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TodoWrite"]),
-    );
+    // Bare tool names in `allowedTools` auto-approve and shadow canUseTool, so
+    // the sidecar must not forward them to the SDK.
+    expect(observations[0]?.result.allowedTools).toBeUndefined();
+    expect(observations[0]?.result.tools).toBeUndefined();
+    expect(observations[0]?.result.settingSources).toBeUndefined();
+    expect(observations[0]?.result.systemPrompt).toEqual({
+      type: "preset",
+      preset: "claude_code",
+    });
     expect(observations[0]?.result.todoToolsEnabled).toBe("1");
     expect(observations[0]?.result.settings).toEqual({
       permissions: {
@@ -459,7 +465,8 @@ describe("claude-agent-sdk-server sidecar", () => {
     );
 
     const observations = parseObservationResults(harness, "query-explicit-allowlist");
-    expect(observations[0]?.result.allowedTools).toEqual(["Read", "Grep"]);
+    expect(observations[0]?.result.allowedTools).toBeUndefined();
+    expect(observations[0]?.result.tools).toEqual(["Read", "Grep"]);
   });
 
   it("rejects danger-full-access explicitly for Claude", async () => {
