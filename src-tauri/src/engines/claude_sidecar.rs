@@ -26,7 +26,7 @@ use crate::{process_utils, runtime_env};
 use super::{
     normalize_approval_response_for_engine, trim_action_output_delta_content, ActionResult,
     ActionType, ApprovalRequestRoute, Engine, EngineEvent, EngineThread, ModelInfo, OutputStream,
-    ReasoningEffortOption, SandboxPolicy, ThreadScope, TurnCompletionStatus, TurnInput,
+    ReasoningEffortOption, SandboxPolicy, TaskItem, ThreadScope, TurnCompletionStatus, TurnInput,
 };
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -117,6 +117,12 @@ enum SidecarEvent {
         #[serde(rename = "durationMs")]
         duration_ms: Option<u64>,
     },
+    TaskListUpdated {
+        id: Option<String>,
+        source: String,
+        explanation: Option<String>,
+        tasks: Vec<SidecarTaskItem>,
+    },
     ApprovalRequested {
         id: Option<String>,
         #[serde(rename = "approvalId")]
@@ -194,6 +200,7 @@ impl SidecarEvent {
             | SidecarEvent::ActionOutputDelta { id, .. }
             | SidecarEvent::ActionProgressUpdated { id, .. }
             | SidecarEvent::ActionCompleted { id, .. }
+            | SidecarEvent::TaskListUpdated { id, .. }
             | SidecarEvent::ApprovalRequested { id, .. }
             | SidecarEvent::TurnCompleted { id, .. }
             | SidecarEvent::Notice { id, .. }
@@ -210,6 +217,19 @@ impl SidecarEvent {
 struct SidecarTokenUsage {
     input: u64,
     output: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarTaskItem {
+    id: String,
+    title: String,
+    status: String,
+    active_form: Option<String>,
+    description: Option<String>,
+    owner: Option<String>,
+    #[serde(default)]
+    blocked_by: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1943,6 +1963,32 @@ impl Engine for ClaudeSidecarEngine {
                                         .await
                                         .ok();
                                 }
+                                SidecarEvent::TaskListUpdated {
+                                    source,
+                                    explanation,
+                                    tasks,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::TaskListUpdated {
+                                            source,
+                                            explanation,
+                                            tasks: tasks
+                                                .into_iter()
+                                                .map(|task| TaskItem {
+                                                    id: task.id,
+                                                    title: task.title,
+                                                    status: task.status,
+                                                    active_form: task.active_form,
+                                                    description: task.description,
+                                                    owner: task.owner,
+                                                    blocked_by: task.blocked_by,
+                                                })
+                                                .collect(),
+                                        })
+                                        .await
+                                        .ok();
+                                }
                                 SidecarEvent::ApprovalRequested {
                                     approval_id,
                                     action_type,
@@ -2274,6 +2320,36 @@ mod tests {
             } => {
                 assert_eq!(action_id, "action-1");
                 assert_eq!(message, "Claude finished preparing tool input.");
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserializes_task_list_updated_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "task_list_updated",
+            "id": "request-1",
+            "source": "claude",
+            "explanation": null,
+            "tasks": [{
+                "id": "1",
+                "title": "Inspect the sidebar",
+                "status": "in_progress",
+                "activeForm": "Inspecting the sidebar",
+                "description": null,
+                "owner": null,
+                "blockedBy": [],
+            }],
+        }))
+        .expect("task_list_updated should deserialize");
+
+        match event {
+            SidecarEvent::TaskListUpdated { source, tasks, .. } => {
+                assert_eq!(source, "claude");
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].title, "Inspect the sidebar");
+                assert_eq!(tasks[0].status, "in_progress");
             }
             other => panic!("unexpected event variant: {other:?}"),
         }

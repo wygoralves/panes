@@ -377,12 +377,89 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations).toHaveLength(1);
     expect(observations[0]?.type).toBe("query_options");
     expect(observations[0]?.result.permissionMode).toBe("default");
+    expect(observations[0]?.result.allowedTools).toEqual(
+      expect.arrayContaining(["TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TodoWrite"]),
+    );
+    expect(observations[0]?.result.todoToolsEnabled).toBe("1");
     expect(observations[0]?.result.settings).toEqual({
       permissions: {
         defaultMode: "default",
         disableBypassPermissionsMode: "disable",
       },
     });
+  });
+
+  it("skips a task update for an id it never saw created", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "init",
+            session_id: "session-unknown-task",
+          },
+        },
+        {
+          type: "hook",
+          hook: "PostToolUse",
+          input: {
+            tool_name: "TaskUpdate",
+            tool_input: { taskId: "404", status: "in_progress" },
+            tool_use_id: "task-update-unknown",
+            tool_response: { success: true },
+          },
+        },
+        {
+          type: "yield",
+          message: makeSuccessResult({ session_id: "session-unknown-task" }),
+        },
+      ],
+    });
+
+    harness.send({
+      id: "query-unknown-task",
+      method: "query",
+      params: { prompt: "update a phantom task", cwd: repoRoot },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-unknown-task" && event.type === "turn_completed",
+    );
+
+    expect(
+      harness.events.filter(
+        (event) =>
+          event.id === "query-unknown-task" && event.type === "task_list_updated",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps an explicit allowlist exactly as the caller sent it", async () => {
+    const harness = await spawnHarness({
+      steps: [],
+      emitObservationResult: true,
+      emitQueryOptions: true,
+      sessionId: "session-explicit-allowlist",
+    });
+
+    harness.send({
+      id: "query-explicit-allowlist",
+      method: "query",
+      params: {
+        prompt: "inspect options",
+        cwd: repoRoot,
+        allowedTools: ["Read", "Grep"],
+      },
+    });
+
+    await harness.waitFor(
+      (event) =>
+        event.id === "query-explicit-allowlist" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-explicit-allowlist");
+    expect(observations[0]?.result.allowedTools).toEqual(["Read", "Grep"]);
   });
 
   it("rejects danger-full-access explicitly for Claude", async () => {
@@ -810,6 +887,93 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(outputDelta?.stream).toBe("stdout");
     expect(completed?.actionId).toBe(started?.actionId);
     expect(completed?.output).toBe("stdout: ok");
+  });
+
+  it("emits Claude task snapshots without generic action cards", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "init",
+            session_id: "session-tasks",
+          },
+        },
+        {
+          type: "hook",
+          hook: "PreToolUse",
+          input: {
+            tool_name: "TaskCreate",
+            tool_input: {
+              subject: "Inspect the sidebar",
+              description: "Review the existing thread navigation.",
+              activeForm: "Inspecting the sidebar",
+            },
+            tool_use_id: "task-create-1",
+          },
+        },
+        {
+          type: "hook",
+          hook: "PostToolUse",
+          input: {
+            tool_name: "TaskCreate",
+            tool_input: {
+              subject: "Inspect the sidebar",
+              description: "Review the existing thread navigation.",
+              activeForm: "Inspecting the sidebar",
+            },
+            tool_use_id: "task-create-1",
+            tool_response: "Task #1 created successfully: Inspect the sidebar",
+          },
+        },
+        {
+          type: "hook",
+          hook: "PostToolUse",
+          input: {
+            tool_name: "TaskUpdate",
+            tool_input: { taskId: "1", status: "in_progress" },
+            tool_use_id: "task-update-1",
+            tool_response: { success: true },
+          },
+        },
+        {
+          type: "yield",
+          message: makeSuccessResult({ session_id: "session-tasks" }),
+        },
+      ],
+    });
+
+    harness.send({
+      id: "query-tasks",
+      method: "query",
+      params: { prompt: "work through the task", cwd: repoRoot },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-tasks" && event.type === "turn_completed",
+    );
+
+    const taskEvents = harness.events.filter(
+      (event) => event.id === "query-tasks" && event.type === "task_list_updated",
+    );
+    expect(taskEvents).toHaveLength(2);
+    expect(taskEvents[0]?.tasks).toEqual([
+      expect.objectContaining({
+        id: "1",
+        title: "Inspect the sidebar",
+        status: "pending",
+        activeForm: "Inspecting the sidebar",
+      }),
+    ]);
+    expect(taskEvents[1]?.tasks).toEqual([
+      expect.objectContaining({ id: "1", status: "in_progress" }),
+    ]);
+    expect(
+      harness.events.some(
+        (event) => event.id === "query-tasks" && event.type === "action_started",
+      ),
+    ).toBe(false);
   });
 
   it("streams long tool output in chunks without truncation", async () => {
