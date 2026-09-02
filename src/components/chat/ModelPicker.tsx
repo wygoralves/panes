@@ -778,7 +778,7 @@ export function ModelPicker({
                 <div className="mp-effort">
                   <div className="mp-effort-head">
                     <span className="mp-effort-title">{t("modelPicker.reasoning")}</span>
-                    <span className="mp-effort-value" key={previewIndex}>
+                    <span className={`mp-effort-value${holo ? " mp-effort-value-holo" : ""}`} key={previewIndex}>
                       {effortDisplayLabel(t, currentEfforts[previewIndex]?.reasoningEffort ?? selectedEffort)}
                     </span>
                   </div>
