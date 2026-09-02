@@ -1,4 +1,6 @@
 import { engineKind } from "../../lib/engineKind";
+import { PixelGrid, formatElapsed, useElapsed } from "../shared/WorkingIndicator";
+import { countDiffStats, looksLikeFilePath, previewDiffLines, type DiffPreviewLine } from "../../lib/diffStats";
 import {
   memo,
   useCallback,
@@ -16,6 +18,7 @@ import {
   AlertTriangle,
   AtSign,
   CornerDownRight,
+  ChevronDown,
   ChevronRight,
   DollarSign,
   ExternalLink,
@@ -26,6 +29,11 @@ import {
   Terminal,
   Shield,
   Loader2,
+  Pencil,
+  Search,
+  Trash2,
+  FileText,
+  GitBranch,
   XCircle,
   Brain,
   Info,
@@ -46,6 +54,7 @@ import type {
   NoticeBlock,
   SteerBlock,
   TaskListBlock,
+  TaskStatus,
   ThinkingBlock,
 } from "../../types";
 import {
@@ -212,6 +221,8 @@ interface MessageBlockHeaderProps {
   meta?: ReactNode;
   expanded?: boolean;
   labelMono?: boolean;
+  /** Lay the label out as a row of verb and chips instead of one truncating line. */
+  labelRow?: boolean;
   tileTone?: "neutral" | "violet" | "amber" | "info";
   onToggle?: () => void;
 }
@@ -222,6 +233,7 @@ function MessageBlockHeader({
   meta,
   expanded = false,
   labelMono = false,
+  labelRow = false,
   tileTone = "neutral",
   onToggle,
 }: MessageBlockHeaderProps) {
@@ -252,7 +264,7 @@ function MessageBlockHeader({
       )}
       <span className={`msg-block-tile${tileToneClass}`}>{icon}</span>
       <span
-        className={`msg-block-label${labelMono ? " msg-block-label--mono" : ""}`}
+        className={`msg-block-label${labelMono ? " msg-block-label--mono" : ""}${labelRow ? " msg-block-label--row" : ""}`}
       >
         {label}
       </span>
@@ -264,10 +276,19 @@ function MessageBlockHeader({
 const actionIcons: Record<string, typeof Terminal> = {
   command: Terminal,
   file_write: FileCode2,
-  file_edit: FileCode2,
-  file_read: FileCode2,
-  file_delete: FileCode2,
+  file_edit: Pencil,
+  file_read: FileText,
+  file_delete: Trash2,
+  search: Search,
+  git: GitBranch,
 };
+
+/** Chip text is mono for commands and paths, sans for queries and prose summaries. */
+function actionChipIsMono(actionType: string, summary: string): boolean {
+  if (actionType === "command" || actionType === "git") return true;
+  if (actionType === "search" || actionType === "other") return false;
+  return looksLikeFilePath(summary);
+}
 
 /* ── Action Group Segmentation ── */
 
@@ -512,41 +533,49 @@ function MessageDiffBlock({
 
 function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStreaming: boolean }) {
   const { t } = useTranslation("chat");
-  const [expanded, setExpanded] = useState(false);
+  // Open while the thought streams, collapsed once it settles; a manual toggle wins.
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
+  const expanded = manualExpanded ?? isStreaming;
   const content = String(block.content ?? "");
+  const elapsed = useElapsed(block.startedAt, isStreaming);
 
   const durationSec = block.durationMs != null ? Math.round(block.durationMs / 1000) : null;
-  const thinkingLabel = isStreaming
-    ? `${t("messageBlocks.thinking")}\u2026`
-    : t("messageBlocks.thought");
-  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
+  const settledLabel =
+    durationSec != null && durationSec > 0
+      ? t("messageBlocks.thoughtFor", { seconds: durationSec })
+      : t("messageBlocks.thought");
+  const toggleExpanded = useCallback(() => setManualExpanded((v) => !(v ?? isStreaming)), [isStreaming]);
 
   return (
     <div>
       <MessageBlockHeader
-        icon={<Brain size={11} />}
-        label={<span className={isStreaming ? "msg-shimmer" : undefined}>{thinkingLabel}</span>}
+        icon={isStreaming ? <PixelGrid tone="violet" /> : <Brain size={11} />}
+        label={
+          isStreaming ? (
+            <span className="msg-shimmer">{t("messageBlocks.thinking")}</span>
+          ) : (
+            <span className="msg-thinking-settled">{settledLabel}</span>
+          )
+        }
         tileTone="violet"
         expanded={expanded}
         onToggle={toggleExpanded}
-        meta={
-          !isStreaming && durationSec != null && durationSec > 0
-            ? t("messageBlocks.thinkingDuration", { seconds: durationSec })
-            : undefined
-        }
+        meta={isStreaming && elapsed != null ? formatElapsed(elapsed) : undefined}
       />
       {expanded && (
         <div className="msg-block-body">
-          <MarkdownContent
-            content={content}
-            streaming={isStreaming}
-            className="prose"
-            style={{
-              fontSize: 12.5,
-              color: "var(--text-2)",
-              minWidth: 0,
-            }}
-          />
+          <div className={isStreaming ? "msg-thinking-tail" : undefined}>
+            <MarkdownContent
+              content={content}
+              streaming={isStreaming}
+              className="prose"
+              style={{
+                fontSize: 12.5,
+                color: "var(--text-2)",
+                minWidth: 0,
+              }}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -567,63 +596,127 @@ function NoticeBlockView({ block }: { block: NoticeBlock }) {
   );
 }
 
+const TASK_RING_SIZE = 20;
+const TASK_RING_RADIUS = (TASK_RING_SIZE - 2) / 2;
+
+function TaskRing({
+  step,
+  status,
+  blocked,
+}: {
+  step: number;
+  status: TaskStatus;
+  blocked: boolean;
+}) {
+  const classes = ["msg-task-ring", `msg-task-ring--${status.replace("_", "-")}`];
+  if (blocked) classes.push("msg-task-ring--blocked");
+  const center = TASK_RING_SIZE / 2;
+  return (
+    <span className={classes.join(" ")} aria-hidden="true">
+      <svg viewBox={`0 0 ${TASK_RING_SIZE} ${TASK_RING_SIZE}`}>
+        {status === "completed" ? (
+          <circle className="msg-task-ring-fill" cx={center} cy={center} r={center - 1} />
+        ) : (
+          <>
+            <circle className="msg-task-ring-track" cx={center} cy={center} r={TASK_RING_RADIUS} />
+            {status === "in_progress" && (
+              <circle className="msg-task-ring-arc" cx={center} cy={center} r={TASK_RING_RADIUS} />
+            )}
+          </>
+        )}
+      </svg>
+      {status === "completed" ? <Check size={11} strokeWidth={3} /> : <span>{step}</span>}
+    </span>
+  );
+}
+
+function TaskProgressRing({ ratio }: { ratio: number }) {
+  const radius = 6;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <svg className="msg-task-progress" viewBox="0 0 16 16" aria-hidden="true">
+      <circle className="track" cx="8" cy="8" r={radius} />
+      <circle
+        className="val"
+        cx="8"
+        cy="8"
+        r={radius}
+        strokeDasharray={circumference}
+        strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, ratio)))}
+      />
+    </svg>
+  );
+}
+
 function TaskListBlockView({ block }: { block: TaskListBlock }) {
   const { t } = useTranslation("chat");
+  const [expanded, setExpanded] = useState(true);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const total = block.tasks.length;
   const completed = block.tasks.filter((task) => task.status === "completed").length;
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
 
   return (
     <section className="msg-task-list" aria-label={t("messageBlocks.tasks.title")}>
-      <header className="msg-task-list-header">
-        <span className="msg-task-list-title">
-          <ListTodo size={15} aria-hidden="true" />
-          {t("messageBlocks.tasks.title")}
-        </span>
-        <span className="msg-task-list-progress">
-          {t("messageBlocks.tasks.progress", { completed, total: block.tasks.length })}
-        </span>
-      </header>
-      {block.explanation ? (
-        <p className="msg-task-list-explanation">{block.explanation}</p>
-      ) : null}
-      <ol className="msg-task-list-items">
-        {block.tasks.map((task) => {
-          const label =
-            task.status === "in_progress" && task.activeForm
-              ? task.activeForm
-              : task.title;
-          return (
-            <li
-              key={task.id}
-              className={`msg-task-list-item is-${task.status.replace("_", "-")}`}
-            >
-              <span className="msg-task-list-state" aria-hidden="true">
-                {task.status === "completed" ? (
-                  <Check size={13} />
-                ) : task.status === "in_progress" ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <Circle size={11} />
-                )}
-              </span>
-              <span className="msg-task-list-copy">
-                <span className="msg-task-list-label">{label}</span>
-                {task.owner || task.blockedBy.length > 0 ? (
-                  <span className="msg-task-list-meta">
-                    {task.owner ? <span>{task.owner}</span> : null}
-                    {task.blockedBy.length > 0 ? (
-                      <span>
-                        {t("messageBlocks.tasks.blockedBy", {
-                          count: task.blockedBy.length,
-                        })}
+      <MessageBlockHeader
+        icon={<ListTodo size={11} />}
+        label={t("messageBlocks.tasks.title")}
+        expanded={expanded}
+        onToggle={toggleExpanded}
+        meta={
+          <>
+            <span>{t("messageBlocks.tasks.progress", { completed, total })}</span>
+            <TaskProgressRing ratio={total > 0 ? completed / total : 0} />
+          </>
+        }
+      />
+      {expanded && (
+        <div className="msg-task-rows">
+          {block.explanation ? (
+            <p className="msg-task-explanation">{block.explanation}</p>
+          ) : null}
+          {block.tasks.map((task, index) => {
+            const blocked = task.blockedBy.length > 0 && task.status !== "completed";
+            const label =
+              task.status === "in_progress" && task.activeForm ? task.activeForm : task.title;
+            const description = task.description?.trim() ?? "";
+            const hasDetail = description.length > 0;
+            const open = hasDetail && openTaskId === task.id;
+            return (
+              <div key={task.id}>
+                <button
+                  type="button"
+                  className={`msg-task is-${task.status.replace("_", "-")}${hasDetail ? "" : " msg-task--static"}`}
+                  aria-expanded={hasDetail ? open : undefined}
+                  onClick={
+                    hasDetail
+                      ? () => setOpenTaskId((current) => (current === task.id ? null : task.id))
+                      : undefined
+                  }
+                >
+                  <TaskRing step={index + 1} status={task.status} blocked={blocked} />
+                  <span className="msg-task-label" title={label}>{label}</span>
+                  <span className="msg-task-meta">
+                    {task.owner ? <span className="msg-task-pill">{task.owner}</span> : null}
+                    {blocked ? (
+                      <span className="msg-task-pill msg-task-pill--warn">
+                        {t("messageBlocks.tasks.blockedBy", { count: task.blockedBy.length })}
                       </span>
                     ) : null}
+                    {hasDetail ? (
+                      <ChevronDown
+                        size={12}
+                        className={`msg-task-chevron${open ? " msg-task-chevron--open" : ""}`}
+                      />
+                    ) : null}
                   </span>
-                ) : null}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
+                </button>
+                {open ? <div className="msg-task-detail">{description}</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -685,8 +778,9 @@ function SteerBlockView({ block }: { block: SteerBlock }) {
 
 /* ── Action Block ── */
 
-function ActionStatusBadge({ status }: { status: string }) {
+function ActionStatusBadge({ status, startedAt }: { status: string; startedAt?: number }) {
   const { t } = useTranslation("chat");
+  const elapsed = useElapsed(startedAt, status === "running");
   if (status === "done") {
     return (
       <span className="msg-block-status">
@@ -696,9 +790,11 @@ function ActionStatusBadge({ status }: { status: string }) {
   }
   if (status === "running") {
     return (
-      <span className="msg-block-status msg-block-status--warning">
-        <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
-        {t("messageBlocks.actionStatus.running")}
+      <span
+        className="msg-block-status msg-block-status--warning"
+        aria-label={t("messageBlocks.actionStatus.running")}
+      >
+        {elapsed != null ? formatElapsed(elapsed) : t("messageBlocks.actionStatus.running")}
       </span>
     );
   }
@@ -805,13 +901,36 @@ function ActionBlockView({
     }
   }, [outputDeferred, outputChunks.length]);
 
+  const diffStats = useMemo(
+    () => (block.result?.diff ? countDiffStats(block.result.diff) : null),
+    [block.result?.diff],
+  );
+  const verb = t(
+    `messageBlocks.${isRunning || isPending ? "actionVerbsActive" : "actionVerbs"}.${block.actionType}`,
+  );
+  const summary = String(block.summary ?? "").trim();
+
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
       <MessageBlockHeader
-        icon={<Icon size={11} />}
-        label={block.summary}
-        labelMono={block.actionType === "command"}
+        icon={isRunning ? <PixelGrid tone="amber" /> : <Icon size={11} />}
+        label={
+          <>
+            <span className="msg-action-verb">{verb}</span>
+            {summary && (
+              <span
+                className={`msg-chip${actionChipIsMono(block.actionType, summary) ? "" : " msg-chip--sans"}`}
+                title={summary}
+              >
+                <span className="msg-chip-text">{summary}</span>
+                {diffStats && diffStats.adds > 0 && <span className="msg-chip-add">+{diffStats.adds}</span>}
+                {diffStats && diffStats.dels > 0 && <span className="msg-chip-del">−{diffStats.dels}</span>}
+              </span>
+            )}
+          </>
+        }
+        labelRow
         expanded={expanded}
         onToggle={canToggle ? toggleExpanded : undefined}
         meta={
@@ -823,7 +942,7 @@ function ActionBlockView({
                 : `${(block.result.durationMs / 1000).toFixed(1)}s`}
             </span>
           )}
-          <ActionStatusBadge status={block.status} />
+          <ActionStatusBadge status={block.status} startedAt={block.startedAt} />
           </>
         }
       />
@@ -985,15 +1104,139 @@ const actionTypeLabels: Record<string, string> = {
   other: "other",
 };
 
+interface ChangedFile {
+  file: string;
+  adds: number;
+  dels: number;
+  diff: string | null;
+}
+
+const FILE_STRIP_LIMIT = 4;
+
+/** Files a finished action group touched, merged by path with their diff stats. */
+function collectChangedFiles(blocks: ActionBlock[]): ChangedFile[] {
+  const byFile = new Map<string, ChangedFile>();
+  for (const block of blocks) {
+    if (block.status !== "done") continue;
+    if (!["file_edit", "file_write", "file_delete"].includes(block.actionType)) continue;
+    const diff = block.result?.diff ?? null;
+    const summary = String(block.summary ?? "").trim();
+    const file = (diff ? extractDiffFilename(diff) : null) ?? (looksLikeFilePath(summary) ? summary : null);
+    if (!file) continue;
+    const stats = diff ? countDiffStats(diff) : { adds: 0, dels: 0 };
+    const existing = byFile.get(file);
+    if (existing) {
+      existing.adds += stats.adds;
+      existing.dels += stats.dels;
+      if (diff) existing.diff = diff;
+    } else {
+      byFile.set(file, { file, ...stats, diff });
+    }
+  }
+  return [...byFile.values()];
+}
+
+function fileBaseName(path: string): string {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+function ChangedFileStrip({
+  files,
+  onOpenDiffFile,
+}: {
+  files: ChangedFile[];
+  onOpenDiffFile?: (filePath: string) => void;
+}) {
+  const { t } = useTranslation("chat");
+  const [showAll, setShowAll] = useState(false);
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const visible = showAll ? files : files.slice(0, FILE_STRIP_LIMIT);
+  const hidden = files.length - visible.length;
+  const preview = previewFile ? files.find((f) => f.file === previewFile) ?? null : null;
+  const previewLines: DiffPreviewLine[] = preview?.diff ? previewDiffLines(preview.diff) : [];
+
+  return (
+    <div
+      className="msg-file-strip"
+      aria-label={t("messageBlocks.actionGroup.filesChanged", { count: files.length })}
+      onMouseLeave={() => setPreviewFile(null)}
+    >
+      {preview && previewLines.length > 0 && (
+        <div className="msg-diff-preview" role="tooltip">
+          <div className="msg-diff-preview-head">
+            <span className="msg-file-chip-name">{preview.file}</span>
+            <span>
+              {preview.adds > 0 && <span className="msg-chip-add">+{preview.adds}</span>}{" "}
+              {preview.dels > 0 && <span className="msg-chip-del">−{preview.dels}</span>}
+            </span>
+          </div>
+          <div className="msg-diff-preview-body">
+            {previewLines.map((line, index) => (
+              <div key={index} className={`msg-diff-preview-line msg-diff-preview-line--${line.tone}`}>
+                <span className="g">{line.tone === "add" ? "+" : line.tone === "del" ? "−" : " "}</span>
+                <span>{line.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {visible.map((entry) => (
+        <button
+          key={entry.file}
+          type="button"
+          className="msg-file-chip"
+          title={onOpenDiffFile ? `${entry.file} · ${t("messageBlocks.openInEditor")}` : entry.file}
+          onMouseEnter={() => setPreviewFile(entry.file)}
+          onFocus={() => setPreviewFile(entry.file)}
+          onBlur={() => setPreviewFile((current) => (current === entry.file ? null : current))}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenDiffFile?.(entry.file);
+          }}
+        >
+          <FileCode2 size={11} />
+          <span className="msg-file-chip-name">{fileBaseName(entry.file)}</span>
+          {entry.adds > 0 && <span className="msg-chip-add">+{entry.adds}</span>}
+          {entry.dels > 0 && <span className="msg-chip-del">−{entry.dels}</span>}
+        </button>
+      ))}
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="msg-file-strip-more"
+          onClick={(event) => {
+            event.stopPropagation();
+            setShowAll(true);
+          }}
+        >
+          {t("messageBlocks.actionGroup.moreFiles", { count: hidden })}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ActionGroupView({
   blocks,
   onLoadActionOutput,
+  onOpenDiffFile,
 }: {
   blocks: ActionBlock[];
   onLoadActionOutput?: (actionId: string) => Promise<void>;
+  onOpenDiffFile?: (filePath: string) => void;
 }) {
   const { t } = useTranslation("chat");
   const [expanded, setExpanded] = useState(false);
+  const settled = useMemo(
+    () => blocks.every((b) => b.status === "done" || b.status === "error"),
+    [blocks],
+  );
+  const changedFiles = useMemo(() => (settled ? collectChangedFiles(blocks) : []), [blocks, settled]);
+  const totalDurationMs = useMemo(
+    () => blocks.reduce((sum, b) => sum + (b.result?.durationMs ?? 0), 0),
+    [blocks],
+  );
 
   const typeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1034,6 +1277,7 @@ function ActionGroupView({
         meta={
           <>
           <span>{typeBreakdown}</span>
+          {totalDurationMs >= 1000 && <span>{formatElapsed(totalDurationMs).replace(/\.\ds$/, "s")}</span>}
           {allErrored ? (
             <XCircle size={11} style={{ color: "var(--danger)", flexShrink: 0 }} />
           ) : hasAnyError ? (
@@ -1067,6 +1311,9 @@ function ActionGroupView({
             ))}
         </div>
       </div>
+      {changedFiles.length > 0 && (
+        <ChangedFileStrip files={changedFiles} onOpenDiffFile={onOpenDiffFile} />
+      )}
     </div>
   );
 }
@@ -1740,6 +1987,7 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
                       key={`action-group:${first.actionId}:${last.actionId}`}
                       blocks={inner.blocks}
                       onLoadActionOutput={onLoadActionOutput}
+                      onOpenDiffFile={onOpenDiffFile}
                     />
                   );
                 }
@@ -1796,6 +2044,7 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
               key={`action-group:${first.actionId}:${last.actionId}`}
               blocks={segment.blocks}
               onLoadActionOutput={onLoadActionOutput}
+              onOpenDiffFile={onOpenDiffFile}
             />
           );
         }

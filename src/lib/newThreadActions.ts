@@ -1,11 +1,14 @@
 import { t } from "../i18n";
+import { isDraftThread } from "../components/sidebar/statusGrouping";
 import { useChatStore } from "../stores/chatStore";
+import { hasDraftContent, useComposerDraftStore } from "../stores/composerDraftStore";
 import { useSidebarListModeStore } from "../stores/sidebarListModeStore";
 import { useSidebarViewStore } from "../stores/sidebarViewStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useThreadStore } from "../stores/threadStore";
 import { useUiStore } from "../stores/uiStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import type { Thread } from "../types";
 import { resolveNewThreadTargetLayoutMode } from "./newThreadLayout";
 import {
   applyWorkspaceLayoutMode,
@@ -29,6 +32,17 @@ export function resolveNewThreadWorkspaceId(): string | null {
   }
 
   return workspaceStore.activeWorkspaceId;
+}
+
+/** An untouched draft in the target project is reused instead of stacking a
+ * second empty thread next to it. A draft the user has typed into is theirs:
+ * new thread leaves it alone and starts fresh. */
+export function findReusableDraftThread(threads: Thread[]): Thread | null {
+  const prompts = useComposerDraftStore.getState().promptByThread;
+  return (
+    threads.find((thread) => isDraftThread(thread) && !hasDraftContent(prompts[thread.id])) ??
+    null
+  );
 }
 
 export async function createAndActivateWorkspaceThread(
@@ -57,16 +71,24 @@ export async function createAndActivateWorkspaceThread(
   applyWorkspaceLayoutMode(workspaceId, targetLayoutMode);
   useWorkspaceStore.getState().setActiveRepo(null, { remember: false });
 
-  const threadId = await useThreadStore.getState().createThread({
-    workspaceId,
-    repoId: null,
-    title: t("app:sidebar.newThreadTitle"),
-  });
+  const reusable = findReusableDraftThread(
+    useThreadStore.getState().threadsByWorkspace[workspaceId] ?? [],
+  );
+  const threadId =
+    reusable?.id ??
+    (await useThreadStore.getState().createThread({
+      workspaceId,
+      repoId: null,
+      title: t("app:sidebar.newThreadTitle"),
+    }));
 
   if (!threadId) {
     return null;
   }
 
+  if (reusable) {
+    useThreadStore.getState().setActiveThread(reusable.id);
+  }
   await useChatStore.getState().setActiveThread(threadId);
   return threadId;
 }

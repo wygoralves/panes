@@ -11,6 +11,7 @@ import type { Thread } from "../types";
 import { useChatComposerStore } from "./chatComposerStore";
 import { useEngineStore } from "./engineStore";
 import { useOnboardingStore } from "./onboardingStore";
+import { useComposerDraftStore } from "./composerDraftStore";
 import { useThreadReadStore } from "./threadReadStore";
 
 interface EnsureThreadInput {
@@ -57,6 +58,9 @@ interface ThreadState {
   ) => Promise<boolean>;
   markThreadReadIfActive: (threadId: string) => boolean;
   removeThread: (threadId: string) => Promise<void>;
+  /** Delete a thread outright. Meant for drafts nothing was ever sent on,
+   * which have nothing worth keeping in the archive. */
+  discardThread: (threadId: string) => Promise<void>;
   restoreThread: (threadId: string) => Promise<void>;
   forkCodexThread: (threadId: string) => Promise<Thread | null>;
   rollbackCodexThread: (threadId: string, numTurns: number) => Promise<Thread | null>;
@@ -451,6 +455,7 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       await ipc.archiveThread(threadId);
       // An archived thread has no row left to be unread in.
       useThreadReadStore.getState().forgetThread(threadId);
+      useComposerDraftStore.getState().clearPrompt(threadId);
       let archivedThread: Thread | null = null;
       let archivedWorkspaceId: string | null = null;
       const nextThreadsByWorkspace = Object.entries(get().threadsByWorkspace).reduce<
@@ -483,6 +488,30 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
           archivedThreadsByWorkspace,
           threads,
           activeThreadId: active === threadId ? null : active,
+          loading: false,
+        };
+      });
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+    }
+  },
+  discardThread: async (threadId) => {
+    set({ loading: true, error: undefined });
+    try {
+      await ipc.deleteThread(threadId);
+      useThreadReadStore.getState().forgetThread(threadId);
+      useComposerDraftStore.getState().clearPrompt(threadId);
+      set((state) => {
+        const threadsByWorkspace = Object.fromEntries(
+          Object.entries(state.threadsByWorkspace).map(([workspaceId, threads]) => [
+            workspaceId,
+            threads.filter((thread) => thread.id !== threadId),
+          ]),
+        );
+        return {
+          threadsByWorkspace,
+          threads: flattenThreadsByWorkspace(threadsByWorkspace),
+          activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
           loading: false,
         };
       });

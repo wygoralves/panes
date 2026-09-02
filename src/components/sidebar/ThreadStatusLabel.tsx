@@ -10,6 +10,7 @@ interface Props {
 }
 
 const LABEL_KEY_BY_STATUS: Record<ThreadDisplayStatus, string | null> = {
+  draft: "app:sidebar.statusLabelDraft",
   working: "app:sidebar.statusLabelWorking",
   approval: "app:sidebar.statusLabelApproval",
   failed: "app:sidebar.statusLabelFailed",

@@ -1,14 +1,4 @@
 {
-  "thinkingVariants": {
-    "thinking": "Pensando",
-    "reasoning": "Raciocinando",
-    "analyzing": "Analisando",
-    "exploring": "Explorando",
-    "researching": "Pesquisando",
-    "generating": "Gerando",
-    "reading": "Lendo",
-    "considering": "Considerando"
-  },
   "modelPicker": {
     "selectModel": "Selecionar modelo",
     "runtimeConfiguration": "Configuração de runtime",
@@ -395,7 +385,6 @@
     "workspaceChatTitle": "Chat do workspace",
     "repoChatTitle": "Chat de {{name}}",
     "renameThread": "Clique para renomear a thread",
-    "respondInCard": "Responda no card de aprovação abaixo.",
     "respondInCustomCard": "Esta solicitação exige JSON personalizado. Responda no card de aprovação abaixo.",
     "claudeApprovalUnsupported": "Esse tipo de approval do Claude ainda não é suportado no Panes.",
     "allowWithPolicy": "Permitir + política",
@@ -430,7 +419,8 @@
     "draftNoProjectsFound": "Nenhum projeto encontrado",
     "placeholders": {
       "plan": "Descreva o que você quer planejar...",
-      "chat": "Peça alterações de continuação"
+      "chat": "Peça alterações de continuação",
+      "draft": "Descreva a mudança que você quer"
     },
     "repoAccess": "Acesso ao repo",
     "workspaceAccess": "Acesso ao workspace",
@@ -457,7 +447,6 @@
     },
     "approvalActions": {
       "allow": "Permitir",
-      "answerBelow": "Responder abaixo",
       "cancel": "Cancelar",
       "deny": "Negar",
       "allowSession": "Permitir sessão",
@@ -504,17 +493,23 @@
       "speedChangeFailed": "Não foi possível alterar o nível de serviço",
       "retry": "Tentar novamente"
     },
-    "approvalBannerTitleCount_one": "{{count}} aprovação pendente",
-    "approvalBannerTitleCount_other": "{{count}} aprovações pendentes",
     "editResend": "Editar e reenviar",
-    "attachShort": "Anexar"
+    "attachShort": "Anexar",
+    "approvalDeck": {
+      "position": "{{index}} / {{count}}",
+      "previous": "Solicitação anterior",
+      "next": "Próxima solicitação",
+      "question": "Pergunta",
+      "request": "Aprovação"
+    }
   },
   "messageBlocks": {
     "diffFallback": "diff ({{scope}})",
     "parsing": "Analisando...",
     "parsingDiff": "Analisando diff...",
     "noChanges": "Sem alterações",
-    "thinking": "Raciocínio",
+    "thinking": "Pensando",
+    "thoughtFor": "Pensou por {{seconds}}s",
     "actionStatus": {
       "done": "Concluído",
       "running": "Em andamento",
@@ -529,8 +524,8 @@
     },
     "outputTruncated": "Mostrando apenas a saída mais recente da ação (blocos anteriores truncados por desempenho).",
     "actionGroup": {
-      "summary_one": "{{count}} ação",
-      "summary_other": "{{count}} ações",
+      "summary_one": "{{count}} chamada de ferramenta",
+      "summary_other": "{{count}} chamadas de ferramenta",
       "errorCount_one": "{{count}} erro",
       "errorCount_other": "{{count}} erros",
       "types": {
@@ -550,7 +545,30 @@
         "search_other": "{{count}} buscas",
         "other_one": "{{count}} outro",
         "other_other": "{{count}} outros"
-      }
+      },
+      "moreFiles": "+{{count}} mais",
+      "filesChanged_one": "{{count}} arquivo alterado",
+      "filesChanged_other": "{{count}} arquivos alterados"
+    },
+    "actionVerbs": {
+      "command": "Executou",
+      "file_read": "Leu",
+      "file_write": "Escreveu",
+      "file_edit": "Editou",
+      "file_delete": "Excluiu",
+      "git": "Git",
+      "search": "Pesquisou",
+      "other": "Chamou"
+    },
+    "actionVerbsActive": {
+      "command": "Executando",
+      "file_read": "Lendo",
+      "file_write": "Escrevendo",
+      "file_edit": "Editando",
+      "file_delete": "Excluindo",
+      "git": "Git",
+      "search": "Pesquisando",
+      "other": "Chamando"
     },
     "approval": {
       "decision": {
@@ -596,12 +614,16 @@
       "sendAnswers": "Enviar respostas"
     },
     "thought": "Pensou",
-    "thinkingDuration": "{{seconds}}s",
     "output": "saída",
     "copyOutput": "Copiar saída",
     "expandOutput": "Expandir saída",
     "collapseOutput": "Recolher saída",
-    "openInEditor": "Abrir no editor"
+    "openInEditor": "Abrir no editor",
+    "tasks": {
+      "title": "Tarefas",
+      "progress": "{{completed}} de {{total}}",
+      "blockedBy": "bloqueada por {{count}}"
+    }
   },
   "status": {
     "now": "agora",

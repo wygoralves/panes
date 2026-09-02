@@ -308,9 +308,13 @@ export default function MarkdownContent({
     };
   }, [cacheKey, content, hasStreamed, streaming, workerEligible]);
 
+  const wrapperClassName = streaming
+    ? `${className ? `${className} ` : ""}md-streaming`
+    : className;
+
   if (showWorkerPlaceholder) {
     return (
-      <div className={className} style={style}>
+      <div className={wrapperClassName} style={style}>
         <pre
           style={{
             margin: 0,
@@ -331,7 +335,7 @@ export default function MarkdownContent({
 
   if (html === null) {
     return (
-      <div className={className} style={style}>
+      <div className={wrapperClassName} style={style}>
         <pre
           style={{
             margin: 0,
@@ -348,7 +352,7 @@ export default function MarkdownContent({
 
   return (
     <div
-      className={className}
+      className={wrapperClassName}
       style={style}
       onClickCapture={handleMarkdownLinkClick}
       dangerouslySetInnerHTML={{ __html: html }}

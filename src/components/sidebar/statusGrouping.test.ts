@@ -6,6 +6,7 @@ import {
   getSidebarThreadOrder,
   getVisibleThreads,
   groupThreadsByStatus,
+  groupThreadsForInbox,
   hasUnseenCompletion,
   resolveThreadDisplayStatus,
   resolveWorkingStartedAt,
@@ -32,6 +33,61 @@ function thread(id: string, status: ThreadStatus = "idle"): Thread {
     settledAt: null,
   };
 }
+
+describe("groupThreadsForInbox", () => {
+  it("keeps an unsent thread as a draft above everything else", () => {
+    const draft = { ...thread("draft", "idle"), messageCount: 0 };
+    const idle = { ...thread("idle", "idle"), messageCount: 3 };
+    const approval = thread("approval", "awaiting_approval");
+
+    const groups = groupThreadsForInbox([idle, approval, draft], {}, "draft");
+
+    expect(groups.drafts.map((item) => item.id)).toEqual(["draft"]);
+    expect(groups.needsYou.map((item) => item.id)).toEqual(["approval"]);
+    expect(groups.done.map((item) => item.id)).toEqual(["idle"]);
+  });
+
+
+  it("puts approvals and failures first, oldest waiting on top", () => {
+    const approval = {
+      ...thread("approval", "awaiting_approval"),
+      lastActivityAt: "2026-09-01T12:10:00.000Z",
+    };
+    const failed = {
+      ...thread("failed", "error"),
+      lastActivityAt: "2026-09-01T12:05:00.000Z",
+    };
+    const working = thread("working", "streaming");
+    const ready = thread("ready", "completed");
+    const settled = { ...thread("settled", "completed"), settledAt: "2026-09-01T13:00:00.000Z" };
+
+    const groups = groupThreadsForInbox([approval, ready, working, settled, failed], {}, null);
+
+    expect(groups.needsYou.map((item) => item.id)).toEqual(["failed", "approval"]);
+    expect(groups.working.map((item) => item.id)).toEqual(["working"]);
+    expect(groups.done.map((item) => item.id)).toEqual(["ready"]);
+    expect(groups.settled.map((item) => item.id)).toEqual(["settled"]);
+  });
+
+  it("orders finished threads by most recent activity, unread or not", () => {
+    const older = { ...thread("older", "completed"), lastActivityAt: "2026-09-01T11:00:00.000Z" };
+    const newer = { ...thread("newer", "completed"), lastActivityAt: "2026-09-01T12:00:00.000Z" };
+
+    const groups = groupThreadsForInbox([older, newer], { older: "2026-09-01T10:00:00.000Z" }, null);
+
+    expect(groups.done.map((item) => item.id)).toEqual(["newer", "older"]);
+  });
+
+  it("keeps the open thread out of Needs you only when its state is a completion", () => {
+    const approval = thread("approval", "awaiting_approval");
+    const done = { ...thread("done", "completed"), lastActivityAt: "2026-09-01T12:00:00.000Z" };
+
+    const groups = groupThreadsForInbox([approval, done], { done: "2026-09-01T11:00:00.000Z" }, "approval");
+
+    expect(groups.needsYou.map((item) => item.id)).toEqual(["approval"]);
+    expect(groups.done.map((item) => item.id)).toEqual(["done"]);
+  });
+});
 
 describe("groupThreadsByStatus", () => {
   it("groups threads by manual settlement only", () => {

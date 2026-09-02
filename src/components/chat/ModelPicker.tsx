@@ -24,6 +24,41 @@ import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { EngineHealth, EngineInfo, EngineModel } from "../../types";
 import type { CodexServiceTierValue } from "./CodexConfigPicker";
 
+const POPOVER_MAX_HEIGHT = 560;
+const POPOVER_VIEWPORT_GAP = 12;
+const POPOVER_TRIGGER_GAP = 6;
+
+interface PopoverPosition {
+  top?: number;
+  bottom?: number;
+  left: number;
+  maxHeight: number;
+}
+
+/**
+ * Open below the trigger when the list fits there, otherwise above it, and cap
+ * the height to the side that was chosen so the list scrolls instead of
+ * leaving the viewport (the composer sits mid-screen on a new thread).
+ */
+export function placePopover(
+  rect: Pick<DOMRect, "top" | "bottom">,
+  viewportHeight: number,
+  contentHeight = POPOVER_MAX_HEIGHT,
+): Omit<PopoverPosition, "left"> {
+  const above = rect.top - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_GAP;
+  const below = viewportHeight - rect.bottom - POPOVER_TRIGGER_GAP - POPOVER_VIEWPORT_GAP;
+  const needed = Math.min(POPOVER_MAX_HEIGHT, Math.max(120, contentHeight));
+  // Below is the natural direction. It flips up only when the list does not
+  // fit below and there is more room above, which is the case for a composer
+  // docked at the bottom of a conversation.
+  const openAbove = below < needed && above > below;
+  const room = Math.max(120, openAbove ? above : below);
+  const maxHeight = Math.min(POPOVER_MAX_HEIGHT, room);
+  return openAbove
+    ? { bottom: viewportHeight - rect.top + POPOVER_TRIGGER_GAP, maxHeight }
+    : { top: rect.bottom + POPOVER_TRIGGER_GAP, maxHeight };
+}
+
 interface ModelPickerProps {
   engines: EngineInfo[];
   health: Record<string, EngineHealth>;
@@ -362,7 +397,7 @@ export function ModelPicker({
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(false);
-  const [pos, setPos] = useState({ bottom: 0, left: 0 });
+  const [pos, setPos] = useState<PopoverPosition>({ bottom: 0, left: 0, maxHeight: POPOVER_MAX_HEIGHT });
   const ensureEngineHealth = useEngineStore((state) => state.ensureHealth);
   const favoriteKeys = useModelFavoritesStore((state) => state.favorites);
   const toggleFavorite = useModelFavoritesStore((state) => state.toggleFavorite);
@@ -397,10 +432,8 @@ export function ModelPicker({
     const rect = triggerRef.current.getBoundingClientRect();
     const popoverWidth = Math.min(340, window.innerWidth - 16);
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
-    setPos({
-      bottom: window.innerHeight - rect.top + 6,
-      left,
-    });
+    const contentHeight = popoverRef.current?.scrollHeight ?? POPOVER_MAX_HEIGHT;
+    setPos({ ...placePopover(rect, window.innerHeight, contentHeight), left });
   }, [open]);
 
   useEffect(() => {
@@ -708,8 +741,10 @@ export function ModelPicker({
           className="mp-popover"
           style={{
             position: "fixed",
+            top: pos.top,
             bottom: pos.bottom,
             left: pos.left,
+            maxHeight: pos.maxHeight,
           }}
           role="dialog"
           aria-label={t("modelPicker.runtimeConfiguration")}

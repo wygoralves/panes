@@ -318,11 +318,8 @@ function tokenizeFences(markdown: string): { source: string; fences: FenceToken[
       code += lines[scanIndex];
     }
 
-    if (closingIndex < 0) {
-      plainBuffer += lines.slice(lineIndex).join("");
-      break;
-    }
-
+    // An unclosed fence (a code block still streaming in) renders the same way
+    // a closed one does, so finishing the block does not restyle it.
     if (plainBuffer) {
       source += escapeNonFenceHtml(plainBuffer);
       plainBuffer = "";
@@ -337,6 +334,9 @@ function tokenizeFences(markdown: string): { source: string; fences: FenceToken[
     });
 
     fenceIndex += 1;
+    if (closingIndex < 0) {
+      break;
+    }
     lineIndex = closingIndex;
   }
 
