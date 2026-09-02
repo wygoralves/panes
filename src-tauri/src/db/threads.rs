@@ -837,7 +837,9 @@ mod tests {
         start_thread_turn(&db, &thread.id).unwrap();
 
         let started = get_thread(&db, &thread.id).unwrap().unwrap();
-        let stamp = started.turn_started_at.expect("expected a turn start stamp");
+        let stamp = started
+            .turn_started_at
+            .expect("expected a turn start stamp");
         assert!(
             stamp.ends_with('Z') && stamp.contains('T'),
             "expected an ISO UTC stamp, got {stamp}"
