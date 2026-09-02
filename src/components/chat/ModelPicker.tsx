@@ -353,6 +353,8 @@ export function ModelPicker({
   const [query, setQuery] = useState("");
   const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
   const [dragPercent, setDragPercent] = useState<number | null>(null);
+  const [holoHover, setHoloHover] = useState(false);
+  const effortRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -775,7 +777,24 @@ export function ModelPicker({
           {currentEfforts.length > 0 || isCodex ? (
             <div className="mp-footer">
               {currentEfforts.length > 0 ? (
-                <div className="mp-effort">
+                <div
+                  ref={effortRef}
+                  className={`mp-effort${holo ? " mp-effort-holo" : ""}${holoHover ? " mp-effort-holo-hover" : ""}`}
+                  onPointerMove={(event) => {
+                    if (!holo || !effortRef.current) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const fraction = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0.5;
+                    effortRef.current.style.setProperty(
+                      "--mp-holo-x",
+                      `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`,
+                    );
+                    if (!holoHover) setHoloHover(true);
+                  }}
+                  onPointerLeave={() => {
+                    effortRef.current?.style.removeProperty("--mp-holo-x");
+                    setHoloHover(false);
+                  }}
+                >
                   <div className="mp-effort-head">
                     <span className="mp-effort-title">{t("modelPicker.reasoning")}</span>
                     <span className={`mp-effort-value${holo ? " mp-effort-value-holo" : ""}`} key={previewIndex}>
