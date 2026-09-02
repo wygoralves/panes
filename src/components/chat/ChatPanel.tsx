@@ -1412,10 +1412,12 @@ function MessageRowView({
             <div className="msg-turn-header">
               {getHarnessIcon(engineKind(assistantEngineId), 11)}
               <span className="msg-turn-header-label">{assistantLabel}</span>
-              <span className="msg-turn-actions">
-                {messageTimestamp && <span style={{ padding: "0 2px" }}>{messageTimestamp}</span>}
-                <MessageCopyButton message={message} />
-              </span>
+              {message.status !== "streaming" && (
+                <span className="msg-turn-actions">
+                  {messageTimestamp && <span style={{ padding: "0 2px" }}>{messageTimestamp}</span>}
+                  <MessageCopyButton message={message} />
+                </span>
+              )}
             </div>
           )}
           {hasAssistantContent ? (

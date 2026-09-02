@@ -36,14 +36,16 @@ describe("markdownParserCoreInternals.isFenceClosing", () => {
 });
 
 describe("renderMarkdownToHtml", () => {
-  it("highlights closed fences and keeps unclosed fences as plain markdown input", () => {
+  it("highlights closed and unclosed fences the same way so a streaming block does not restyle when it closes", () => {
     const highlighted = renderMarkdownToHtml("```js\nconst value = 1;\n```\n");
     expect(highlighted).toContain("class=\"hljs language-js\"");
     expect(highlighted).toContain("const");
 
     const unclosed = renderMarkdownToHtml("```js\nconst value = 1;\n");
-    expect(unclosed).toContain("const value = 1");
+    expect(unclosed).toContain("class=\"hljs language-js\"");
+    expect(unclosed).toContain("value");
     expect(unclosed).not.toContain("panes-code-block");
+    expect(unclosed).not.toContain("```");
   });
 
   it("renders blockquotes and angle-bracket autolinks", () => {
