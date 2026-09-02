@@ -10399,17 +10399,8 @@ label.mp-footer-row {
   transition: --mp-holo-x 480ms var(--ease-out);
 }
 
-.mp-effort-holo:not(.mp-effort-holo-hover) {
-  animation: mp-holo-idle 12s ease-in-out infinite alternate;
-}
-
 .mp-effort-holo-hover {
   transition: none;
-}
-
-@keyframes mp-holo-idle {
-  from { --mp-holo-x: 28%; }
-  to { --mp-holo-x: 72%; }
 }
 
 .mp-slider-fill::before,
@@ -10586,7 +10577,6 @@ label.mp-footer-row {
 
   .mp-effort-holo,
   .mp-effort-value-holo {
-    animation: none;
     transition: none;
   }
 }
