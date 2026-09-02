@@ -5476,11 +5476,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               details,
             );
             const isClaudeApproval = engineKind(activeThread?.engineId) === "claude";
+            // Dynamic tool calls and MCP elicitations need their own response
+            // shape, so a generic decline/cancel would be an invalid answer.
             const supportsDecline =
               canUseDecisionActions &&
+              !requiresCustomPayload &&
               activeThreadApprovalDecisionCapabilities.includes("decline");
             const supportsCancel =
               canUseDecisionActions &&
+              !requiresCustomPayload &&
               activeThreadApprovalDecisionCapabilities.includes("cancel");
             const supportsSession =
               activeThreadApprovalDecisionCapabilities.includes("accept_for_session");
