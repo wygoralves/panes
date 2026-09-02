@@ -5129,9 +5129,9 @@ button, input, textarea, select {
 }
 
 .sb-status-shelf {
-  margin-top: 6px;
-  padding-top: 2px;
-  border-top: 1px solid var(--wash-06);
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--divider);
 }
 
 .sb-status-section-label {
@@ -5187,8 +5187,8 @@ button, input, textarea, select {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 5px 8px;
-  border-radius: var(--radius-sm);
+  padding: 6px 10px 7px;
+  border-radius: 7px;
   cursor: pointer;
   color: var(--text-2);
   transition: background var(--duration-fast) var(--ease-out);
@@ -5196,7 +5196,7 @@ button, input, textarea, select {
 }
 
 .sb-status-row:hover {
-  background: var(--wash-03);
+  background: var(--wash-04);
 }
 
 .sb-status-row:focus-visible {
@@ -5205,15 +5205,54 @@ button, input, textarea, select {
 }
 
 .sb-status-row-active {
-  background: rgba(var(--accent-rgb), 0.06);
+  background: var(--wash-06);
 }
 
-.sb-status-project-mark {
-  width: 18px;
-  height: 18px;
+.sb-status-row-active:hover {
+  background: var(--wash-07);
+}
+
+/* State glyph: the row's status at a glance, before the title */
+.sb-status-glyph {
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
-  margin-top: 1px;
-  transition: opacity var(--duration-fast) var(--ease-out);
+  margin-top: 2px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.sb-status-glyph-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.sb-status-glyph[data-status="approval"] .sb-status-glyph-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
+.sb-status-glyph[data-status="failed"] .sb-status-glyph-dot {
+  background: var(--danger);
+}
+
+.sb-status-glyph[data-status="done"] .sb-status-glyph-dot {
+  background: var(--success-indicator);
+}
+
+.sb-status-glyph-ring {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  border-right-color: transparent;
+  animation: spin 1s linear infinite;
+}
+
+.sb-status-row-settled .sb-status-glyph {
+  opacity: 0.55;
 }
 
 .sb-status-main {
@@ -5221,7 +5260,7 @@ button, input, textarea, select {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .sb-status-top {
@@ -5247,13 +5286,13 @@ button, input, textarea, select {
   color: var(--text-1);
 }
 
-/* Emphasis mirrors the project list: in-flight and settled rows recede,
-   unread and failed rows carry weight, the open thread keeps the accent. */
-.sb-status-row[data-status="working"] .sb-status-title,
-.sb-status-row[data-status="approval"] .sb-status-title {
+/* Emphasis: in-flight rows recede, unread and failed rows carry weight, the
+   open thread reads as position, not state. */
+.sb-status-row[data-status="working"] .sb-status-title {
   color: var(--text-3);
 }
 
+.sb-status-row[data-status="approval"] .sb-status-title,
 .sb-status-row[data-unread="true"] .sb-status-title,
 .sb-status-row[data-status="failed"] .sb-status-title {
   color: var(--text-1);
@@ -5263,28 +5302,35 @@ button, input, textarea, select {
 .sb-status-row-active .sb-status-title,
 .sb-status-row-active:hover .sb-status-title {
   font-weight: 500;
-  color: var(--accent);
+  color: var(--text-1);
 }
 
 .sb-status-row-settled .sb-status-title {
   color: var(--text-3);
 }
 
-.sb-status-row-settled .sb-status-project-mark {
-  opacity: 0.6;
-}
-
-.sb-status-row-settled:hover .sb-status-project-mark,
-.sb-status-row-settled:focus-within .sb-status-project-mark {
-  opacity: 1;
-}
-
-.sb-status-context {
+.sb-status-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 10.5px;
   color: var(--text-3);
-  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.sb-status-meta-project {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-status-meta-engine {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 .sb-status-trailing {
@@ -5293,6 +5339,140 @@ button, input, textarea, select {
   justify-content: flex-end;
   gap: 4px;
   flex-shrink: 0;
+}
+
+/* Inbox sections */
+.sb-inbox-section + .sb-inbox-section {
+  margin-top: 6px;
+}
+
+.sb-inbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 18px 0 18px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.sb-inbox-label-count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.sb-status-section-label .sb-inbox-label-count {
+  margin-left: 2px;
+}
+
+/* The quiet line: nothing needs a person and nothing is running */
+.sb-inbox-quiet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px 6px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.sb-inbox-quiet-mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--success-surface);
+  color: var(--success-indicator);
+}
+
+/* Empty states: a mark, one bold line, one sentence, the action that fixes it */
+.sb-inbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 28px 18px 22px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sb-inbox-empty-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  background: var(--wash-04);
+  margin-bottom: 6px;
+}
+
+.sb-inbox-empty-title {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.sb-inbox-empty-body {
+  max-width: 200px;
+}
+
+.sb-inbox-empty-action {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+
+.sb-inbox-empty-action:hover {
+  background: var(--wash-04);
+  border-color: var(--border-active);
+  color: var(--text-1);
+}
+
+.sb-inbox-empty-action kbd {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.sb-filter-clear {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-3);
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out);
+}
+
+.sb-filter-clear:hover {
+  color: var(--text-1);
+  background: var(--wash-05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-status-glyph-ring {
+    animation: none;
+    border-right-color: var(--accent);
+    opacity: 0.6;
+  }
 }
 
 /* ── Chat Input ── */

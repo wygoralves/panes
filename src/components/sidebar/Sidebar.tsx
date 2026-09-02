@@ -368,6 +368,16 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     return thread.title?.trim() || t("app:sidebar.untitledThread");
   }
 
+  function onNewThreadFromSidebar() {
+    const targetProjectId = resolveNewThreadWorkspaceId();
+    const activeProject = projects.find(
+      (project) => project.workspace.id === targetProjectId,
+    );
+    if (activeProject) {
+      void onCreateProjectThread(activeProject.workspace);
+    }
+  }
+
   return (
     <div
       style={{
@@ -394,15 +404,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           <button
             type="button"
             className="sb-nav-item"
-            onClick={() => {
-              const targetProjectId = resolveNewThreadWorkspaceId();
-              const activeProject = projects.find(
-                (project) => project.workspace.id === targetProjectId,
-              );
-              if (activeProject) {
-                void onCreateProjectThread(activeProject.workspace);
-              }
-            }}
+            onClick={onNewThreadFromSidebar}
           >
             <Plus size={16} strokeWidth={1.5} style={{ flexShrink: 0 }} />
             {t("app:sidebar.newThread")}
@@ -472,6 +474,15 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                 }
                 title={t("app:sidebar.filterByProject")}
               />
+              {projectFilterId && (
+                <button
+                  type="button"
+                  className="sb-filter-clear"
+                  onClick={() => setProjectFilterId(null)}
+                >
+                  {t("app:sidebar.clearFilter")}
+                </button>
+              )}
             </div>
           ) : (
             <span>{t("app:sidebar.projects")}</span>
@@ -489,16 +500,30 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         </div>
 
         {projects.length === 0 ? (
-          <div className="sb-empty">
-            {t("app:sidebar.noWorkspaces")}
-            <br />
-            {t("app:sidebar.openFolder")}
+          <div className="sb-inbox-empty">
+            <span className="sb-inbox-empty-mark">
+              <FolderGit2 size={14} strokeWidth={1.6} />
+            </span>
+            <span className="sb-inbox-empty-title">{t("app:sidebar.noProjectsTitle")}</span>
+            <span className="sb-inbox-empty-body">{t("app:sidebar.noProjectsBody")}</span>
+            <button
+              type="button"
+              className="sb-inbox-empty-action"
+              onClick={() => void onOpenFolder()}
+            >
+              <Plus size={12} strokeWidth={1.8} />
+              {t("app:sidebar.openFolderAction")}
+            </button>
           </div>
         ) : sidebarListMode === "status" ? (
           <StatusThreadList
             threads={statusThreads}
             workspaces={workspaces}
             activeThreadId={activeThreadId}
+            filteredWorkspace={
+              workspaces.find((workspace) => workspace.id === projectFilterId) ?? null
+            }
+            onNewThread={onNewThreadFromSidebar}
             onSelectThread={(thread) => void onSelectThread(thread)}
             onArchiveThread={onDeleteThread}
             onSettleThread={onSettleThread}

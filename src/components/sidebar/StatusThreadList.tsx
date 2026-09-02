@@ -1,27 +1,30 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Archive,
+  Check,
   ChevronDown,
   ChevronRight,
   CircleCheck,
+  MessageSquare,
+  Plus,
   RotateCcw,
 } from "lucide-react";
+import { engineKind } from "../../lib/engineKind";
 import { formatRelativeTime } from "../../lib/formatters";
 import { canSettleThread } from "../../lib/threadActions";
 import { useSidebarViewStore } from "../../stores/sidebarViewStore";
 import { useThreadReadStore } from "../../stores/threadReadStore";
+import { getHarnessIcon } from "../shared/HarnessLogos";
 import { InlineThreadTitle } from "./InlineThreadTitle";
-import { ProjectIcon } from "./ProjectIcon";
 import { ThreadStatusLabel } from "./ThreadStatusLabel";
 import {
   getVisibleThreads,
-  groupThreadsByStatus,
+  groupThreadsForInbox,
   resolveThreadDisplayStatus,
   resolveWorkingStartedAt,
-  sortActiveThreads,
-  sortSettledThreads,
-  type StatusSectionId,
+  type InboxSectionId,
+  type ThreadDisplayStatus,
 } from "./statusGrouping";
 import type { Thread, Workspace } from "../../types";
 
@@ -32,24 +35,48 @@ interface Props {
   threads: Thread[];
   workspaces: Workspace[];
   activeThreadId: string | null;
+  /** The project the list is filtered to, when it is. */
+  filteredWorkspace: Workspace | null;
   onSelectThread: (thread: Thread) => void;
   onArchiveThread: (thread: Thread) => void;
   onSettleThread: (thread: Thread) => Promise<boolean>;
   onUnsettleThread: (thread: Thread) => Promise<boolean>;
   onRenameThread: (thread: Thread, title: string) => Promise<boolean>;
+  onNewThread: () => void;
   getThreadLabel: (thread: Thread) => string;
   getWorkspaceLabel: (workspace: Workspace) => string;
+}
+
+/** The state glyph at the head of a row: a halo dot for an approval, a red
+ * dot for a failure, a ring while working, a green dot for an unread
+ * completion, and a quiet check for everything that rests. */
+function StatusGlyph({ status }: { status: ThreadDisplayStatus | "settled" }) {
+  let inner: ReactNode;
+  if (status === "working") {
+    inner = <span className="sb-status-glyph-ring" />;
+  } else if (status === "approval" || status === "failed" || status === "done") {
+    inner = <span className="sb-status-glyph-dot" />;
+  } else {
+    inner = <Check size={11} strokeWidth={2} />;
+  }
+  return (
+    <span className="sb-status-glyph" data-status={status} aria-hidden="true">
+      {inner}
+    </span>
+  );
 }
 
 export function StatusThreadList({
   threads,
   workspaces,
   activeThreadId,
+  filteredWorkspace,
   onSelectThread,
   onArchiveThread,
   onSettleThread,
   onUnsettleThread,
   onRenameThread,
+  onNewThread,
   getThreadLabel,
   getWorkspaceLabel,
 }: Props) {
@@ -72,13 +99,10 @@ export function StatusThreadList({
     setSettledVisibleCount(SETTLED_INITIAL_COUNT);
   }
 
-  const groups = useMemo(() => {
-    const grouped = groupThreadsByStatus(threads);
-    return {
-      working: sortActiveThreads(grouped.working),
-      settled: sortSettledThreads(grouped.settled),
-    };
-  }, [threads]);
+  const groups = useMemo(
+    () => groupThreadsForInbox(threads, lastVisitedAtByThread, activeThreadId),
+    [activeThreadId, lastVisitedAtByThread, threads],
+  );
 
   const workspaceById = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
@@ -97,17 +121,16 @@ export function StatusThreadList({
     [activeThreadId, groups.settled, settledVisibleCount],
   );
 
-  function renderTrailing(
-    thread: Thread,
-    sectionId: StatusSectionId,
-    isActive: boolean,
-  ) {
+  const quiet = groups.needsYou.length === 0 && groups.working.length === 0;
+  // With nothing left above it, the shelf is the list: it opens on its own so
+  // a fully settled project never shows a blank sidebar.
+  const shelfOpen = !settledCollapsed || (quiet && groups.done.length === 0);
+
+  function renderTrailing(thread: Thread, sectionId: InboxSectionId, isActive: boolean) {
     if (sectionId === "settled") {
       return (
         <span className="sb-status-time">
-          {thread.settledAt
-            ? formatRelativeTime(thread.settledAt, i18n.language)
-            : ""}
+          {thread.settledAt ? formatRelativeTime(thread.settledAt, i18n.language) : ""}
         </span>
       );
     }
@@ -135,7 +158,7 @@ export function StatusThreadList({
     );
   }
 
-  function renderRow(thread: Thread, sectionId: StatusSectionId) {
+  function renderRow(thread: Thread, sectionId: InboxSectionId) {
     const isActive = thread.id === activeThreadId;
     const workspace = workspaceById.get(thread.workspaceId);
     const workspaceLabel = workspace
@@ -146,7 +169,9 @@ export function StatusThreadList({
       lastVisitedAtByThread[thread.id],
       isActive,
     );
+    const glyphStatus = sectionId === "settled" ? "settled" : display.status;
     const canSettle = canSettleThread(thread);
+    const engineIcon = getHarnessIcon(engineKind(thread.engineId), 10);
 
     return (
       <div
@@ -164,9 +189,7 @@ export function StatusThreadList({
           }
         }}
       >
-        <span className="sb-status-project-mark">
-          <ProjectIcon label={workspaceLabel} active={isActive} />
-        </span>
+        <StatusGlyph status={glyphStatus} />
         <span className="sb-status-main">
           <span className="sb-status-top">
             <InlineThreadTitle
@@ -191,7 +214,7 @@ export function StatusThreadList({
                       : t("app:sidebar.settleThread")
                   }
                   className="sb-status-action"
-                  disabled={sectionId === "working" && !canSettle}
+                  disabled={sectionId !== "settled" && !canSettle}
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -222,53 +245,89 @@ export function StatusThreadList({
               </span>
             </span>
           </span>
-          {!projectFilterId && (
-            <span className="sb-status-context">{workspaceLabel}</span>
-          )}
+          <span className="sb-status-meta">
+            <span className="sb-status-meta-project">{workspaceLabel}</span>
+            <span className="sb-status-meta-engine" aria-hidden="true">
+              {engineIcon}
+            </span>
+          </span>
         </span>
       </div>
     );
   }
 
+  function renderSection(sectionId: Exclude<InboxSectionId, "settled">, labelKey: string) {
+    const items = groups[sectionId];
+    if (items.length === 0) return null;
+    return (
+      <div className="sb-inbox-section" data-section={sectionId}>
+        <div className="sb-inbox-label">
+          <span>{t(labelKey)}</span>
+          <span className="sb-inbox-label-count">{items.length}</span>
+        </div>
+        <div className="sb-status-list">
+          {items.map((thread) => renderRow(thread, sectionId))}
+        </div>
+      </div>
+    );
+  }
+
   if (threads.length === 0) {
-    return <div className="sb-no-threads">{t("app:sidebar.noThreads")}</div>;
+    return (
+      <div className="sb-inbox-empty">
+        <span className="sb-inbox-empty-mark">
+          <MessageSquare size={14} strokeWidth={1.6} />
+        </span>
+        <span className="sb-inbox-empty-title">{t("app:sidebar.emptyThreadsTitle")}</span>
+        <span className="sb-inbox-empty-body">
+          {filteredWorkspace
+            ? t("app:sidebar.emptyThreadsBodyProject", {
+                project: getWorkspaceLabel(filteredWorkspace),
+              })
+            : t("app:sidebar.emptyThreadsBody")}
+        </span>
+        <button type="button" className="sb-inbox-empty-action" onClick={onNewThread}>
+          <Plus size={12} strokeWidth={1.8} />
+          {t("app:sidebar.newThread")}
+          <kbd>⌘⇧N</kbd>
+        </button>
+      </div>
+    );
   }
 
   return (
     <div className="sb-status-view">
-      {/* Inbox: unlabeled, because it is the list, not a section of it. */}
-      {groups.working.length > 0 ? (
-        <div className="sb-status-list">
-          {groups.working.map((thread) => renderRow(thread, "working"))}
+      {quiet && (
+        <div className="sb-inbox-quiet">
+          <span className="sb-inbox-quiet-mark">
+            <Check size={9} strokeWidth={2.5} />
+          </span>
+          {t("app:sidebar.allCaughtUp")}
         </div>
-      ) : (
-        <div className="sb-no-threads">{t("app:sidebar.nothingInProgress")}</div>
       )}
+
+      {renderSection("needsYou", "app:sidebar.inboxNeedsYou")}
+      {renderSection("working", "app:sidebar.inboxWorking")}
+      {renderSection("done", "app:sidebar.inboxDone")}
 
       {groups.settled.length > 0 && (
         <div className="sb-status-shelf">
           <button
             type="button"
             className="sb-status-section-label"
-            aria-expanded={!settledCollapsed}
+            aria-expanded={shelfOpen}
             aria-label={t(
-              settledCollapsed
-                ? "app:sidebar.expandSection"
-                : "app:sidebar.collapseSection",
+              shelfOpen ? "app:sidebar.collapseSection" : "app:sidebar.expandSection",
               { section: t("app:sidebar.statusSettled") },
             )}
             onClick={toggleSettledCollapsed}
           >
-            {settledCollapsed ? (
-              <ChevronRight size={11} />
-            ) : (
-              <ChevronDown size={11} />
-            )}
+            {shelfOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
             <span>{t("app:sidebar.statusSettled")}</span>
-            <span className="sb-status-count">{groups.settled.length}</span>
+            <span className="sb-inbox-label-count">{groups.settled.length}</span>
           </button>
 
-          {!settledCollapsed && (
+          {shelfOpen && (
             <div className="sb-status-list">
               {settledPage.visibleThreads.map((thread) => renderRow(thread, "settled"))}
 
@@ -280,7 +339,7 @@ export function StatusThreadList({
                     setSettledVisibleCount((count) => count + SETTLED_PAGE_COUNT)
                   }
                 >
-                  {t("app:sidebar.showMore", { count: settledPage.hiddenCount })}
+                  {t("app:sidebar.moreCount", { count: settledPage.hiddenCount })}
                 </button>
               )}
             </div>
