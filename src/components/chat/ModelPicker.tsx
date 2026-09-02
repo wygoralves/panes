@@ -12,6 +12,7 @@ import {
   Search,
   Zap,
 } from "lucide-react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
@@ -314,6 +315,10 @@ export function shouldUseCompactEffortLabels(effortCount: number): boolean {
   return effortCount >= 5;
 }
 
+export function formatModelDisplayName(name: string): string {
+  return formatModelName(name);
+}
+
 export function getModelPickerSectionIds(
   engineId: string,
   model: EngineModel | null,
@@ -332,6 +337,10 @@ export function getModelPickerSectionIds(
   return sections;
 }
 
+type PickerRow =
+  | { key: string; type: "model"; engineId: string; model: EngineModel }
+  | { key: string; type: "effort"; effort: string };
+
 export function ModelPicker({
   engines,
   health,
@@ -346,11 +355,13 @@ export function ModelPicker({
 }: ModelPickerProps) {
   const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState<ModelPickerSectionId>("model");
-  const [openCodeModelQuery, setOpenCodeModelQuery] = useState("");
+  const [query, setQuery] = useState("");
   const [legacyExpanded, setLegacyExpanded] = useState(false);
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(false);
   const [pos, setPos] = useState({ bottom: 0, left: 0 });
   const ensureEngineHealth = useEngineStore((state) => state.ensureHealth);
@@ -380,7 +391,7 @@ export function ModelPicker({
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const popoverWidth = Math.min(620, window.innerWidth - 16);
+    const popoverWidth = Math.min(320, window.innerWidth - 16);
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
     setPos({
       bottom: window.innerHeight - rect.top + 6,
@@ -390,6 +401,10 @@ export function ModelPicker({
 
   useEffect(() => {
     if (!open) return;
+    setQuery("");
+    setLegacyExpanded(false);
+    setHighlightedKey(null);
+    const timer = window.setTimeout(() => searchRef.current?.focus(), 20);
 
     function onPointerDown(event: PointerEvent) {
       const target = event.target as Node;
@@ -404,13 +419,16 @@ export function ModelPicker({
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        event.stopPropagation();
         setOpen(false);
+        triggerRef.current?.focus();
       }
     }
 
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
+      window.clearTimeout(timer);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
     };
@@ -429,32 +447,14 @@ export function ModelPicker({
     null;
   const currentModels = currentEngine?.models ?? [];
   const currentEfforts = currentModel?.supportedReasoningEfforts ?? [];
+  const isOpenCode = engineKind(selectedEngineId) === "opencode";
+  const isCodex = engineKind(selectedEngineId) === "codex";
   const openCodeProviderGroups = useMemo(
     () => groupOpenCodeModels(currentModels),
     [currentModels],
   );
   const currentOpenCodeProviderId =
-    engineKind(selectedEngineId) === "opencode" && currentModel
-      ? getOpenCodeProviderId(currentModel.id)
-      : null;
-  const currentOpenCodeProvider =
-    openCodeProviderGroups.find((group) => group.providerId === currentOpenCodeProviderId) ??
-    openCodeProviderGroups[0] ??
-    null;
-  const sectionIds = getModelPickerSectionIds(selectedEngineId, currentModel);
-
-  useEffect(() => {
-    if (!sectionIds.includes(activeSection)) {
-      setActiveSection("model");
-    }
-  }, [activeSection, sectionIds]);
-
-  useEffect(() => {
-    setLegacyExpanded(false);
-    if (engineKind(selectedEngineId) !== "opencode") {
-      setOpenCodeModelQuery("");
-    }
-  }, [selectedEngineId, selectedModelId]);
+    isOpenCode && currentModel ? getOpenCodeProviderId(currentModel.id) : null;
 
   function defaultModelForEngine(engine: EngineInfo): EngineModel | null {
     return (
@@ -465,260 +465,155 @@ export function ModelPicker({
     );
   }
 
-  function handleHarnessSelect(engine: EngineInfo) {
-    if (engine.id === selectedEngineId) {
-      return;
-    }
+  function handleEngineSelect(engine: EngineInfo) {
+    if (engine.id === selectedEngineId) return;
     const nextModel = defaultModelForEngine(engine);
-    if (!nextModel) {
-      return;
-    }
+    if (!nextModel) return;
     onEngineModelChange(engine.id, nextModel.id);
-    setActiveSection(engineKind(engine.id) === "opencode" ? "provider" : "model");
+    setQuery("");
+    setLegacyExpanded(false);
+    setHighlightedKey(null);
+    searchRef.current?.focus();
   }
 
-  function handleProviderSelect(group: OpenCodeProviderModelGroup) {
-    const nextModel =
-      group.activeModels.find((model) => model.isDefault) ??
-      group.activeModels[0] ??
-      group.legacyModels[0] ??
-      null;
-    if (!nextModel) {
-      return;
+  function handleModelSelect(modelId: string) {
+    onEngineModelChange(selectedEngineId, modelId);
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function handleEffortSelect(effort: string) {
+    onEffortChange(effort);
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  // Sections of models. OpenCode groups by upstream provider with the current
+  // provider first; other engines have a single unlabeled group.
+  const modelSections = useMemo(() => {
+    const trimmedQuery = query.trim();
+    if (isOpenCode) {
+      const ordered = [...openCodeProviderGroups].sort((left, right) => {
+        if (left.providerId === currentOpenCodeProviderId) return -1;
+        if (right.providerId === currentOpenCodeProviderId) return 1;
+        return 0;
+      });
+      return ordered
+        .map((group) => ({
+          key: group.providerId,
+          label: group.providerLabel,
+          active: filterOpenCodeModelsForQuery(group.activeModels, trimmedQuery),
+          legacy: filterOpenCodeModelsForQuery(group.legacyModels, trimmedQuery),
+        }))
+        .filter((group) => group.active.length > 0 || group.legacy.length > 0);
     }
-    onEngineModelChange("opencode", nextModel.id);
-    setOpenCodeModelQuery("");
-  }
-
-  function handleModelSelect(engineId: string, modelId: string) {
-    onEngineModelChange(engineId, modelId);
-  }
-
-  function renderModelOptions() {
-    const activeModels = engineKind(selectedEngineId) === "opencode"
-      ? currentOpenCodeProvider?.activeModels ?? []
-      : currentModels.filter((model) => !model.hidden);
-    const legacyModels = engineKind(selectedEngineId) === "opencode"
-      ? currentOpenCodeProvider?.legacyModels ?? []
-      : currentModels.filter((model) => model.hidden);
-    const filteredActiveModels = filterOpenCodeModelsForQuery(activeModels, openCodeModelQuery);
-    const filteredLegacyModels = filterOpenCodeModelsForQuery(legacyModels, openCodeModelQuery);
-    const visibleCount = filteredActiveModels.length + filteredLegacyModels.length;
-    const totalCount = activeModels.length + legacyModels.length;
-
-    return (
-      <>
-        {engineKind(selectedEngineId) === "opencode" ? (
-          <div className="mp-model-search">
-            <Search size={12} className="mp-model-search-icon" />
-            <input
-              className="mp-model-search-input"
-              value={openCodeModelQuery}
-              onChange={(event) => setOpenCodeModelQuery(event.target.value)}
-              placeholder={t("modelPicker.searchModels")}
-              aria-label={t("modelPicker.searchModels")}
-            />
-            <span className="mp-model-search-count">
-              {openCodeModelQuery.trim() ? `${visibleCount}/${totalCount}` : totalCount}
-            </span>
-          </div>
-        ) : null}
-
-        <div className="mp-models-list">
-          {filteredActiveModels.map((model) => (
-            <ModelRow
-              key={model.id}
-              model={model}
-              engineId={selectedEngineId}
-              isSelected={model.id === (selectedModelId ?? currentModel?.id)}
-              onSelect={handleModelSelect}
-            />
-          ))}
-
-          {filteredLegacyModels.length > 0 ? (
-            <>
-              <button
-                type="button"
-                className="mp-legacy-toggle"
-                onClick={() => setLegacyExpanded((previous) => !previous)}
-                aria-expanded={legacyExpanded}
-              >
-                <span className="mp-legacy-toggle-label">
-                  {t("modelPicker.legacy", { count: filteredLegacyModels.length })}
-                </span>
-                <ChevronRight
-                  size={11}
-                  className={`mp-legacy-chevron${legacyExpanded ? " mp-legacy-chevron-open" : ""}`}
-                />
-              </button>
-              {legacyExpanded
-                ? filteredLegacyModels.map((model) => (
-                    <ModelRow
-                      key={model.id}
-                      model={model}
-                      engineId={selectedEngineId}
-                      isSelected={model.id === (selectedModelId ?? currentModel?.id)}
-                      onSelect={handleModelSelect}
-                    />
-                  ))
-                : null}
-            </>
-          ) : null}
-
-          {visibleCount === 0 ? (
-            <div className="mp-empty">{t("modelPicker.noModels")}</div>
-          ) : null}
-        </div>
-      </>
+    const active = filterOpenCodeModelsForQuery(
+      currentModels.filter((model) => !model.hidden),
+      trimmedQuery,
     );
-  }
+    const legacy = filterOpenCodeModelsForQuery(
+      currentModels.filter((model) => model.hidden),
+      trimmedQuery,
+    );
+    return active.length > 0 || legacy.length > 0
+      ? [{ key: "all", label: null as string | null, active, legacy }]
+      : [];
+  }, [currentModels, currentOpenCodeProviderId, isOpenCode, openCodeProviderGroups, query]);
 
-  function renderPanelContent() {
-    switch (activeSection) {
-      case "harness":
-        return (
-          <div className="mp-options">
-            {engines.map((engine) => {
-              const selected = engine.id === selectedEngineId;
-              const available = health[engine.id]?.available !== false;
-              return (
-                <button
-                  key={engine.id}
-                  type="button"
-                  className={`mp-option${selected ? " mp-option-selected" : ""}`}
-                  onClick={() => handleHarnessSelect(engine)}
-                  aria-pressed={selected}
-                >
-                  <span className="mp-option-icon">{getHarnessIcon(engineKind(engine.id), 16)}</span>
-                  <span className="mp-option-label">{engine.name}</span>
-                  <span
-                    className={`mp-health-dot${available ? " mp-health-dot-ok" : " mp-health-dot-error"}`}
-                    title={available ? t("modelPicker.available") : t("modelPicker.unavailable")}
-                  />
-                  {selected ? <Check size={13} className="mp-option-check" /> : null}
-                </button>
-              );
-            })}
-          </div>
-        );
-      case "provider":
-        return (
-          <div className="mp-options">
-            {openCodeProviderGroups.map((group) => {
-              const selected = group.providerId === currentOpenCodeProvider?.providerId;
-              return (
-                <button
-                  key={group.providerId}
-                  type="button"
-                  className={`mp-option${selected ? " mp-option-selected" : ""}`}
-                  onClick={() => handleProviderSelect(group)}
-                  aria-pressed={selected}
-                >
-                  <span className="mp-option-label">{group.providerLabel}</span>
-                  <span className="mp-option-count">{group.totalModelCount}</span>
-                  {selected ? <Check size={13} className="mp-option-check" /> : null}
-                </button>
-              );
-            })}
-          </div>
-        );
-      case "model":
-        return renderModelOptions();
-      case "reasoning":
-        return (
-          <div className="mp-options">
-            {currentEfforts.map((option) => {
-              const selected = option.reasoningEffort === selectedEffort;
-              return (
-                <button
-                  key={option.reasoningEffort}
-                  type="button"
-                  className={`mp-option mp-option-with-description${selected ? " mp-option-selected" : ""}`}
-                  onClick={() => onEffortChange(option.reasoningEffort)}
-                  aria-pressed={selected}
-                >
-                  <span className="mp-option-copy">
-                    <span className="mp-option-label">
-                      {effortDisplayLabel(t, option.reasoningEffort)}
-                    </span>
-                    {option.description ? (
-                      <span className="mp-option-description">{option.description}</span>
-                    ) : null}
-                  </span>
-                  {selected ? <Check size={13} className="mp-option-check" /> : null}
-                </button>
-              );
-            })}
-          </div>
-        );
-      case "speed": {
-        const options: Array<{
-          value: CodexServiceTierValue;
-          label: string;
-          description: string;
-        }> = [
-          {
-            value: "inherit",
-            label: t("modelPicker.speedOptions.standard.label"),
-            description: t("modelPicker.speedOptions.standard.description"),
-          },
-          {
-            value: "fast",
-            label: t("modelPicker.speedOptions.fast.label"),
-            description: t("modelPicker.speedOptions.fast.description"),
-          },
-          {
-            value: "flex",
-            label: t("modelPicker.speedOptions.flex.label"),
-            description: t("modelPicker.speedOptions.flex.description"),
-          },
-        ];
-        return (
-          <div className="mp-options">
-            {options.map((option) => {
-              const selected = option.value === selectedServiceTier;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`mp-option mp-option-with-description${selected ? " mp-option-selected" : ""}`}
-                  onClick={() => onServiceTierChange(option.value)}
-                  aria-pressed={selected}
-                >
-                  <span className="mp-option-copy">
-                    <span className="mp-option-label">{option.label}</span>
-                    <span className="mp-option-description">{option.description}</span>
-                  </span>
-                  {selected ? <Check size={13} className="mp-option-check" /> : null}
-                </button>
-              );
-            })}
-          </div>
-        );
+  const legacyCount = modelSections.reduce((total, section) => total + section.legacy.length, 0);
+  const showLegacy = legacyExpanded || query.trim().length > 0;
+
+  const filteredEfforts = useMemo(() => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return currentEfforts;
+    return currentEfforts.filter((option) =>
+      effortDisplayLabel(t, option.reasoningEffort).toLowerCase().includes(trimmed),
+    );
+  }, [currentEfforts, query, t]);
+
+  const rows = useMemo<PickerRow[]>(() => {
+    const result: PickerRow[] = [];
+    for (const section of modelSections) {
+      const models = showLegacy ? [...section.active, ...section.legacy] : section.active;
+      for (const model of models) {
+        result.push({ key: `model:${model.id}`, type: "model", engineId: selectedEngineId, model });
       }
     }
+    for (const option of filteredEfforts) {
+      result.push({ key: `effort:${option.reasoningEffort}`, type: "effort", effort: option.reasoningEffort });
+    }
+    return result;
+  }, [filteredEfforts, modelSections, selectedEngineId, showLegacy]);
+
+  useEffect(() => {
+    if (highlightedKey && !rows.some((row) => row.key === highlightedKey)) {
+      setHighlightedKey(null);
+    }
+  }, [highlightedKey, rows]);
+
+  useEffect(() => {
+    if (!highlightedKey || !listRef.current) return;
+    const element = listRef.current.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(highlightedKey)}"]`);
+    element?.scrollIntoView({ block: "nearest" });
+  }, [highlightedKey]);
+
+  function moveHighlight(direction: 1 | -1) {
+    if (rows.length === 0) return;
+    const currentIndex = rows.findIndex((row) => row.key === highlightedKey);
+    const nextIndex =
+      currentIndex === -1
+        ? direction === 1
+          ? 0
+          : rows.length - 1
+        : (currentIndex + direction + rows.length) % rows.length;
+    setHighlightedKey(rows[nextIndex].key);
   }
 
-  const sectionLabels: Record<ModelPickerSectionId, string> = {
-    harness: t("modelPicker.harness"),
-    provider: t("modelPicker.provider"),
-    model: t("modelPicker.model"),
-    reasoning: t("modelPicker.reasoning"),
-    speed: t("modelPicker.speed"),
-  };
-  const speedLabel = selectedServiceTier === "inherit"
-    ? t("modelPicker.speedOptions.standard.label")
-    : t(`modelPicker.speedOptions.${selectedServiceTier}.label`);
-  const sectionValues: Record<ModelPickerSectionId, string> = {
-    harness: currentEngine?.name ?? "",
-    provider: currentOpenCodeProvider?.providerLabel ?? "",
-    model: currentModel ? formatModelName(currentModel.displayName) : "",
-    reasoning: selectedEffort ? effortDisplayLabel(t, selectedEffort) : "",
-    speed: speedLabel,
-  };
-  const triggerLabel = currentModel
+  function activateHighlighted() {
+    const row = rows.find((candidate) => candidate.key === highlightedKey);
+    if (!row) {
+      const first = rows[0];
+      if (first?.type === "model") handleModelSelect(first.model.id);
+      else if (first?.type === "effort") handleEffortSelect(first.effort);
+      return;
+    }
+    if (row.type === "model") handleModelSelect(row.model.id);
+    else handleEffortSelect(row.effort);
+  }
+
+  function switchEngine(direction: 1 | -1) {
+    if (engines.length < 2) return;
+    const index = engines.findIndex((engine) => engine.id === selectedEngineId);
+    const next = engines[(index + direction + engines.length) % engines.length];
+    if (next) handleEngineSelect(next);
+  }
+
+  function onSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveHighlight(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveHighlight(-1);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      activateHighlighted();
+    } else if (event.key === "Tab" && !event.shiftKey && query.length === 0) {
+      event.preventDefault();
+      switchEngine(1);
+    } else if (event.key === "Tab" && event.shiftKey && query.length === 0) {
+      event.preventDefault();
+      switchEngine(-1);
+    }
+  }
+
+  const triggerModelLabel = currentModel
     ? formatModelName(currentModel.displayName)
     : currentEngine?.name ?? t("modelPicker.selectModel");
+  const triggerEffortLabel =
+    selectedEffort && currentEfforts.length > 0 ? effortDisplayLabel(t, selectedEffort) : null;
+  const fastMode = isCodex && selectedServiceTier === "fast";
+  const showEngineNames = engines.length <= 3 || engines.some((engine) => !isBuiltinKindName(engine));
 
   const trigger = (
     <button
@@ -734,14 +629,13 @@ export function ModelPicker({
       <span className="mp-trigger-icon">
         {getHarnessIcon(engineKind(selectedEngineId), 12)}
       </span>
-      <span className="mp-trigger-label">{triggerLabel}</span>
-      {selectedEffort && currentEfforts.length > 0 ? (
-        <span className="mp-trigger-effort">{shortEffortLabel(t, selectedEffort)}</span>
+      <span className="mp-trigger-label">{triggerModelLabel}</span>
+      {triggerEffortLabel ? (
+        <span className="mp-trigger-effort">{triggerEffortLabel}</span>
       ) : null}
-      {engineKind(selectedEngineId) === "codex" && selectedServiceTier !== "inherit" ? (
-        <span className="mp-trigger-speed">
+      {fastMode ? (
+        <span className="mp-trigger-speed" title={t("modelPicker.fastMode")}>
           <Zap size={9} />
-          {speedLabel}
         </span>
       ) : null}
       <ChevronDown
@@ -764,33 +658,151 @@ export function ModelPicker({
           role="dialog"
           aria-label={t("modelPicker.runtimeConfiguration")}
         >
-          <div className="mp-runtime-menu">
-            {sectionIds.map((sectionId) => (
-              <button
-                key={sectionId}
-                type="button"
-                className={`mp-runtime-row${activeSection === sectionId ? " mp-runtime-row-active" : ""}`}
-                onClick={() => setActiveSection(sectionId)}
-                onPointerEnter={() => setActiveSection(sectionId)}
-                aria-pressed={activeSection === sectionId}
-              >
-                <span className="mp-runtime-row-label">{sectionLabels[sectionId]}</span>
-                <span className="mp-runtime-row-value">
-                  {sectionId === "harness" ? (
-                    <span className="mp-runtime-row-harness-icon">
-                      {getHarnessIcon(engineKind(selectedEngineId), 12)}
-                    </span>
-                  ) : null}
-                  <span>{sectionValues[sectionId]}</span>
-                </span>
-                <ChevronRight size={12} className="mp-runtime-row-chevron" />
-              </button>
-            ))}
+          <div className="mp-tabs" role="tablist" aria-label={t("modelPicker.providers")}>
+            {engines.map((engine) => {
+              const selected = engine.id === selectedEngineId;
+              const available = health[engine.id]?.available !== false;
+              return (
+                <button
+                  key={engine.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={`mp-tab${selected ? " mp-tab-active" : ""}${available ? "" : " mp-tab-unavailable"}`}
+                  title={
+                    available
+                      ? engine.name
+                      : `${engine.name}: ${t("modelPicker.unavailable")}`
+                  }
+                  onClick={() => handleEngineSelect(engine)}
+                >
+                  <span className="mp-tab-icon">{getHarnessIcon(engineKind(engine.id), 14)}</span>
+                  {showEngineNames ? <span className="mp-tab-label">{engine.name}</span> : null}
+                  {!available ? <span className="mp-tab-dot" aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
           </div>
 
-          <div className="mp-runtime-panel">
-            <div className="mp-runtime-panel-content">{renderPanelContent()}</div>
+          <div className="mp-search">
+            <Search size={13} className="mp-search-icon" aria-hidden="true" />
+            <input
+              ref={searchRef}
+              className="mp-search-input"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setHighlightedKey(null);
+              }}
+              onKeyDown={onSearchKeyDown}
+              placeholder={t("modelPicker.searchModels")}
+              aria-label={t("modelPicker.searchModels")}
+              spellCheck={false}
+              autoComplete="off"
+            />
           </div>
+
+          <div className="mp-scroll" ref={listRef}>
+            {modelSections.length === 0 && filteredEfforts.length === 0 ? (
+              <div className="mp-empty">{t("modelPicker.noModels")}</div>
+            ) : null}
+
+            {modelSections.map((section, sectionIndex) => (
+              <div className="mp-section" key={section.key}>
+                <div className="mp-section-title">
+                  {section.label
+                    ? section.label
+                    : sectionIndex === 0
+                      ? t("modelPicker.model")
+                      : null}
+                </div>
+                {section.active.map((model) => (
+                  <ModelRow
+                    key={model.id}
+                    model={model}
+                    engineId={selectedEngineId}
+                    isSelected={model.id === (selectedModelId ?? currentModel?.id)}
+                    isHighlighted={highlightedKey === `model:${model.id}`}
+                    onSelect={handleModelSelect}
+                    onHover={() => setHighlightedKey(`model:${model.id}`)}
+                  />
+                ))}
+                {showLegacy
+                  ? section.legacy.map((model) => (
+                      <ModelRow
+                        key={model.id}
+                        model={model}
+                        engineId={selectedEngineId}
+                        isSelected={model.id === (selectedModelId ?? currentModel?.id)}
+                        isHighlighted={highlightedKey === `model:${model.id}`}
+                        onSelect={handleModelSelect}
+                        onHover={() => setHighlightedKey(`model:${model.id}`)}
+                        legacy
+                      />
+                    ))
+                  : null}
+              </div>
+            ))}
+
+            {legacyCount > 0 && query.trim().length === 0 ? (
+              <button
+                type="button"
+                className="mp-legacy-toggle"
+                onClick={() => setLegacyExpanded((previous) => !previous)}
+                aria-expanded={legacyExpanded}
+              >
+                <span className="mp-legacy-toggle-label">
+                  {t("modelPicker.legacy", { count: legacyCount })}
+                </span>
+                <ChevronRight
+                  size={11}
+                  className={`mp-legacy-chevron${legacyExpanded ? " mp-legacy-chevron-open" : ""}`}
+                />
+              </button>
+            ) : null}
+
+            {filteredEfforts.length > 0 ? (
+              <div className="mp-section mp-section-divided">
+                <div className="mp-section-title">{t("modelPicker.reasoning")}</div>
+                {filteredEfforts.map((option) => {
+                  const selected = option.reasoningEffort === selectedEffort;
+                  const key = `effort:${option.reasoningEffort}`;
+                  return (
+                    <button
+                      key={option.reasoningEffort}
+                      type="button"
+                      data-row-key={key}
+                      className={`mp-row${selected ? " mp-row-selected" : ""}${highlightedKey === key ? " mp-row-highlighted" : ""}`}
+                      onClick={() => handleEffortSelect(option.reasoningEffort)}
+                      onPointerMove={() => setHighlightedKey(key)}
+                      title={option.description || undefined}
+                      aria-pressed={selected}
+                    >
+                      <span className="mp-row-label">{effortDisplayLabel(t, option.reasoningEffort)}</span>
+                      {selected ? <Check size={13} className="mp-row-check" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+
+          {isCodex ? (
+            <label className="mp-footer">
+              <Zap size={13} className="mp-footer-icon" aria-hidden="true" />
+              <span className="mp-footer-label">{t("modelPicker.fastMode")}</span>
+              <span className="ws-toggle">
+                <input
+                  type="checkbox"
+                  checked={fastMode}
+                  aria-label={t("modelPicker.fastMode")}
+                  onChange={(event) => onServiceTierChange(event.target.checked ? "fast" : "inherit")}
+                />
+                <span className="ws-toggle-track" />
+                <span className="ws-toggle-thumb" />
+              </span>
+            </label>
+          ) : null}
         </div>,
         document.body,
       )
@@ -804,41 +816,53 @@ export function ModelPicker({
   );
 }
 
+function isBuiltinKindName(engine: EngineInfo): boolean {
+  return engine.id === engineKind(engine.id);
+}
+
 function ModelRow({
   model,
   engineId,
   isSelected,
+  isHighlighted,
   onSelect,
+  onHover,
+  legacy = false,
 }: {
   model: EngineModel;
   engineId: string;
   isSelected: boolean;
-  onSelect: (engineId: string, modelId: string) => void;
+  isHighlighted: boolean;
+  onSelect: (modelId: string) => void;
+  onHover: () => void;
+  legacy?: boolean;
 }) {
   const { t } = useTranslation("chat");
   const metadataChips = modelMetadataChips(t, model);
-  const showDescription = shouldShowModelDescription(engineId, model);
+  const description = shouldShowModelDescription(engineId, model) ? model.description : "";
 
   return (
     <button
       type="button"
-      className={`mp-model${isSelected ? " mp-model-selected" : ""}`}
-      onClick={() => onSelect(engineId, model.id)}
+      data-row-key={`model:${model.id}`}
+      className={`mp-row${isSelected ? " mp-row-selected" : ""}${isHighlighted ? " mp-row-highlighted" : ""}${legacy ? " mp-row-legacy" : ""}`}
+      onClick={() => onSelect(model.id)}
+      onPointerMove={onHover}
+      title={description || undefined}
       aria-pressed={isSelected}
     >
-      <span className="mp-model-info">
-        <span className="mp-model-name-row">
-          <span className="mp-model-name">{formatModelName(model.displayName)}</span>
+      <span className="mp-row-copy">
+        <span className="mp-row-label">
+          {formatModelName(model.displayName)}
           {model.isDefault ? (
-            <span className="mp-model-default">{t("modelPicker.default")}</span>
+            <span className="mp-row-default">{t("modelPicker.default")}</span>
           ) : null}
         </span>
-        {showDescription ? <span className="mp-model-desc">{model.description}</span> : null}
         {isSelected && metadataChips.length > 0 ? (
           <ModelMetadata chips={metadataChips} />
         ) : null}
       </span>
-      {isSelected ? <Check size={13} className="mp-model-check" /> : null}
+      {isSelected ? <Check size={13} className="mp-row-check" /> : null}
     </button>
   );
 }

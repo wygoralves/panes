@@ -63,7 +63,7 @@
       "low": "Baixo",
       "medium": "Médio",
       "high": "Alto",
-      "xhigh": "XAlto",
+      "xhigh": "Extra alto",
       "max": "Máximo",
       "noneShort": "Nen",
       "minimalShort": "Min",
@@ -72,7 +72,8 @@
       "highShort": "Alt",
       "xhighShort": "XAlt",
       "maxShort": "Máx"
-    }
+    },
+    "fastMode": "Modo rápido"
   },
   "attachments": {
     "codexTitle": "Anexar arquivos (imagens e texto)",
@@ -335,11 +336,26 @@
     "sectionTitle": "Autonomia",
     "custom": "Personalizado",
     "presets": {
-      "inherit": { "label": "Automático", "description": "Segue a política de confiança do repo." },
-      "read-only": { "label": "Somente leitura", "description": "Inspeciona e responde. Leituras seguras rodam; nada muda sem a sua aprovação." },
-      "ask": { "label": "Pedir para agir", "description": "Leituras são livres. Edições e comandos pedem antes." },
-      "auto": { "label": "Autônomo no workspace", "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele." },
-      "full": { "label": "Autonomia total", "description": "Nunca pergunta. Acesso total a disco e rede." }
+      "inherit": {
+        "label": "Automático",
+        "description": "Segue a política de confiança do repo."
+      },
+      "read-only": {
+        "label": "Somente leitura",
+        "description": "Inspeciona e responde. Leituras seguras rodam; nada muda sem a sua aprovação."
+      },
+      "ask": {
+        "label": "Pedir para agir",
+        "description": "Leituras são livres. Edições e comandos pedem antes."
+      },
+      "auto": {
+        "label": "Autônomo no workspace",
+        "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele."
+      },
+      "full": {
+        "label": "Autonomia total",
+        "description": "Nunca pergunta. Acesso total a disco e rede."
+      }
     },
     "engineDescriptions": {
       "opencode": {
