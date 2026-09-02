@@ -36,6 +36,7 @@ import {
   MessageSquare,
   Pencil,
   Trash2,
+  KeyRound,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
 import {
@@ -65,6 +66,8 @@ import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
 import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
 import { useChatProvidersStore } from "../../stores/chatProvidersStore";
 import { ChatProviderDialog, providerKindIcon } from "./ChatProviderDialog";
+import { chatProviderSignInCommand } from "../../lib/chatProviders";
+import { useTerminalStore } from "../../stores/terminalStore";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import type { ChatProviderInstance } from "../../types";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
@@ -211,6 +214,8 @@ export function SettingsPage() {
     { open: false } | { open: true; provider: ChatProviderInstance | null }
   >({ open: false });
   const [providerPendingRemoval, setProviderPendingRemoval] = useState<ChatProviderInstance | null>(null);
+  const [providerPendingSignIn, setProviderPendingSignIn] = useState<ChatProviderInstance | null>(null);
+  const runCommandInTerminal = useTerminalStore((state) => state.runCommandInTerminal);
 
   useEffect(() => {
     void loadSidebarListMode();
@@ -505,6 +510,23 @@ export function SettingsPage() {
     else toast.error(t("app:settingsPage.chat.removeFailed"));
   }
 
+  async function confirmSignInChatProvider() {
+    const provider = providerPendingSignIn;
+    setProviderPendingSignIn(null);
+    if (!provider) return;
+    const workspaceId = selectedWorkspace?.id ?? activeWorkspaceId ?? null;
+    if (!workspaceId) {
+      toast.error(t("app:settingsPage.chat.signInNoWorkspace"));
+      return;
+    }
+    const started = await runCommandInTerminal(workspaceId, chatProviderSignInCommand(provider));
+    if (!started) {
+      toast.error(t("app:settingsPage.chat.signInFailed"));
+      return;
+    }
+    setActiveView("chat");
+  }
+
   function describeChatProvider(provider: ChatProviderInstance): string {
     const parts: string[] = [];
     if (provider.homePath) parts.push(provider.homePath);
@@ -512,12 +534,15 @@ export function SettingsPage() {
     if (provider.launchArgs) parts.push(provider.launchArgs);
     const envCount = Object.keys(provider.env).length;
     if (envCount > 0) parts.push(t("app:settingsPage.chat.envCount", { count: envCount }));
+    if (!provider.builtIn && provider.homePath) {
+      return t("app:settingsPage.chat.ownLogin", { path: provider.homePath });
+    }
     if (parts.length === 0) {
       return provider.builtIn
         ? t("app:settingsPage.chat.defaultInstall")
         : t("app:settingsPage.chat.sharedInstall");
     }
-    return parts.join("  ·  ");
+    return parts.join(", ");
   }
 
   async function toggleAcceleratedRendering(enabled: boolean) {
@@ -869,6 +894,16 @@ export function SettingsPage() {
                             onChange={(checked) => void toggleChatProviderEnabled(provider, checked)}
                           />
                         ) : null}
+                        {!provider.builtIn ? (
+                          <button
+                            type="button"
+                            className="usp-button"
+                            onClick={() => setProviderPendingSignIn(provider)}
+                          >
+                            <KeyRound size={13} />
+                            {t("app:settingsPage.chat.signIn")}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="usp-icon-button"
@@ -931,7 +966,22 @@ export function SettingsPage() {
                 existingIds={chatProviders.map((provider) => provider.id)}
                 saving={chatProvidersSaving}
                 onSave={saveChatProvider}
+                onSaved={(provider, created) => {
+                  if (created && !provider.builtIn) setProviderPendingSignIn(provider);
+                }}
                 onClose={() => setProviderDialog({ open: false })}
+              />
+              <ConfirmDialog
+                open={providerPendingSignIn !== null}
+                title={t("app:settingsPage.chat.signInTitle", {
+                  name: providerPendingSignIn?.displayName ?? "",
+                })}
+                message={t("app:settingsPage.chat.signInMessage")}
+                confirmLabel={t("app:settingsPage.chat.signInConfirm")}
+                cancelLabel={t("app:settingsPage.chat.signInLater")}
+                onConfirm={() => void confirmSignInChatProvider()}
+                onCancel={() => setProviderPendingSignIn(null)}
+                onDismiss={() => setProviderPendingSignIn(null)}
               />
               <ConfirmDialog
                 open={providerPendingRemoval !== null}
