@@ -32,6 +32,7 @@ import {
   Clock3,
   Volume2,
   Zap,
+  ListChecks,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
 import {
@@ -58,6 +59,7 @@ import {
 import { THEME_PREFERENCES, type ThemePreference } from "../../lib/theme";
 import { useKeepAwakeStore, canToggleKeepAwake } from "../../stores/keepAwakeStore";
 import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
+import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
 import { useTerminalNotificationSettingsStore } from "../../stores/terminalNotificationSettingsStore";
 import { useThemeStore } from "../../stores/themeStore";
 import { toast } from "../../stores/toastStore";
@@ -190,9 +192,14 @@ export function SettingsPage() {
   const setSidebarListMode = useSidebarListModeStore((state) => state.setMode);
   const loadSidebarListMode = useSidebarListModeStore((state) => state.load);
 
+  const composerPlanModeVisible = useComposerSettingsStore((state) => state.planModeVisible);
+  const setComposerPlanModeVisible = useComposerSettingsStore((state) => state.setPlanModeVisible);
+  const loadComposerSettings = useComposerSettingsStore((state) => state.load);
+
   useEffect(() => {
     void loadSidebarListMode();
-  }, [loadSidebarListMode]);
+    void loadComposerSettings();
+  }, [loadSidebarListMode, loadComposerSettings]);
   const updateStatus = useUpdateStore((state) => state.status);
   const availableVersion = useUpdateStore((state) => state.version);
   const updateError = useUpdateStore((state) => state.error);
@@ -458,6 +465,12 @@ export function SettingsPage() {
     if (mode === sidebarListMode) return;
     const saved = await setSidebarListMode(mode);
     if (!saved) toast.error(t("app:sidebar.sidebarListModeFailed"));
+  }
+
+  async function changeComposerPlanModeVisible(visible: boolean) {
+    if (visible === composerPlanModeVisible) return;
+    const saved = await setComposerPlanModeVisible(visible);
+    if (!saved) toast.error(t("app:settingsPage.appearance.composerPlanModeFailed"));
   }
 
   async function toggleAcceleratedRendering(enabled: boolean) {
@@ -767,6 +780,17 @@ export function SettingsPage() {
                       );
                     })}
                   </div>
+                </SettingsRow>
+                <SettingsRow
+                  icon={<ListChecks size={17} />}
+                  title={t("app:settingsPage.appearance.composerPlanMode")}
+                  description={t("app:settingsPage.appearance.composerPlanModeDescription")}
+                >
+                  <Toggle
+                    checked={composerPlanModeVisible}
+                    label={t("app:settingsPage.appearance.composerPlanMode")}
+                    onChange={(checked) => void changeComposerPlanModeVisible(checked)}
+                  />
                 </SettingsRow>
                 <SettingsRow icon={<Globe2 size={17} />} title={t("common:language.label")} description={t("app:settingsPage.appearance.languageDescription")}>
                   <Dropdown
