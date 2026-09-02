@@ -31,7 +31,7 @@ use crate::models::{
 use crate::{process_utils, runtime_env};
 
 use super::{
-    codex_event_mapper::TurnEventMapper,
+    codex_event_mapper::{ApprovalRequest, TurnEventMapper},
     codex_protocol::{raw_value_to_value, IncomingMessage},
     codex_transport::CodexTransport,
     ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent, EngineThread,
@@ -121,12 +121,22 @@ struct TurnStartOutcome {
     native_plan_mode_active: bool,
 }
 
+/// A Codex sub-agent thread spawned (directly or transitively) by a root
+/// thread that Panes owns. Approval requests raised on the child are routed to
+/// the root thread's turn so the user can answer them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SubAgentLink {
+    root_thread_id: String,
+    agent_path: String,
+}
+
 #[derive(Default)]
 struct CodexState {
     transport: Option<Arc<CodexTransport>>,
     initialized: bool,
     approval_requests: HashMap<String, PendingApproval>,
     active_turn_ids: HashMap<String, String>,
+    sub_agent_threads: HashMap<String, SubAgentLink>,
     thread_runtimes: HashMap<String, ThreadRuntime>,
     runtime_model_cache: Option<Vec<ModelInfo>>,
     sandbox_probe_completed: bool,
@@ -704,8 +714,20 @@ impl Engine for CodexEngine {
                       return Err(anyhow::anyhow!(error_message));
                     }
 
+                    if normalized_method == "thread/started" {
+                      if let Some((child, parent)) = extract_spawned_thread_link(&params) {
+                        self.record_sub_agent_thread(&child, &parent, None).await;
+                      }
+                    }
                     if !belongs_to_thread(&params, &thread_id) {
                       continue;
+                    }
+                    if let Some((agent_thread_id, agent_path)) =
+                      extract_sub_agent_activity(&params)
+                    {
+                      self
+                        .record_sub_agent_thread(&agent_thread_id, &thread_id, Some(&agent_path))
+                        .await;
                     }
                     if normalized_method == "turn/started" {
                       if let Some(turn_id) = extract_turn_id(&params) {
@@ -762,11 +784,32 @@ impl Engine for CodexEngine {
                       "codex server request: method={method}, id={id}, raw_id={raw_id}, params_keys={:?}",
                       params.as_object().map(|o| o.keys().collect::<Vec<_>>())
                     );
-                    if !belongs_to_thread(&params, &thread_id) {
-                      log::warn!("codex server request dropped by belongs_to_thread: method={method}");
-                      continue;
-                    }
-                    if !belongs_to_turn(&params, expected_turn_id.as_deref()) {
+                    // Requests raised by a sub-agent thread carry the child's
+                    // thread and turn ids. Route them to the root thread's turn
+                    // instead of dropping them, which would hang the child.
+                    let sub_agent = if belongs_to_thread(&params, &thread_id) {
+                      None
+                    } else {
+                      let child_thread_id = extract_request_thread_id(&params);
+                      let link = match child_thread_id.as_deref() {
+                        Some(child) => self.sub_agent_link(child).await,
+                        None => None,
+                      };
+                      match (child_thread_id, link) {
+                        (Some(child), Some(link)) if link.root_thread_id == thread_id => {
+                          Some((child, link))
+                        }
+                        _ => {
+                          log::warn!(
+                            "codex server request dropped by belongs_to_thread: method={method}"
+                          );
+                          continue;
+                        }
+                      }
+                    };
+                    if sub_agent.is_none()
+                      && !belongs_to_turn(&params, expected_turn_id.as_deref())
+                    {
                       log::warn!("codex server request dropped by belongs_to_turn: method={method}");
                       continue;
                     }
@@ -810,12 +853,16 @@ impl Engine for CodexEngine {
                       continue;
                     }
 
-                    if let Some(approval) =
+                    if let Some(mut approval) =
                         mapper.map_server_request(&id, &raw_id, &method, &params)
                     {
+                      if let Some((child_thread_id, link)) = sub_agent.as_ref() {
+                        decorate_sub_agent_approval(&mut approval, child_thread_id, link);
+                      }
                       log::info!(
-                        "codex approval request mapped: approval_id={}, method={method}",
-                        approval.approval_id
+                        "codex approval request mapped: approval_id={}, method={method}, sub_agent={}",
+                        approval.approval_id,
+                        sub_agent.as_ref().map(|(_, link)| link.agent_path.as_str()).unwrap_or("-")
                       );
                       if turn_request_done && !completion_seen {
                         completion_last_progress_at = Some(Instant::now());
@@ -2470,6 +2517,16 @@ impl CodexEngine {
                                 break;
                             }
                             "thread/started" => {
+                                if let Some((child, parent)) = extract_spawned_thread_link(&params)
+                                {
+                                    let mut state = state.lock().await;
+                                    record_sub_agent_thread(
+                                        &mut state.sub_agent_threads,
+                                        &child,
+                                        &parent,
+                                        None,
+                                    );
+                                }
                                 let thread = params.get("thread").unwrap_or(&params);
                                 if let Some(engine_thread_id) =
                                     extract_any_string(thread, &["id", "threadId", "thread_id"])
@@ -2925,6 +2982,26 @@ impl CodexEngine {
     async fn clear_active_turn(&self, engine_thread_id: &str) {
         let mut state = self.state.lock().await;
         state.active_turn_ids.remove(engine_thread_id);
+    }
+
+    async fn record_sub_agent_thread(
+        &self,
+        child_thread_id: &str,
+        parent_thread_id: &str,
+        agent_path: Option<&str>,
+    ) {
+        let mut state = self.state.lock().await;
+        record_sub_agent_thread(
+            &mut state.sub_agent_threads,
+            child_thread_id,
+            parent_thread_id,
+            agent_path,
+        );
+    }
+
+    async fn sub_agent_link(&self, child_thread_id: &str) -> Option<SubAgentLink> {
+        let state = self.state.lock().await;
+        state.sub_agent_threads.get(child_thread_id).cloned()
     }
 
     async fn active_turn_id(&self, engine_thread_id: &str) -> Option<String> {
@@ -6493,6 +6570,99 @@ fn approval_response_target_error_message(
     }
 }
 
+fn record_sub_agent_thread(
+    sub_agent_threads: &mut HashMap<String, SubAgentLink>,
+    child_thread_id: &str,
+    parent_thread_id: &str,
+    agent_path: Option<&str>,
+) {
+    if child_thread_id.is_empty() || child_thread_id == parent_thread_id {
+        return;
+    }
+    let (root_thread_id, parent_path) = match sub_agent_threads.get(parent_thread_id) {
+        Some(parent) => (
+            parent.root_thread_id.clone(),
+            Some(parent.agent_path.clone()),
+        ),
+        None => (parent_thread_id.to_string(), None),
+    };
+    let agent_path = agent_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            sub_agent_threads
+                .get(child_thread_id)
+                .map(|existing| existing.agent_path.clone())
+        })
+        .unwrap_or_else(|| match parent_path {
+            Some(parent_path) => format!("{parent_path}/{child_thread_id}"),
+            None => child_thread_id.to_string(),
+        });
+    sub_agent_threads.insert(
+        child_thread_id.to_string(),
+        SubAgentLink {
+            root_thread_id,
+            agent_path,
+        },
+    );
+}
+
+/// `thread/started` for a sub-agent carries the spawning thread in
+/// `thread.parentThreadId`.
+fn extract_spawned_thread_link(params: &serde_json::Value) -> Option<(String, String)> {
+    let thread = params.get("thread").unwrap_or(params);
+    let parent = extract_any_string(thread, &["parentThreadId", "parent_thread_id"])?;
+    let child = extract_any_string(thread, &["id", "threadId", "thread_id"])?;
+    Some((child, parent))
+}
+
+/// Parent-side `subAgentActivity` items name the child thread and its agent
+/// path, which is the label users see in the Codex CLI.
+fn extract_sub_agent_activity(params: &serde_json::Value) -> Option<(String, String)> {
+    let item = params.get("item")?;
+    if extract_any_string(item, &["type"])?.as_str() != "subAgentActivity" {
+        return None;
+    }
+    let agent_thread_id = extract_any_string(item, &["agentThreadId", "agent_thread_id"])?;
+    let agent_path = extract_any_string(item, &["agentPath", "agent_path"])
+        .unwrap_or_else(|| agent_thread_id.clone());
+    Some((agent_thread_id, agent_path))
+}
+
+fn extract_request_thread_id(params: &serde_json::Value) -> Option<String> {
+    extract_any_string(
+        params,
+        &["threadId", "thread_id", "conversationId", "conversation_id"],
+    )
+}
+
+const APPROVAL_DETAIL_SUB_AGENT_PATH_KEY: &str = "_subAgentPath";
+const APPROVAL_DETAIL_SUB_AGENT_THREAD_ID_KEY: &str = "_subAgentThreadId";
+
+fn decorate_sub_agent_approval(
+    approval: &mut ApprovalRequest,
+    child_thread_id: &str,
+    link: &SubAgentLink,
+) {
+    if let EngineEvent::ApprovalRequested {
+        summary, details, ..
+    } = &mut approval.event
+    {
+        *summary = format!("Sub-agent {}: {}", link.agent_path, summary);
+        if let Some(object) = details.as_object_mut() {
+            object.insert(
+                APPROVAL_DETAIL_SUB_AGENT_PATH_KEY.to_string(),
+                serde_json::Value::String(link.agent_path.clone()),
+            );
+            object.insert(
+                APPROVAL_DETAIL_SUB_AGENT_THREAD_ID_KEY.to_string(),
+                serde_json::Value::String(child_thread_id.to_string()),
+            );
+        }
+    }
+}
+
 fn belongs_to_thread(params: &serde_json::Value, thread_id: &str) -> bool {
     let candidates = [
         "threadId",
@@ -8323,5 +8493,108 @@ mod tests {
         );
         assert_eq!(mapped.layers[0].version, "v2");
         assert!(mapped.approval_policy.is_some());
+    }
+}
+
+#[cfg(test)]
+mod sub_agent_routing_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn records_nested_sub_agents_under_the_root_thread() {
+        let mut threads = HashMap::new();
+        record_sub_agent_thread(&mut threads, "child", "root", Some("explorer"));
+        record_sub_agent_thread(&mut threads, "grandchild", "child", None);
+
+        assert_eq!(
+            threads.get("child"),
+            Some(&SubAgentLink {
+                root_thread_id: "root".to_string(),
+                agent_path: "explorer".to_string(),
+            })
+        );
+        assert_eq!(
+            threads.get("grandchild"),
+            Some(&SubAgentLink {
+                root_thread_id: "root".to_string(),
+                agent_path: "explorer/grandchild".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn activity_items_refine_the_agent_path_without_losing_the_root() {
+        let mut threads = HashMap::new();
+        record_sub_agent_thread(&mut threads, "child", "root", None);
+        record_sub_agent_thread(&mut threads, "child", "root", Some("reviewer"));
+        assert_eq!(threads["child"].agent_path, "reviewer");
+        assert_eq!(threads["child"].root_thread_id, "root");
+    }
+
+    #[test]
+    fn extracts_child_links_from_thread_started_and_activity_items() {
+        let started = json!({ "thread": { "id": "child", "parentThreadId": "root" } });
+        assert_eq!(
+            extract_spawned_thread_link(&started),
+            Some(("child".to_string(), "root".to_string()))
+        );
+        assert_eq!(
+            extract_spawned_thread_link(&json!({ "thread": { "id": "root" } })),
+            None
+        );
+
+        let activity = json!({
+            "threadId": "root",
+            "item": { "type": "subAgentActivity", "agentThreadId": "child", "agentPath": "explorer", "kind": "started" }
+        });
+        assert_eq!(
+            extract_sub_agent_activity(&activity),
+            Some(("child".to_string(), "explorer".to_string()))
+        );
+        assert_eq!(
+            extract_sub_agent_activity(&json!({ "item": { "type": "commandExecution" } })),
+            None
+        );
+    }
+
+    #[test]
+    fn sub_agent_approvals_are_labelled_with_the_agent_path() {
+        let mut mapper = TurnEventMapper::default();
+        let params = json!({
+            "threadId": "child",
+            "turnId": "child-turn",
+            "approvalId": "approval-1",
+            "command": "rm -rf build",
+        });
+        let mut approval = mapper
+            .map_server_request(
+                "request-1",
+                &json!(7),
+                "item/commandExecution/requestApproval",
+                &params,
+            )
+            .expect("approval should map");
+        let link = SubAgentLink {
+            root_thread_id: "root".to_string(),
+            agent_path: "explorer".to_string(),
+        };
+        decorate_sub_agent_approval(&mut approval, "child", &link);
+
+        let EngineEvent::ApprovalRequested {
+            summary, details, ..
+        } = approval.event
+        else {
+            panic!("expected approval event");
+        };
+        assert_eq!(summary, "Sub-agent explorer: rm -rf build");
+        assert_eq!(
+            details.get(APPROVAL_DETAIL_SUB_AGENT_PATH_KEY),
+            Some(&json!("explorer"))
+        );
+        assert_eq!(
+            details.get(APPROVAL_DETAIL_SUB_AGENT_THREAD_ID_KEY),
+            Some(&json!("child"))
+        );
     }
 }
