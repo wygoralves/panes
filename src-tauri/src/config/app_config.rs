@@ -20,6 +20,15 @@ pub fn clamp_terminal_font_size(font_size: u32) -> u32 {
     font_size.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE)
 }
 
+pub const MIN_UI_ZOOM_PERCENT: u32 = 70;
+pub const MAX_UI_ZOOM_PERCENT: u32 = 150;
+pub const DEFAULT_UI_ZOOM_PERCENT: u32 = 100;
+
+/// Clamp a requested interface zoom percentage into the supported range.
+pub fn clamp_ui_zoom_percent(zoom_percent: u32) -> u32 {
+    zoom_percent.clamp(MIN_UI_ZOOM_PERCENT, MAX_UI_ZOOM_PERCENT)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -169,6 +178,9 @@ pub struct UiConfig {
     pub sidebar_width: u32,
     pub git_panel_width: u32,
     pub font_size: u32,
+    /// Interface zoom in percent; `None` means 100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_percent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +278,11 @@ impl AppConfig {
     pub fn composer_plan_mode_visible(&self) -> bool {
         self.general.composer_plan_mode_visible.unwrap_or(true)
     }
+
+    /// Interface zoom percentage, clamped into the supported range.
+    pub fn ui_zoom_percent(&self) -> u32 {
+        clamp_ui_zoom_percent(self.ui.zoom_percent.unwrap_or(DEFAULT_UI_ZOOM_PERCENT))
+    }
 }
 
 impl Default for UiConfig {
@@ -274,6 +291,7 @@ impl Default for UiConfig {
             sidebar_width: 260,
             git_panel_width: 380,
             font_size: 13,
+            zoom_percent: None,
         }
     }
 }
@@ -778,6 +796,21 @@ max_action_output_chars = 20000
             providers[0].env.get("OPENAI_BASE_URL").map(String::as_str),
             Some("http://x")
         );
+    }
+
+    #[test]
+    fn ui_zoom_defaults_to_full_size_and_clamps() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.ui_zoom_percent(), 100);
+
+        config.ui.zoom_percent = Some(125);
+        assert_eq!(config.ui_zoom_percent(), 125);
+
+        config.ui.zoom_percent = Some(10);
+        assert_eq!(config.ui_zoom_percent(), 70);
+
+        config.ui.zoom_percent = Some(900);
+        assert_eq!(config.ui_zoom_percent(), 150);
     }
 
     #[test]

@@ -20,6 +20,7 @@ import {
 import { useWorkspaceStore } from "./stores/workspaceStore";
 import { useEngineStore } from "./stores/engineStore";
 import { useUiStore } from "./stores/uiStore";
+import { useUiZoomStore } from "./stores/uiZoomStore";
 import { useThreadStore } from "./stores/threadStore";
 import { useChatStore } from "./stores/chatStore";
 import { useGitStore } from "./stores/gitStore";
@@ -432,6 +433,20 @@ export function App() {
       // On macOS/WebKit, e.key is lowercase even when Shift is held with Cmd,
       // so normalize to lowercase and use e.shiftKey to differentiate.
       const key = e.key.toLowerCase();
+
+      // Cmd+= / Cmd+- / Cmd+0 scale the whole interface from any focus state.
+      if (!e.altKey && (key === "=" || key === "+" || key === "-" || key === "0")) {
+        e.preventDefault();
+        const zoom = useUiZoomStore.getState();
+        if (key === "0") {
+          fireShortcut("zoom-reset", () => void zoom.reset());
+        } else {
+          const direction = key === "-" ? -1 : 1;
+          fireShortcut(`zoom-${direction}`, () => void zoom.step(direction));
+        }
+        return;
+      }
+
       const allowWhileTerminalFocused = shouldHandleAppShortcutWhileTerminalFocused(key, e.shiftKey);
 
       if (isTerminalInputFocused() && !allowWhileTerminalFocused) return;

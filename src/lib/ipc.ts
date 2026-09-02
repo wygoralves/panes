@@ -84,6 +84,9 @@ export const ipc = {
   getComposerPlanModeVisible: () => invoke<boolean>("get_composer_plan_mode_visible"),
   setComposerPlanModeVisible: (visible: boolean) =>
     invoke<boolean>("set_composer_plan_mode_visible", { visible }),
+  getUiZoomPercent: () => invoke<number>("get_ui_zoom_percent"),
+  setUiZoomPercent: (zoomPercent: number) =>
+    invoke<number>("set_ui_zoom_percent", { zoomPercent }),
   getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
   setKeepAwakeEnabled: (enabled: boolean) =>
     invoke<KeepAwakeState>("set_keep_awake_enabled", { enabled }),
