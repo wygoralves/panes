@@ -73,7 +73,10 @@
       "xhighShort": "XAlt",
       "maxShort": "Máx"
     },
-    "fastMode": "Modo rápido"
+    "fastMode": "Modo rápido",
+    "favorites": "Favoritos",
+    "addFavorite": "Adicionar aos favoritos",
+    "removeFavorite": "Remover dos favoritos"
   },
   "attachments": {
     "codexTitle": "Anexar arquivos (imagens e texto)",
