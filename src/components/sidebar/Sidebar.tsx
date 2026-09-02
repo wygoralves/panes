@@ -130,6 +130,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const sidebarListMode = useSidebarListModeStore((s) => s.mode);
   const projectFilterId = useSidebarViewStore((s) => s.projectFilterId);
   const setProjectFilterId = useSidebarViewStore((s) => s.setProjectFilterId);
+  const showArchived = useSidebarViewStore((s) => s.showArchived);
+  const setShowArchived = useSidebarViewStore((s) => s.setShowArchived);
   const lastVisitedAtByThread = useThreadReadStore((s) => s.lastVisitedAtByThread);
   const loadSidebarListMode = useSidebarListModeStore((s) => s.load);
   const setSidebarListMode = useSidebarListModeStore((s) => s.setMode);
@@ -476,6 +478,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
           )}
           <SidebarListMenu
             mode={sidebarListMode}
+            showArchived={showArchived}
+            onToggleArchived={setShowArchived}
             onNewProject={() => {
               if (activeView !== "chat") setActiveView("chat");
               void onOpenFolder();
@@ -682,6 +686,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
         )}
 
         {/* Archived section */}
+        {showArchived ? (
         <div style={{ marginTop: 8, borderTop: "1px solid var(--wash-06)", paddingTop: 4 }}>
           <button
             type="button"
@@ -760,6 +765,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             </div>
           )}
         </div>
+        ) : null}
       </div>
 
       {/* ── Footer ── */}
