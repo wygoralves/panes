@@ -13,6 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::engines::engine_kind;
 use crate::{
     db,
     engines::{
@@ -511,7 +512,7 @@ pub async fn send_message(
         configured_reasoning_effort.clone()
     };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
-    let supports_panes_sandbox = thread.engine_id != "opencode";
+    let supports_panes_sandbox = engine_kind(&thread.engine_id) != "opencode";
     let sandbox_mode = if supports_panes_sandbox {
         Some(
             sandbox_mode_override
@@ -554,12 +555,12 @@ pub async fn send_message(
         .as_ref()
         .map(|repo| repo.trust_level.clone())
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
-    let codex_external_sandbox_active = if thread.engine_id == "codex" {
+    let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
         state.engines.codex_uses_external_sandbox().await
     } else {
         false
     };
-    let permission_profile = if thread.engine_id == "codex" {
+    let permission_profile = if engine_kind(&thread.engine_id) == "codex" {
         thread_permission_profile(thread.engine_metadata.as_ref())
     } else {
         None
@@ -637,14 +638,15 @@ pub async fn send_message(
         }
     };
 
-    let allow_network =
-        if thread.engine_id == "codex" && sandbox_mode.as_deref() == Some("danger-full-access") {
-            true
-        } else {
-            thread_allow_network_override(thread.engine_metadata.as_ref())
-                .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
-        };
-    let personality = if thread.engine_id == "codex"
+    let allow_network = if engine_kind(&thread.engine_id) == "codex"
+        && sandbox_mode.as_deref() == Some("danger-full-access")
+    {
+        true
+    } else {
+        thread_allow_network_override(thread.engine_metadata.as_ref())
+            .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
+    };
+    let personality = if engine_kind(&thread.engine_id) == "codex"
         && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
     {
         thread_personality(thread.engine_metadata.as_ref())
@@ -667,7 +669,7 @@ pub async fn send_message(
             )
         })),
         permission_profile,
-        approvals_reviewer: if thread.engine_id == "codex" {
+        approvals_reviewer: if engine_kind(&thread.engine_id) == "codex" {
             thread_approvals_reviewer(thread.engine_metadata.as_ref())
         } else {
             None
@@ -819,7 +821,7 @@ pub async fn start_codex_review(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if source_thread.engine_id != "codex" {
+    if engine_kind(&source_thread.engine_id) != "codex" {
         return Err("Native review is only available for Codex threads.".to_string());
     }
 
@@ -972,7 +974,7 @@ pub async fn steer_message(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if thread.engine_id != "codex" {
+    if engine_kind(&thread.engine_id) != "codex" {
         return Err("Mid-turn steering is only available for Codex threads.".to_string());
     }
 
@@ -2133,6 +2135,7 @@ async fn run_codex_review_turn(
     let (started_tx, started_rx) = oneshot::channel();
 
     let engines = state.engines.clone();
+    let source_engine_id_for_engine = source_thread.engine_id.clone();
     let source_engine_thread_id_for_engine = source_engine_thread_id.clone();
     let target_for_engine = target.clone();
     let delivery_for_engine = delivery.clone();
@@ -2141,6 +2144,7 @@ async fn run_codex_review_turn(
     let engine_task = tokio::spawn(async move {
         engines
             .start_codex_review(
+                &source_engine_id_for_engine,
                 &source_engine_thread_id_for_engine,
                 target_for_engine,
                 Some(delivery_for_engine.as_str()),
@@ -3933,7 +3937,7 @@ fn approval_policy_for_engine_and_trust_level(
     engine_id: &str,
     trust_level: &TrustLevelDto,
 ) -> &'static str {
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => match trust_level {
             TrustLevelDto::Trusted => "trusted",
             TrustLevelDto::Standard => "standard",
@@ -3959,7 +3963,7 @@ fn thread_approval_policy_override_value(
     engine_id: &str,
     metadata: Option<&Value>,
 ) -> Result<Option<Value>, String> {
-    match engine_id {
+    match engine_kind(engine_id) {
         "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
@@ -4374,6 +4378,7 @@ mod tests {
     fn attachment_validation_catalog(attachment_modalities: Vec<&str>) -> Vec<EngineInfoDto> {
         vec![EngineInfoDto {
             id: "opencode".to_string(),
+            kind: "opencode".to_string(),
             name: "OpenCode".to_string(),
             models: vec![EngineModelDto {
                 id: "opencode/test".to_string(),
@@ -5367,6 +5372,7 @@ mod tests {
     fn resolve_reasoning_effort_from_catalog_falls_back_to_model_default() {
         let engines = vec![EngineInfoDto {
             id: "codex".to_string(),
+            kind: "codex".to_string(),
             name: "Codex".to_string(),
             models: vec![EngineModelDto {
                 id: "gpt-5.1-codex-mini".to_string(),
@@ -5415,6 +5421,7 @@ mod tests {
     fn resolve_reasoning_effort_from_catalog_keeps_supported_effort() {
         let engines = vec![EngineInfoDto {
             id: "codex".to_string(),
+            kind: "codex".to_string(),
             name: "Codex".to_string(),
             models: vec![EngineModelDto {
                 id: "gpt-5.1-codex-mini".to_string(),

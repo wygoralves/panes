@@ -80,11 +80,12 @@ pub fn run() {
     let _ =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
 
+    let engines = EngineManager::from_config(&app_config);
     let app_state = AppState {
         db,
         config: Arc::new(app_config),
         config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
-        engines: Arc::new(EngineManager::new()),
+        engines: Arc::new(engines),
         git_watchers: Arc::new(GitWatcherManager::default()),
         terminals: Arc::new(TerminalManager::default()),
         notifications: Arc::new(terminal_notifications::TerminalNotificationManager::default()),
@@ -283,6 +284,9 @@ pub fn run() {
             commands::files::open_path_with_default_app,
             commands::git::watch_git_repo,
             commands::engines::list_engines,
+            commands::engines::list_chat_providers,
+            commands::engines::save_chat_provider,
+            commands::engines::remove_chat_provider,
             commands::engines::get_chat_provider_usage,
             commands::engines::codex_uses_external_sandbox,
             commands::engines::engine_health,

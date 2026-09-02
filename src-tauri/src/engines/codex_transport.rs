@@ -9,6 +9,7 @@ use tokio::{
     sync::{broadcast, oneshot, Mutex},
 };
 
+use super::instance::EngineInstanceSettings;
 use crate::{process_utils, runtime_env};
 
 use super::codex_protocol::{
@@ -43,18 +44,25 @@ impl Drop for CodexTransport {
 }
 
 impl CodexTransport {
-    pub async fn spawn(codex_executable: &str) -> anyhow::Result<Self> {
+    pub async fn spawn(
+        codex_executable: &str,
+        instance: &EngineInstanceSettings,
+    ) -> anyhow::Result<Self> {
         let mut command = Command::new(codex_executable);
         process_utils::configure_tokio_command(&mut command);
         runtime_env::apply_missing_login_shell_env(&mut command).await;
         if let Some(augmented_path) = codex_augmented_path(codex_executable) {
             command.env("PATH", augmented_path);
         }
+        for (key, value) in instance.process_env("codex") {
+            command.env(key, value);
+        }
 
         let mut child = command
             .arg("app-server")
             .arg("--listen")
             .arg("stdio://")
+            .args(&instance.launch_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
