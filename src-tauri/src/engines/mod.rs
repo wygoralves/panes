@@ -773,8 +773,13 @@ impl EngineManager {
         handles
     }
 
+    /// The engine behind an exact engine id. Built-in ids map to the built-in
+    /// engines; extra instance ids (`<kind>_<slug>`) resolve only to their
+    /// own configured instance, never to the built-in engine of the same
+    /// kind, so a disabled or removed account fails instead of silently
+    /// running against the default account.
     pub async fn handle(&self, engine_id: &str) -> Option<EngineHandle> {
-        match engine_kind(engine_id) {
+        match engine_id {
             "codex" => return Some(EngineHandle::Codex(self.codex.clone())),
             "claude" => return Some(EngineHandle::Claude(self.claude.clone())),
             "opencode" => return Some(EngineHandle::OpenCode(self.opencode.clone())),
@@ -1472,5 +1477,56 @@ mod tests {
             ),
             None
         );
+    }
+
+    fn provider_entry(id: &str, kind: &str, enabled: bool) -> ChatProviderInstanceConfig {
+        ChatProviderInstanceConfig {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            display_name: format!("{id} account"),
+            home_path: Some(format!("/tmp/panes-test-{id}")),
+            enabled,
+            ..ChatProviderInstanceConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_resolves_extra_instances_before_builtin_kinds() {
+        let config = AppConfig {
+            chat_providers: vec![
+                provider_entry("claude_work", "claude", true),
+                provider_entry("codex_personal", "codex", true),
+                provider_entry("claude_disabled", "claude", false),
+            ],
+            ..AppConfig::default()
+        };
+        let manager = EngineManager::from_config(&config);
+
+        let work = manager.handle("claude_work").await.expect("claude_work");
+        assert_eq!(work.id(), "claude_work");
+        assert!(matches!(work, EngineHandle::Claude(_)));
+        assert!(!Arc::ptr_eq(
+            match &work {
+                EngineHandle::Claude(engine) => engine,
+                _ => unreachable!(),
+            },
+            &manager.claude
+        ));
+
+        let personal = manager
+            .handle("codex_personal")
+            .await
+            .expect("codex_personal");
+        assert_eq!(personal.id(), "codex_personal");
+        assert!(matches!(personal, EngineHandle::Codex(_)));
+
+        assert_eq!(manager.handle("claude").await.unwrap().id(), "claude");
+        assert_eq!(manager.handle("codex").await.unwrap().id(), "codex");
+        assert_eq!(manager.handle("opencode").await.unwrap().id(), "opencode");
+
+        // A disabled or unknown instance must not fall back to the default
+        // account of its kind.
+        assert!(manager.handle("claude_disabled").await.is_none());
+        assert!(manager.handle("codex_missing").await.is_none());
     }
 }
