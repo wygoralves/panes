@@ -10366,12 +10366,13 @@ label.mp-footer-row {
   transition: width var(--duration-slow) var(--ease-spring);
 }
 
-/* Top level: the fill turns into a slow holographic foil with a sheen sweep */
+/* Top level: the fill becomes a holographic foil, two soft layers of
+   iridescent bands drifting against each other, no sweeps or flashes */
 .mp-slider-fill::before,
 .mp-slider-fill::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -40% 0;
   opacity: 0;
   transition: opacity var(--duration-slow) var(--ease-out);
 }
@@ -10379,24 +10380,25 @@ label.mp-footer-row {
 .mp-slider-fill::before {
   background: linear-gradient(
     100deg,
-    var(--brand-mint-400),
-    var(--brand-blue),
-    var(--brand-violet),
-    var(--brand-coral),
-    var(--brand-amber),
-    var(--brand-mint-400)
+    var(--brand-mint-400) 0%,
+    var(--brand-blue) 18%,
+    var(--brand-violet) 36%,
+    var(--brand-coral) 54%,
+    var(--brand-amber) 72%,
+    var(--brand-mint-400) 100%
   );
-  background-size: 300% 100%;
+  background-size: 220% 100%;
 }
 
 .mp-slider-fill::after {
-  background: linear-gradient(
-    115deg,
-    transparent 38%,
-    rgba(255, 255, 255, 0.22) 50%,
-    transparent 62%
+  background: repeating-linear-gradient(
+    -60deg,
+    rgba(255, 255, 255, 0) 0 5px,
+    rgba(255, 255, 255, 0.14) 5px 7px,
+    rgba(255, 255, 255, 0) 7px 13px
   );
-  background-size: 260% 100%;
+  background-size: 200% 100%;
+  mix-blend-mode: soft-light;
 }
 
 .mp-slider-holo .mp-slider-fill {
@@ -10406,22 +10408,22 @@ label.mp-footer-row {
 
 .mp-slider-holo .mp-slider-fill::before {
   opacity: 0.5;
-  animation: mp-holo-shift 8s linear infinite;
+  animation: mp-holo-drift 14s ease-in-out infinite alternate;
 }
 
 .mp-slider-holo .mp-slider-fill::after {
   opacity: 1;
-  animation: mp-holo-sheen 3.4s ease-in-out infinite;
+  animation: mp-holo-grain 22s linear infinite;
 }
 
-@keyframes mp-holo-shift {
+@keyframes mp-holo-drift {
   from { background-position: 0% 50%; }
-  to { background-position: 300% 50%; }
+  to { background-position: 100% 50%; }
 }
 
-@keyframes mp-holo-sheen {
-  0% { background-position: 130% 0; }
-  60%, 100% { background-position: -130% 0; }
+@keyframes mp-holo-grain {
+  from { background-position: 0 0; }
+  to { background-position: -200% 0; }
 }
 
 .mp-slider-stop {
