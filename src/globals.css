@@ -10404,7 +10404,7 @@ label.mp-footer-row {
 }
 
 .mp-effort-holo-hover {
-  transition: --mp-holo-x 120ms var(--ease-out);
+  transition: none;
 }
 
 @keyframes mp-holo-idle {
@@ -10425,24 +10425,25 @@ label.mp-footer-row {
   background-image: var(--mp-holo-foil);
   background-size: 260% 100%;
   background-position: var(--mp-holo-x) 50%;
+  will-change: background-position;
 }
 
 .mp-slider-fill::after {
   background:
     radial-gradient(
       40% 170% at var(--mp-holo-x) 50%,
-      rgba(255, 255, 255, 0.42),
-      rgba(255, 255, 255, 0.12) 38%,
+      rgba(255, 255, 255, 0.28),
+      rgba(255, 255, 255, 0.08) 38%,
       rgba(255, 255, 255, 0) 70%
     ),
     linear-gradient(
       90deg,
-      rgba(0, 0, 0, 0.5),
-      rgba(0, 0, 0, 0.08) 32%,
-      rgba(0, 0, 0, 0.08) 68%,
-      rgba(0, 0, 0, 0.5)
+      rgba(0, 0, 0, 0.42),
+      rgba(0, 0, 0, 0.06) 32%,
+      rgba(0, 0, 0, 0.06) 68%,
+      rgba(0, 0, 0, 0.42)
     );
-  mix-blend-mode: overlay;
+  will-change: background-position;
 }
 
 .mp-slider-holo .mp-slider-fill {
