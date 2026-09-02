@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { ipc, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
 import { useThreadStore } from "./threadStore";
+import { useThreadReadStore } from "./threadReadStore";
 import type {
   ApprovalResponse,
   ActionBlock,
@@ -19,6 +20,8 @@ import type {
   SkillBlock,
   SteerBlock,
   StreamEvent,
+  TaskListBlock,
+  TaskStatus,
   ThreadStatus
 } from "../types";
 
@@ -947,6 +950,19 @@ function upsertNoticeBlock(blocks: ContentBlock[], block: NoticeBlock): ContentB
   return [block, ...blocks];
 }
 
+function upsertTaskListBlock(
+  blocks: ContentBlock[],
+  block: TaskListBlock,
+): ContentBlock[] {
+  const withoutSource = blocks.filter(
+    (candidate) => candidate.type !== "taskList" || candidate.source !== block.source,
+  );
+  if (block.tasks.length === 0) {
+    return withoutSource;
+  }
+  return [block, ...withoutSource];
+}
+
 function normalizeBlocks(blocks?: ContentBlock[]): ContentBlock[] | undefined {
   if (!Array.isArray(blocks)) {
     return blocks;
@@ -1622,6 +1638,42 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     });
   }
 
+  if (event.type === "TaskListUpdated") {
+    const source = String(event.source ?? "tasks");
+    const tasks = Array.isArray(event.tasks)
+      ? event.tasks.flatMap((rawTask) => {
+          if (!rawTask || typeof rawTask !== "object") return [];
+          const task = rawTask as unknown as Record<string, unknown>;
+          const id = String(task.id ?? "").trim();
+          const title = String(task.title ?? "").trim();
+          const rawStatus = String(task.status ?? "pending");
+          const status: TaskStatus =
+            rawStatus === "completed" || rawStatus === "in_progress"
+              ? rawStatus
+              : "pending";
+          if (!id || !title) return [];
+          return [{
+            id,
+            title,
+            status,
+            activeForm: typeof task.activeForm === "string" ? task.activeForm : undefined,
+            description: typeof task.description === "string" ? task.description : undefined,
+            owner: typeof task.owner === "string" ? task.owner : undefined,
+            blockedBy: Array.isArray(task.blockedBy) ? task.blockedBy.map(String) : [],
+          }];
+        })
+      : [];
+    assistant.blocks = upsertTaskListBlock(assistant.blocks ?? [], {
+      type: "taskList",
+      source,
+      explanation:
+        typeof event.explanation === "string" && event.explanation.trim()
+          ? event.explanation
+          : undefined,
+      tasks,
+    });
+  }
+
   if (event.type === "Error") {
     const blocks = assistant.blocks ?? [];
     assistant.blocks = [...blocks, { type: "error", message: String(event.message ?? "Unknown error") }];
@@ -1913,6 +1965,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           emitEventRateMetric(now);
         }
         if (event.type === "TurnCompleted") {
+          // The completion bumps the thread's last activity. If this is the
+          // thread the user has open, re-stamp the visit so the open row does
+          // not flip to unread behind them.
+          useThreadStore.getState().markThreadReadIfActive(threadId);
           flushQueuedStreamEvents();
           emitEventRateMetric(performance.now());
           return;
@@ -2100,6 +2156,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: "No active thread selected" });
       return false;
     }
+    // Sending is engagement: the thread cannot stay unread behind the user.
+    useThreadReadStore.getState().markThreadVisited(threadId);
+
     const startedAt = performance.now();
     const clientTurnId = crypto.randomUUID();
     const optimisticAssistantMessageId = crypto.randomUUID();

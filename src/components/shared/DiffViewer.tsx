@@ -323,7 +323,7 @@ export function VirtualizedDiffBody({
   );
 
   useEffect(() => {
-    setExpandedFolds(new Set<number>());
+    setExpandedFolds((current) => (current.size === 0 ? current : new Set<number>()));
   }, [parsed]);
 
   const rows = useMemo(

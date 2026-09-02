@@ -309,6 +309,62 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("replaces task snapshots by engine source and removes empty lists", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    mockIpc.sendMessage.mockResolvedValueOnce("assistant-message-id");
+    await useChatStore.getState().send("handle the tasks", { engineId: "codex" });
+
+    streamHandler!({
+      type: "TaskListUpdated",
+      source: "codex",
+      explanation: "Apply the requested UI changes.",
+      tasks: [
+        {
+          id: "codex-plan-0",
+          title: "Inspect the UI",
+          status: "in_progress",
+          activeForm: null,
+          description: null,
+          owner: null,
+          blockedBy: [],
+        },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((message) => message.role === "assistant" && message.blocks?.length);
+    expect(assistant?.blocks?.[0]).toMatchObject({
+      type: "taskList",
+      source: "codex",
+      explanation: "Apply the requested UI changes.",
+      tasks: [{ title: "Inspect the UI", status: "in_progress" }],
+    });
+
+    streamHandler!({
+      type: "TaskListUpdated",
+      source: "codex",
+      explanation: null,
+      tasks: [],
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    const clearedAssistant = useChatStore
+      .getState()
+      .messages.find((message) => message.id === assistant?.id);
+    expect(clearedAssistant?.blocks).toEqual([]);
+
+    vi.useRealTimers();
+  });
+
   it("derives context usage from current context tokens instead of cumulative totals", async () => {
     vi.useFakeTimers();
 
@@ -429,6 +485,7 @@ describe("chatStore send", () => {
           totalTokens: 0,
           createdAt: new Date().toISOString(),
           lastActivityAt: new Date().toISOString(),
+          settledAt: null,
         },
       ],
     });
@@ -1213,6 +1270,7 @@ describe("chatStore send", () => {
         totalTokens: 0,
         createdAt: new Date().toISOString(),
         lastActivityAt: new Date().toISOString(),
+        settledAt: null,
       };
 
       useThreadStore.setState({
@@ -1331,6 +1389,7 @@ describe("chatStore send", () => {
       totalTokens: 0,
       createdAt: new Date().toISOString(),
       lastActivityAt: new Date().toISOString(),
+      settledAt: null,
     };
 
     useThreadStore.setState({

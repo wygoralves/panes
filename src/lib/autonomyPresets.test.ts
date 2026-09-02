@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTONOMY_PRESET_IDS,
   availableAutonomyPresets,
   autonomyPresetDescriptionKey,
   autonomyPresetExecutionPolicyRequest,
   autonomyPresetPatch,
   detectAutonomyPreset,
+  isAutonomyPresetId,
   isDefaultAutonomyPreset,
+  resolveAutonomyPresetForEngine,
   resolveDefaultAutonomyPreset,
+  stopAskingAutonomyPreset,
 } from "./autonomyPresets";
 import type { AutonomyPresetId } from "./autonomyPresets";
 import type { ChatEngineId } from "../types";
@@ -29,7 +33,7 @@ describe("autonomyPresetPatch", () => {
   });
 
   it("never emits sandbox or network keys for opencode", () => {
-    for (const preset of availableAutonomyPresets("opencode")) {
+    for (const preset of AUTONOMY_PRESET_IDS) {
       const patch = autonomyPresetPatch(preset, "opencode");
       expect("sandboxMode" in patch).toBe(false);
       expect("networkPolicy" in patch).toBe(false);
@@ -45,23 +49,70 @@ describe("autonomyPresetPatch", () => {
   });
 });
 
-describe("detectAutonomyPreset", () => {
-  it("round-trips every available preset for every engine", () => {
+describe("resolveAutonomyPresetForEngine", () => {
+  it("keeps every rung an engine exposes", () => {
     const engines: ChatEngineId[] = ["codex", "claude", "opencode"];
     for (const engineId of engines) {
       for (const preset of availableAutonomyPresets(engineId)) {
+        expect(resolveAutonomyPresetForEngine(preset, engineId)).toBe(preset);
+      }
+    }
+  });
+
+  it("steps a missing rung down instead of onto a more permissive one", () => {
+    expect(resolveAutonomyPresetForEngine("auto", "opencode")).toBe("ask");
+    expect(autonomyPresetPatch("auto", "opencode")).toEqual({ approvalPolicy: "ask" });
+    expect(autonomyPresetExecutionPolicyRequest("auto", "opencode")).toEqual({
+      approvalPolicy: "ask",
+    });
+  });
+});
+
+describe("stopAskingAutonomyPreset", () => {
+  it("targets the sandboxed auto rung where the engine has one", () => {
+    expect(stopAskingAutonomyPreset("codex")).toBe("auto");
+    expect(stopAskingAutonomyPreset("claude")).toBe("auto");
+  });
+
+  it("never escalates to full autonomy", () => {
+    const engines: ChatEngineId[] = ["codex", "claude", "opencode"];
+    for (const engineId of engines) {
+      expect(stopAskingAutonomyPreset(engineId)).not.toBe("full");
+    }
+    expect(stopAskingAutonomyPreset("opencode")).toBe("ask");
+  });
+
+  it("never asks for a sandbox Claude rejects", () => {
+    expect(autonomyPresetPatch(stopAskingAutonomyPreset("claude"), "claude").sandboxMode).toBe(
+      "workspace-write",
+    );
+  });
+});
+
+describe("isAutonomyPresetId", () => {
+  it("accepts every declared rung and nothing else", () => {
+    for (const preset of AUTONOMY_PRESET_IDS) {
+      expect(isAutonomyPresetId(preset)).toBe(true);
+    }
+    expect(isAutonomyPresetId("allow")).toBe(false);
+    expect(isAutonomyPresetId(null)).toBe(false);
+  });
+});
+
+describe("detectAutonomyPreset", () => {
+  it("round-trips every preset for every engine", () => {
+    const engines: ChatEngineId[] = ["codex", "claude", "opencode"];
+    for (const engineId of engines) {
+      for (const preset of AUTONOMY_PRESET_IDS) {
         const patch = autonomyPresetPatch(preset, engineId);
         const snapshot = {
           approvalPolicy: patch.approvalPolicy,
           sandboxMode: patch.sandboxMode ?? "inherit",
           networkPolicy: patch.networkPolicy ?? "inherit",
         };
-        const detected = detectAutonomyPreset(engineId, snapshot);
-        if (engineId === "opencode" && preset === "auto") {
-          expect(detected).toBe("full");
-        } else {
-          expect(detected).toBe(preset);
-        }
+        expect(detectAutonomyPreset(engineId, snapshot)).toBe(
+          resolveAutonomyPresetForEngine(preset, engineId),
+        );
       }
     }
   });

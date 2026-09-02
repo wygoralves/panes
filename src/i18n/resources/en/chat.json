@@ -366,15 +366,13 @@
     "advanced": "Advanced",
     "backToPresets": "Presets",
     "allowAll": "Allow all",
-    "allowAllStopAsking": "Allow all & stop asking",
+    "allowAllAndSwitch": "Allow all & {{preset}}",
     "approvalToastTitle": "{{engine}} needs approval",
     "openThread": "Open thread",
     "defaultSaveFailed": "Failed to save the default autonomy: {{error}}"
   },
   "panel": {
     "assistantFallback": "Assistant",
-    "emptyHint": "Open a folder and send a message to begin",
-    "startConversation": "Start a conversation",
     "workspaceChatTitle": "Workspace Chat",
     "repoChatTitle": "{{name}} Chat",
     "renameThread": "Click to rename thread",
@@ -406,6 +404,11 @@
     "planImplementationOptionImplementDescription": "Leave plan mode and ask Codex to start executing this plan in the current thread.",
     "planImplementationOptionStay": "Stay in plan mode",
     "planImplementationOptionStayDescription": "Keep plan mode enabled so the next message stays in planning mode.",
+    "draftHeadline": "What should we work on in <scope>{{scope}}</scope>?",
+    "draftHeadlineNoWorkspace": "Open a folder to start",
+    "draftPickProject": "Choose a project",
+    "draftSearchProjects": "Search projects",
+    "draftNoProjectsFound": "No projects match",
     "placeholders": {
       "plan": "Describe what you want to plan...",
       "chat": "Ask for follow-up changes"
@@ -485,13 +488,7 @@
     "approvalBannerTitleCount_one": "{{count}} pending approval",
     "approvalBannerTitleCount_other": "{{count}} pending approvals",
     "editResend": "Edit and resend",
-    "attachShort": "Attach",
-    "emptyScopeRepo": "Messages run against {{repo}}",
-    "emptyScopeRepoBranch": "Messages run against {{repo}} on branch {{branch}}",
-    "emptySuggestionSummarize": "Summarize recent changes",
-    "emptySuggestionTests": "Fix the failing test",
-    "emptyHintCommands": "commands",
-    "emptyHintSlash": "slash actions"
+    "attachShort": "Attach"
   },
   "messageBlocks": {
     "diffFallback": "diff ({{scope}})",
@@ -599,7 +596,6 @@
     "windowOpusWeeklyLeft": "Opus weekly left",
     "windowSonnetWeeklyLeft": "Sonnet weekly left",
     "resets": "resets {{time}}",
-    "usageAwaitingFirstMessage": "Send a message to load usage limits",
     "usageLoading": "Loading usage limits...",
     "usageUnavailable": "Usage limits unavailable from server",
     "openUsageLimits": "Open usage limits",

@@ -60,4 +60,14 @@ describe("getMessageBlockKey", () => {
       getMessageBlockKey(reroutedBlocks[2], 2, reroutedBlocks),
     );
   });
+
+  it("keys task lists by engine source", () => {
+    const block: ContentBlock = {
+      type: "taskList",
+      source: "claude",
+      tasks: [],
+    };
+
+    expect(getMessageBlockKey(block, 0, [block])).toBe("task-list:claude");
+  });
 });
