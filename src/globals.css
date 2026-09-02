@@ -4843,6 +4843,10 @@ button, input, textarea, select {
   opacity: 1;
 }
 
+.sb-status-label[data-status="draft"] {
+  color: var(--text-3);
+}
+
 .sb-status-label[data-status="approval"] {
   color: var(--warning);
 }
@@ -5253,6 +5257,15 @@ button, input, textarea, select {
 
 .sb-status-row-settled .sb-status-glyph {
   opacity: 0.55;
+}
+
+.sb-status-row[data-status="draft"] .sb-status-title {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.sb-status-row-active[data-status="draft"] .sb-status-title {
+  color: var(--text-2);
 }
 
 .sb-status-main {

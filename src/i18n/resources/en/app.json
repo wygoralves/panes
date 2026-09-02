@@ -121,7 +121,9 @@
     "noProjectsBody": "Open a folder and its threads will show up here.",
     "openFolderAction": "Open folder",
     "clearFilter": "Clear",
-    "moreCount": "{{count}} more"
+    "moreCount": "{{count}} more",
+    "inboxDrafts": "Drafts",
+    "statusLabelDraft": "Draft"
   },
   "commandPalette": {
     "placeholder": "Search commands, threads, workspaces, or files...",

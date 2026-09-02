@@ -35,6 +35,19 @@ function thread(id: string, status: ThreadStatus = "idle"): Thread {
 }
 
 describe("groupThreadsForInbox", () => {
+  it("keeps an unsent thread as a draft above everything else", () => {
+    const draft = { ...thread("draft", "idle"), messageCount: 0 };
+    const idle = { ...thread("idle", "idle"), messageCount: 3 };
+    const approval = thread("approval", "awaiting_approval");
+
+    const groups = groupThreadsForInbox([idle, approval, draft], {}, "draft");
+
+    expect(groups.drafts.map((item) => item.id)).toEqual(["draft"]);
+    expect(groups.needsYou.map((item) => item.id)).toEqual(["approval"]);
+    expect(groups.done.map((item) => item.id)).toEqual(["idle"]);
+  });
+
+
   it("puts approvals and failures first, oldest waiting on top", () => {
     const approval = {
       ...thread("approval", "awaiting_approval"),

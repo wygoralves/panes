@@ -8,6 +8,7 @@ import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ProjectIcon } from "../sidebar/ProjectIcon";
+import { isDraftThread } from "../sidebar/statusGrouping";
 import type { Thread, Workspace } from "../../types";
 
 const NEW_PROJECT_VALUE = "__new-project__";
@@ -19,14 +20,7 @@ function workspaceLabel(workspace: Workspace, fallback: string): string {
 /** An untouched draft in the target project is reused instead of stacking a
  * second empty thread next to it. */
 export function findReusableDraftThread(threads: Thread[]): Thread | null {
-  return (
-    threads.find(
-      (thread) =>
-        thread.messageCount === 0 &&
-        thread.status === "idle" &&
-        !thread.settledAt,
-    ) ?? null
-  );
+  return threads.find(isDraftThread) ?? null;
 }
 
 interface Props {

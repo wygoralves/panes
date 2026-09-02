@@ -121,7 +121,9 @@
     "noProjectsBody": "Abra uma pasta e as threads dela aparecem aqui.",
     "openFolderAction": "Abrir pasta",
     "clearFilter": "Limpar",
-    "moreCount": "Mais {{count}}"
+    "moreCount": "Mais {{count}}",
+    "inboxDrafts": "Rascunhos",
+    "statusLabelDraft": "Rascunho"
   },
   "commandPalette": {
     "placeholder": "Busque comandos, threads, workspaces ou arquivos...",

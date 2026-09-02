@@ -8,9 +8,11 @@ export interface StatusGroups {
 
 export type StatusSectionId = keyof StatusGroups;
 
-/** Five row states, one resting state. "ready" is the unlabeled state: the
- * engine stopped and the user has already seen the result. */
+/** Six row states, one resting state. "ready" is the unlabeled state: the
+ * engine stopped and the user has already seen the result. "draft" is a
+ * thread nothing has been sent on yet. */
 export type ThreadDisplayStatus =
+  | "draft"
   | "working"
   | "approval"
   | "failed"
@@ -78,6 +80,12 @@ export function hasUnseenCompletion(input: UnseenCompletionInput): boolean {
   return completedAt > visitedAt;
 }
 
+/** A thread nothing has been sent on: the page is open but the list has no
+ * work to report for it yet. */
+export function isDraftThread(thread: Thread): boolean {
+  return thread.messageCount === 0 && thread.status === "idle" && !thread.settledAt;
+}
+
 /** Row display state. "done" is reserved for completions the user has not
  * seen yet: a read completion rests unlabeled as "ready". The open thread is
  * read by definition, whatever the stamps say: the user is looking at it. */
@@ -94,6 +102,9 @@ export function resolveThreadDisplayStatus(
       lastVisitedAt,
     });
 
+  if (isDraftThread(thread)) {
+    return { status: "draft", isUnread: false };
+  }
   if (thread.status === "awaiting_approval") {
     return { status: "approval", isUnread };
   }
@@ -138,6 +149,8 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
    ───────────────────────────────────────────────────── */
 
 export interface InboxGroups {
+  /** Threads nothing has been sent on yet, newest first. */
+  drafts: Thread[];
   /** Approval requests and failures, oldest first: the one kept waiting
    * longest sits on top. */
   needsYou: Thread[];
@@ -158,7 +171,7 @@ export function groupThreadsForInbox(
   lastVisitedAtByThread: Record<string, string | null | undefined>,
   activeThreadId: string | null,
 ): InboxGroups {
-  const groups: InboxGroups = { needsYou: [], working: [], done: [], settled: [] };
+  const groups: InboxGroups = { drafts: [], needsYou: [], working: [], done: [], settled: [] };
 
   for (const thread of threads) {
     if (thread.settledAt) {
@@ -170,7 +183,9 @@ export function groupThreadsForInbox(
       lastVisitedAtByThread[thread.id],
       thread.id === activeThreadId,
     );
-    if (display.status === "approval" || display.status === "failed") {
+    if (display.status === "draft") {
+      groups.drafts.push(thread);
+    } else if (display.status === "approval" || display.status === "failed") {
       groups.needsYou.push(thread);
     } else if (display.status === "working") {
       groups.working.push(thread);
@@ -179,6 +194,11 @@ export function groupThreadsForInbox(
     }
   }
 
+  groups.drafts.sort(
+    (left, right) =>
+      sortableTimestampMs(right.createdAt) - sortableTimestampMs(left.createdAt) ||
+      left.id.localeCompare(right.id),
+  );
   groups.needsYou.sort(
     (left, right) =>
       sortableTimestampMs(left.lastActivityAt) - sortableTimestampMs(right.lastActivityAt) ||

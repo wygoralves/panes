@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleCheck,
   MessageSquare,
+  PencilLine,
   Plus,
   RotateCcw,
 } from "lucide-react";
@@ -52,7 +53,9 @@ interface Props {
  * completion, and a quiet check for everything that rests. */
 function StatusGlyph({ status }: { status: ThreadDisplayStatus | "settled" }) {
   let inner: ReactNode;
-  if (status === "working") {
+  if (status === "draft") {
+    inner = <PencilLine size={11} strokeWidth={1.8} />;
+  } else if (status === "working") {
     inner = <span className="sb-status-glyph-ring" />;
   } else if (status === "approval" || status === "failed" || status === "done") {
     inner = <span className="sb-status-glyph-dot" />;
@@ -170,7 +173,7 @@ export function StatusThreadList({
       isActive,
     );
     const glyphStatus = sectionId === "settled" ? "settled" : display.status;
-    const canSettle = canSettleThread(thread);
+    const canSettle = canSettleThread(thread) && display.status !== "draft";
     const engineIcon = getHarnessIcon(engineKind(thread.engineId), 10);
 
     return (
@@ -306,6 +309,7 @@ export function StatusThreadList({
         </div>
       )}
 
+      {renderSection("drafts", "app:sidebar.inboxDrafts")}
       {renderSection("needsYou", "app:sidebar.inboxNeedsYou")}
       {renderSection("working", "app:sidebar.inboxWorking")}
       {renderSection("done", "app:sidebar.inboxDone")}
