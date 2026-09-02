@@ -37,7 +37,12 @@ fn chat_provider_dto(entry: &ChatProviderInstanceConfig) -> ChatProviderInstance
 fn chat_provider_rows(config: &AppConfig) -> Vec<ChatProviderInstanceDto> {
     let configured = config.chat_providers();
     let mut rows = Vec::new();
-    for kind in CHAT_PROVIDER_KINDS {
+    let builtin_kinds: Vec<&str> = CHAT_PROVIDER_KINDS
+        .iter()
+        .copied()
+        .chain(std::iter::once("opencode"))
+        .collect();
+    for kind in builtin_kinds.iter() {
         match configured.iter().find(|entry| entry.id == *kind) {
             Some(entry) => rows.push(chat_provider_dto(entry)),
             None => rows.push(ChatProviderInstanceDto {
@@ -46,6 +51,7 @@ fn chat_provider_rows(config: &AppConfig) -> Vec<ChatProviderInstanceDto> {
                 display_name: match *kind {
                     "codex" => "Codex".to_string(),
                     "claude" => "Claude".to_string(),
+                    "opencode" => "OpenCode".to_string(),
                     other => other.to_string(),
                 },
                 binary_path: None,

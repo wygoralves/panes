@@ -90,7 +90,10 @@ impl ChatProviderInstanceConfig {
     /// Validates the entry shape: known kind, well-formed id for the kind,
     /// and a display name.
     pub fn validate(&self) -> Result<(), String> {
-        if !CHAT_PROVIDER_KINDS.contains(&self.kind.as_str()) {
+        // OpenCode has no extra instances, but its built-in row can still be
+        // switched off in settings.
+        let builtin_only_kind = self.kind == "opencode" && self.id == self.kind;
+        if !CHAT_PROVIDER_KINDS.contains(&self.kind.as_str()) && !builtin_only_kind {
             return Err(format!(
                 "unsupported chat provider kind `{}`. expected one of: {}",
                 self.kind,
