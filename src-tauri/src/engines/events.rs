@@ -110,6 +110,18 @@ fn read_json_hex_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) ->
     Some(value)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskItem {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub active_form: Option<String>,
+    pub description: Option<String>,
+    pub owner: Option<String>,
+    pub blocked_by: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum EngineEvent {
@@ -125,6 +137,11 @@ pub enum EngineEvent {
     },
     ThinkingDelta {
         content: String,
+    },
+    TaskListUpdated {
+        source: String,
+        explanation: Option<String>,
+        tasks: Vec<TaskItem>,
     },
     ActionStarted {
         action_id: String,

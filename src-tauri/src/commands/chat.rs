@@ -18,7 +18,7 @@ use crate::{
     engines::{
         approval_response_route_for_engine, normalize_approval_response_for_engine,
         trim_action_output_delta_content, validate_engine_sandbox_mode, ApprovalRequestRoute,
-        EngineEvent, OutputStream, SandboxPolicy, ThreadScope, TurnAttachment,
+        EngineEvent, OutputStream, SandboxPolicy, TaskItem, ThreadScope, TurnAttachment,
         TurnCompletionStatus, TurnInput, TurnInputItem, STREAMED_DIFF_MAX_CHARS,
     },
     models::{
@@ -112,6 +112,14 @@ enum ContentBlock {
         started_at: Option<f64>,
         #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
         duration_ms: Option<f64>,
+    },
+
+    #[serde(rename = "taskList")]
+    TaskList {
+        source: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        explanation: Option<String>,
+        tasks: Vec<TaskItem>,
     },
 
     #[serde(rename = "notice")]
@@ -733,7 +741,7 @@ pub async fn send_message(
                 Some(model_id.as_str()),
                 reasoning_effort.as_deref(),
             )?;
-            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+            db::threads::start_thread_turn(db, &thread_id)?;
             Ok(assistant_message)
         }
     })
@@ -747,6 +755,23 @@ pub async fn send_message(
     };
 
     let state_cloned = state.inner().clone();
+
+    if let Ok(Some(updated_thread)) = run_db(db.clone(), {
+        let thread_id = thread.id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await
+    {
+        let _ = app.emit(
+            "thread-updated",
+            ThreadUpdatedEvent {
+                thread_id: updated_thread.id.clone(),
+                workspace_id: updated_thread.workspace_id.clone(),
+                thread: Some(updated_thread),
+            },
+        );
+    }
+
     let app_handle = app.clone();
     let assistant_message_id = assistant_message.id.clone();
     let turn_input_for_task = turn_input.clone();
@@ -865,7 +890,7 @@ pub async fn start_codex_review(
                 Some(initial_turn_model_id.as_str()),
                 reasoning_effort.as_deref(),
             )?;
-            db::threads::update_thread_status(db, &review_thread.id, ThreadStatusDto::Streaming)?;
+            db::threads::start_thread_turn(db, &review_thread.id)?;
             let updated_thread = db::threads::get_thread(db, &review_thread.id)?
                 .ok_or_else(|| anyhow::anyhow!("review thread not found after setup"))?;
             Ok((updated_thread, assistant_message.id))
@@ -3300,6 +3325,21 @@ fn apply_event_to_blocks(
         EngineEvent::ThinkingDelta { content } => {
             progress.blocks_changed = append_thinking_delta(blocks, content);
         }
+        EngineEvent::TaskListUpdated {
+            source,
+            explanation,
+            tasks,
+        } => {
+            progress.blocks_changed = upsert_task_list_block(
+                blocks,
+                action_index,
+                approval_index,
+                source,
+                explanation.clone(),
+                tasks.clone(),
+            );
+            progress.force_persist = true;
+        }
         EngineEvent::ActionStarted {
             action_id,
             engine_action_id,
@@ -3651,6 +3691,49 @@ fn upsert_notice_block(
             *existing = block;
             return true;
         }
+    }
+
+    blocks.insert(0, block);
+    rebuild_block_indexes(blocks, action_index, approval_index);
+    true
+}
+
+fn upsert_task_list_block(
+    blocks: &mut Vec<ContentBlock>,
+    action_index: &mut HashMap<String, usize>,
+    approval_index: &mut HashMap<String, usize>,
+    source: &str,
+    explanation: Option<String>,
+    tasks: Vec<TaskItem>,
+) -> bool {
+    let existing_index = blocks.iter().position(|existing| {
+        matches!(
+            existing,
+            ContentBlock::TaskList {
+                source: existing_source,
+                ..
+            } if existing_source == source
+        )
+    });
+
+    if tasks.is_empty() {
+        if let Some(index) = existing_index {
+            blocks.remove(index);
+            rebuild_block_indexes(blocks, action_index, approval_index);
+            return true;
+        }
+        return false;
+    }
+
+    let block = ContentBlock::TaskList {
+        source: source.to_string(),
+        explanation,
+        tasks,
+    };
+
+    if let Some(index) = existing_index {
+        blocks[index] = block;
+        return true;
     }
 
     blocks.insert(0, block);
@@ -5025,6 +5108,55 @@ mod tests {
             &blocks[0],
             ContentBlock::Notice { message, .. } if message == "Use the newer permissions API."
         ));
+    }
+
+    #[test]
+    fn task_list_snapshots_replace_by_source_and_clear_when_empty() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let task = TaskItem {
+            id: "codex-plan-0".to_string(),
+            title: "Inspect the UI".to_string(),
+            status: "in_progress".to_string(),
+            active_form: None,
+            description: None,
+            owner: None,
+            blocked_by: Vec::new(),
+        };
+
+        let added = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::TaskListUpdated {
+                source: "codex".to_string(),
+                explanation: None,
+                tasks: vec![task],
+            },
+            1000,
+        );
+        assert!(added.blocks_changed);
+        assert!(added.force_persist);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::TaskList { source, tasks, .. }
+                if source == "codex" && tasks.len() == 1
+        ));
+
+        let cleared = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::TaskListUpdated {
+                source: "codex".to_string(),
+                explanation: None,
+                tasks: Vec::new(),
+            },
+            1000,
+        );
+        assert!(cleared.blocks_changed);
+        assert!(blocks.is_empty());
     }
 
     #[test]
