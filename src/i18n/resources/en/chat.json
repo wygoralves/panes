@@ -63,7 +63,7 @@
       "low": "Low",
       "medium": "Medium",
       "high": "High",
-      "xhigh": "XHigh",
+      "xhigh": "Extra High",
       "max": "Max",
       "noneShort": "None",
       "minimalShort": "Min",
@@ -72,7 +72,8 @@
       "highShort": "Hi",
       "xhighShort": "XHi",
       "maxShort": "Max"
-    }
+    },
+    "fastMode": "Fast mode"
   },
   "attachments": {
     "codexTitle": "Attach files (images and text)",
@@ -335,11 +336,26 @@
     "sectionTitle": "Autonomy",
     "custom": "Custom",
     "presets": {
-      "inherit": { "label": "Auto", "description": "Follow the repo trust policy." },
-      "read-only": { "label": "Read only", "description": "Inspect and answer. Safe reads run; nothing changes without your approval." },
-      "ask": { "label": "Ask to act", "description": "Reads are free. Edits and commands ask first." },
-      "auto": { "label": "Auto in workspace", "description": "Works freely inside the workspace sandbox. Asks only to leave it." },
-      "full": { "label": "Full autonomy", "description": "Never asks. Full disk and network access." }
+      "inherit": {
+        "label": "Auto",
+        "description": "Follow the repo trust policy."
+      },
+      "read-only": {
+        "label": "Read only",
+        "description": "Inspect and answer. Safe reads run; nothing changes without your approval."
+      },
+      "ask": {
+        "label": "Ask to act",
+        "description": "Reads are free. Edits and commands ask first."
+      },
+      "auto": {
+        "label": "Auto in workspace",
+        "description": "Works freely inside the workspace sandbox. Asks only to leave it."
+      },
+      "full": {
+        "label": "Full autonomy",
+        "description": "Never asks. Full disk and network access."
+      }
     },
     "engineDescriptions": {
       "opencode": {
