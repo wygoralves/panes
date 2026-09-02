@@ -817,7 +817,7 @@ function ModelRow({
       <span className="mp-row-label">
         {formatModelName(model.displayName)}
         {accountLabel ? <span className="mp-row-account">{accountLabel}</span> : null}
-        {model.isDefault ? (
+        {model.isDefault && !isFavorite ? (
           <span className="mp-row-default">{t("modelPicker.default")}</span>
         ) : null}
       </span>
