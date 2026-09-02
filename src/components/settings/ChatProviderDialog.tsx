@@ -9,6 +9,7 @@ import {
   isValidChatProviderSlug,
   type ChatProviderKind,
 } from "../../lib/engineKind";
+import { defaultChatProviderHomePath } from "../../lib/chatProviders";
 import type { ChatProviderInstance } from "../../types";
 
 interface ChatProviderDialogProps {
@@ -17,6 +18,7 @@ interface ChatProviderDialogProps {
   existingIds: string[];
   saving: boolean;
   onSave: (provider: ChatProviderInstance) => Promise<boolean>;
+  onSaved?: (provider: ChatProviderInstance, created: boolean) => void;
   onClose: () => void;
 }
 
@@ -46,6 +48,7 @@ export function ChatProviderDialog({
   existingIds,
   saving,
   onSave,
+  onSaved,
   onClose,
 }: ChatProviderDialogProps) {
   const { t } = useTranslation("app");
@@ -56,6 +59,7 @@ export function ChatProviderDialog({
   const [slugTouched, setSlugTouched] = useState(false);
   const [binaryPath, setBinaryPath] = useState("");
   const [homePath, setHomePath] = useState("");
+  const [homePathTouched, setHomePathTouched] = useState(false);
   const [launchArgs, setLaunchArgs] = useState("");
   const [envRows, setEnvRows] = useState<EnvRow[]>([]);
   const [enabled, setEnabled] = useState(true);
@@ -71,6 +75,7 @@ export function ChatProviderDialog({
       setSlugTouched(true);
       setBinaryPath(provider.binaryPath ?? "");
       setHomePath(provider.homePath ?? "");
+      setHomePathTouched(true);
       setLaunchArgs(provider.launchArgs ?? "");
       setEnvRows(envRowsFrom(provider.env));
       setEnabled(provider.enabled);
@@ -81,6 +86,7 @@ export function ChatProviderDialog({
       setSlugTouched(false);
       setBinaryPath("");
       setHomePath("");
+      setHomePathTouched(false);
       setLaunchArgs("");
       setEnvRows([]);
       setEnabled(true);
@@ -99,6 +105,12 @@ export function ChatProviderDialog({
 
   const isBuiltIn = provider?.builtIn ?? false;
   const providerId = isBuiltIn ? kind : `${kind}_${slug}`;
+  const effectiveHomePath =
+    isBuiltIn || homePathTouched || homePath
+      ? homePath
+      : slug
+        ? defaultChatProviderHomePath(kind, slug)
+        : "";
   const binaryPlaceholder = kind === "codex" ? "codex" : "claude";
   const homePlaceholder = kind === "codex" ? "~/.codex" : "~/.claude";
   const title = editing
@@ -134,19 +146,24 @@ export function ChatProviderDialog({
       const name = row.name.trim();
       if (name) env[name] = row.value;
     }
-    const saved = await onSave({
+    const next: ChatProviderInstance = {
       id: providerId,
       kind,
       displayName: displayName.trim(),
       binaryPath: binaryPath.trim() || null,
-      homePath: homePath.trim() || null,
+      homePath: effectiveHomePath.trim() || null,
       launchArgs: launchArgs.trim() || null,
       env,
       enabled,
       builtIn: isBuiltIn,
-    });
-    if (saved) onClose();
-    else setError(t("settingsPage.chat.saveFailed"));
+    };
+    const saved = await onSave(next);
+    if (saved) {
+      onClose();
+      onSaved?.(next, !editing);
+    } else {
+      setError(t("settingsPage.chat.saveFailed"));
+    }
   }
 
   return createPortal(
@@ -217,6 +234,7 @@ export function ChatProviderDialog({
                 }
               }}
             />
+            <span className="settings-field-hint">{t("settingsPage.chat.dialog.nameHint")}</span>
           </label>
 
           {!isBuiltIn ? (
@@ -243,10 +261,13 @@ export function ChatProviderDialog({
             <span className="settings-field-label">{t("settingsPage.chat.dialog.homePath")}</span>
             <input
               className="settings-input"
-              value={homePath}
+              value={effectiveHomePath}
               placeholder={homePlaceholder}
               spellCheck={false}
-              onChange={(event) => setHomePath(event.target.value)}
+              onChange={(event) => {
+                setHomePathTouched(true);
+                setHomePath(event.target.value);
+              }}
             />
             <span className="settings-field-hint">
               {kind === "codex"
@@ -334,7 +355,6 @@ export function ChatProviderDialog({
               </button>
             </div>
           </div>
-
           {error ? <div className="settings-form-error">{error}</div> : null}
         </div>
 
@@ -350,7 +370,7 @@ export function ChatProviderDialog({
               disabled={saving}
               onClick={() => void submit()}
             >
-              {t("common:actions.save")}
+              {editing ? t("common:actions.save") : t("settingsPage.chat.dialog.add")}
             </button>
           </div>
         </div>

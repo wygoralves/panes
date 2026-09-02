@@ -665,7 +665,7 @@
       "dialog": {
         "addTitle": "Add provider",
         "editTitle": "Edit {{name}}",
-        "description": "A separate login and config directory lets a second account run alongside the default one.",
+        "description": "A second account of the same tool, with its own login. Just give it a name.",
         "builtInDescription": "Overrides for the default install. Leave fields empty to keep the defaults.",
         "kind": "Kind",
         "displayName": "Name",
@@ -673,8 +673,8 @@
         "id": "Provider id",
         "idHint": "Used in config and thread history. Lowercase letters, digits and dashes.",
         "homePath": "Home directory",
-        "homePathHintCodex": "Sets CODEX_HOME so this instance keeps its own login and config.",
-        "homePathHintClaude": "Sets CLAUDE_CONFIG_DIR so this instance keeps its own login and settings.",
+        "homePathHintCodex": "Prefilled so this account keeps its own login. Change it to point at an existing directory.",
+        "homePathHintClaude": "Prefilled so this account keeps its own login. Change it to point at an existing directory.",
         "binaryPath": "Binary path",
         "binaryPathHint": "Leave empty to use the {{binary}} found on your PATH.",
         "launchArgs": "Launch arguments",
@@ -687,8 +687,18 @@
         "nameRequired": "Name is required.",
         "invalidSlug": "Provider id must start with a letter and use only lowercase letters, digits and dashes.",
         "duplicateId": "A provider with id {{id}} already exists.",
-        "invalidVariable": "{{name}} is not a valid environment variable name."
-      }
+        "invalidVariable": "{{name}} is not a valid environment variable name.",
+        "add": "Add",
+        "nameHint": "Shown in the model picker."
+      },
+      "ownLogin": "Own login in {{path}}",
+      "signIn": "Sign in",
+      "signInTitle": "Sign in to {{name}}?",
+      "signInMessage": "Panes opens a terminal that runs the sign-in for this account. Finish it there, then come back to pick it in the model picker.",
+      "signInConfirm": "Open terminal",
+      "signInLater": "Later",
+      "signInNoWorkspace": "Open a workspace to run the sign-in in a terminal.",
+      "signInFailed": "Could not open a terminal for the sign-in."
     },
     "usage": {
       "providerLimits": "Connected provider limits",
