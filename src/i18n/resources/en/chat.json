@@ -614,7 +614,12 @@
     "copyOutput": "Copy output",
     "expandOutput": "Expand output",
     "collapseOutput": "Collapse output",
-    "openInEditor": "Open in editor"
+    "openInEditor": "Open in editor",
+    "tasks": {
+      "title": "Tasks",
+      "progress": "{{completed}} of {{total}}",
+      "blockedBy": "blocked by {{count}}"
+    }
   },
   "status": {
     "now": "now",

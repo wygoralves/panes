@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   AtSign,
   CornerDownRight,
+  ChevronDown,
   ChevronRight,
   DollarSign,
   ExternalLink,
@@ -53,6 +54,7 @@ import type {
   NoticeBlock,
   SteerBlock,
   TaskListBlock,
+  TaskStatus,
   ThinkingBlock,
 } from "../../types";
 import {
@@ -594,63 +596,127 @@ function NoticeBlockView({ block }: { block: NoticeBlock }) {
   );
 }
 
+const TASK_RING_SIZE = 20;
+const TASK_RING_RADIUS = (TASK_RING_SIZE - 2) / 2;
+
+function TaskRing({
+  step,
+  status,
+  blocked,
+}: {
+  step: number;
+  status: TaskStatus;
+  blocked: boolean;
+}) {
+  const classes = ["msg-task-ring", `msg-task-ring--${status.replace("_", "-")}`];
+  if (blocked) classes.push("msg-task-ring--blocked");
+  const center = TASK_RING_SIZE / 2;
+  return (
+    <span className={classes.join(" ")} aria-hidden="true">
+      <svg viewBox={`0 0 ${TASK_RING_SIZE} ${TASK_RING_SIZE}`}>
+        {status === "completed" ? (
+          <circle className="msg-task-ring-fill" cx={center} cy={center} r={center - 1} />
+        ) : (
+          <>
+            <circle className="msg-task-ring-track" cx={center} cy={center} r={TASK_RING_RADIUS} />
+            {status === "in_progress" && (
+              <circle className="msg-task-ring-arc" cx={center} cy={center} r={TASK_RING_RADIUS} />
+            )}
+          </>
+        )}
+      </svg>
+      {status === "completed" ? <Check size={11} strokeWidth={3} /> : <span>{step}</span>}
+    </span>
+  );
+}
+
+function TaskProgressRing({ ratio }: { ratio: number }) {
+  const radius = 6;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <svg className="msg-task-progress" viewBox="0 0 16 16" aria-hidden="true">
+      <circle className="track" cx="8" cy="8" r={radius} />
+      <circle
+        className="val"
+        cx="8"
+        cy="8"
+        r={radius}
+        strokeDasharray={circumference}
+        strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, ratio)))}
+      />
+    </svg>
+  );
+}
+
 function TaskListBlockView({ block }: { block: TaskListBlock }) {
   const { t } = useTranslation("chat");
+  const [expanded, setExpanded] = useState(true);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const total = block.tasks.length;
   const completed = block.tasks.filter((task) => task.status === "completed").length;
+  const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
 
   return (
     <section className="msg-task-list" aria-label={t("messageBlocks.tasks.title")}>
-      <header className="msg-task-list-header">
-        <span className="msg-task-list-title">
-          <ListTodo size={15} aria-hidden="true" />
-          {t("messageBlocks.tasks.title")}
-        </span>
-        <span className="msg-task-list-progress">
-          {t("messageBlocks.tasks.progress", { completed, total: block.tasks.length })}
-        </span>
-      </header>
-      {block.explanation ? (
-        <p className="msg-task-list-explanation">{block.explanation}</p>
-      ) : null}
-      <ol className="msg-task-list-items">
-        {block.tasks.map((task) => {
-          const label =
-            task.status === "in_progress" && task.activeForm
-              ? task.activeForm
-              : task.title;
-          return (
-            <li
-              key={task.id}
-              className={`msg-task-list-item is-${task.status.replace("_", "-")}`}
-            >
-              <span className="msg-task-list-state" aria-hidden="true">
-                {task.status === "completed" ? (
-                  <Check size={13} />
-                ) : task.status === "in_progress" ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <Circle size={11} />
-                )}
-              </span>
-              <span className="msg-task-list-copy">
-                <span className="msg-task-list-label">{label}</span>
-                {task.owner || task.blockedBy.length > 0 ? (
-                  <span className="msg-task-list-meta">
-                    {task.owner ? <span>{task.owner}</span> : null}
-                    {task.blockedBy.length > 0 ? (
-                      <span>
-                        {t("messageBlocks.tasks.blockedBy", {
-                          count: task.blockedBy.length,
-                        })}
+      <MessageBlockHeader
+        icon={<ListTodo size={11} />}
+        label={t("messageBlocks.tasks.title")}
+        expanded={expanded}
+        onToggle={toggleExpanded}
+        meta={
+          <>
+            <span>{t("messageBlocks.tasks.progress", { completed, total })}</span>
+            <TaskProgressRing ratio={total > 0 ? completed / total : 0} />
+          </>
+        }
+      />
+      {expanded && (
+        <div className="msg-task-rows">
+          {block.explanation ? (
+            <p className="msg-task-explanation">{block.explanation}</p>
+          ) : null}
+          {block.tasks.map((task, index) => {
+            const blocked = task.blockedBy.length > 0 && task.status !== "completed";
+            const label =
+              task.status === "in_progress" && task.activeForm ? task.activeForm : task.title;
+            const description = task.description?.trim() ?? "";
+            const hasDetail = description.length > 0;
+            const open = hasDetail && openTaskId === task.id;
+            return (
+              <div key={task.id}>
+                <button
+                  type="button"
+                  className={`msg-task is-${task.status.replace("_", "-")}${hasDetail ? "" : " msg-task--static"}`}
+                  aria-expanded={hasDetail ? open : undefined}
+                  onClick={
+                    hasDetail
+                      ? () => setOpenTaskId((current) => (current === task.id ? null : task.id))
+                      : undefined
+                  }
+                >
+                  <TaskRing step={index + 1} status={task.status} blocked={blocked} />
+                  <span className="msg-task-label" title={label}>{label}</span>
+                  <span className="msg-task-meta">
+                    {task.owner ? <span className="msg-task-pill">{task.owner}</span> : null}
+                    {blocked ? (
+                      <span className="msg-task-pill msg-task-pill--warn">
+                        {t("messageBlocks.tasks.blockedBy", { count: task.blockedBy.length })}
                       </span>
                     ) : null}
+                    {hasDetail ? (
+                      <ChevronDown
+                        size={12}
+                        className={`msg-task-chevron${open ? " msg-task-chevron--open" : ""}`}
+                      />
+                    ) : null}
                   </span>
-                ) : null}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
+                </button>
+                {open ? <div className="msg-task-detail">{description}</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

@@ -614,7 +614,12 @@
     "copyOutput": "Copiar saída",
     "expandOutput": "Expandir saída",
     "collapseOutput": "Recolher saída",
-    "openInEditor": "Abrir no editor"
+    "openInEditor": "Abrir no editor",
+    "tasks": {
+      "title": "Tarefas",
+      "progress": "{{completed}} de {{total}}",
+      "blockedBy": "bloqueada por {{count}}"
+    }
   },
   "status": {
     "now": "agora",
