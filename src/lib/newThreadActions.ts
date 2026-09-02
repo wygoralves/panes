@@ -1,5 +1,7 @@
 import { t } from "../i18n";
 import { useChatStore } from "../stores/chatStore";
+import { useSidebarListModeStore } from "../stores/sidebarListModeStore";
+import { useSidebarViewStore } from "../stores/sidebarViewStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useThreadStore } from "../stores/threadStore";
 import { useUiStore } from "../stores/uiStore";
@@ -9,6 +11,25 @@ import {
   applyWorkspaceLayoutMode,
   getWorkspacePaneLayoutMode,
 } from "./workspacePaneNavigation";
+
+/** The project a new thread belongs to. While the status list is filtered to
+ * one project, that filter is the user's stated scope, so the new thread is
+ * created there instead of in the last opened project. */
+export function resolveNewThreadWorkspaceId(): string | null {
+  const workspaceStore = useWorkspaceStore.getState();
+  const filterId = useSidebarViewStore.getState().projectFilterId;
+  const isStatusMode = useSidebarListModeStore.getState().mode === "status";
+
+  if (
+    isStatusMode &&
+    filterId &&
+    workspaceStore.workspaces.some((workspace) => workspace.id === filterId)
+  ) {
+    return filterId;
+  }
+
+  return workspaceStore.activeWorkspaceId;
+}
 
 export async function createAndActivateWorkspaceThread(
   workspaceId: string | null | undefined,

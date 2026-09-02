@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Archive,
+  CircleCheck,
   RotateCcw,
   Settings,
   PanelLeftClose,
@@ -27,15 +28,39 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useOnboardingStore } from "../../stores/onboardingStore";
 import { useSidebarListModeStore } from "../../stores/sidebarListModeStore";
+import { useSidebarViewStore } from "../../stores/sidebarViewStore";
+import { useThreadReadStore } from "../../stores/threadReadStore";
+import { toast } from "../../stores/toastStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import { formatRelativeTime } from "../../lib/formatters";
 import { handleDragMouseDown, handleDragDoubleClick } from "../../lib/windowDrag";
-import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
+import {
+  createAndActivateWorkspaceThread,
+  resolveNewThreadWorkspaceId,
+} from "../../lib/newThreadActions";
+import {
+  canSettleThread,
+  settleThreadWithUndo,
+  unsettleThreadWithUndo,
+} from "../../lib/threadActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { Dropdown } from "../shared/Dropdown";
 import { PanesMark } from "../shared/PanesBrand";
 import { WorkspaceMoreMenu } from "../workspace/WorkspaceMoreMenu";
-import { FleetList } from "./FleetList";
+import { InlineThreadTitle } from "./InlineThreadTitle";
+import { ProjectIcon } from "./ProjectIcon";
+import { SidebarListMenu } from "./SidebarListMenu";
 import { normalizeSidebarCollapsedState } from "./sidebarCollapseState";
+import { StatusThreadList } from "./StatusThreadList";
+import { ThreadStatusLabel } from "./ThreadStatusLabel";
+import {
+  filterThreadsByWorkspace,
+  getVisibleThreads,
+  resolveThreadDisplayStatus,
+  resolveWorkingStartedAt,
+  sortableTimestampMs,
+} from "./statusGrouping";
+import type { SidebarListMode } from "../../lib/sidebarListMode";
 import type { Thread, Workspace } from "../../types";
 
 interface ProjectGroup {
@@ -44,6 +69,7 @@ interface ProjectGroup {
 }
 
 const MAX_VISIBLE_THREADS = 8;
+const ALL_PROJECTS_FILTER_VALUE = "__all_projects__";
 const LEGACY_SCAN_DEPTH_STORAGE_KEY = "panes.workspace.scanDepth";
 const LEGACY_SCAN_DEPTH_MIN = 0;
 const LEGACY_SCAN_DEPTH_MAX = 12;
@@ -82,9 +108,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     archivedThreadsByWorkspace,
     activeThreadId,
     setActiveThread,
+    renameThread,
     removeThread,
     restoreThread,
     refreshArchivedThreads,
+    refreshAllArchivedThreads,
   } = useThreadStore();
   const openOnboarding = useOnboardingStore((state) => state.openOnboarding);
   const sidebarPinned = useUiStore((state) => state.sidebarPinned);
@@ -100,7 +128,11 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   const updateSnoozed = useUpdateStore((s) => s.snoozed);
   const hasUpdate = updateStatus === "available" && !updateSnoozed;
   const sidebarListMode = useSidebarListModeStore((s) => s.mode);
+  const projectFilterId = useSidebarViewStore((s) => s.projectFilterId);
+  const setProjectFilterId = useSidebarViewStore((s) => s.setProjectFilterId);
+  const lastVisitedAtByThread = useThreadReadStore((s) => s.lastVisitedAtByThread);
   const loadSidebarListMode = useSidebarListModeStore((s) => s.load);
+  const setSidebarListMode = useSidebarListModeStore((s) => s.setMode);
 
   useEffect(() => {
     void loadSidebarListMode();
@@ -116,9 +148,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   );
   const workspaceIds = useMemo(() => workspaces.map((workspace) => workspace.id), [workspaces]);
 
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
-    normalizeSidebarCollapsedState(workspaceIds, activeWorkspaceId, {}, null),
-  );
+  const collapsed = useSidebarViewStore((s) => s.collapsedProjects);
+  const setCollapsed = useSidebarViewStore((s) => s.setCollapsedProjects);
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archiveWorkspacePrompt, setArchiveWorkspacePrompt] = useState<{
@@ -157,12 +188,35 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     };
   }, [settingsMenuOpen, closeSettingsMenu]);
 
+  const allArchivedThreads = useMemo(
+    () =>
+      Object.values(archivedThreadsByWorkspace)
+        .flat()
+        .sort(
+          (a, b) =>
+            sortableTimestampMs(b.lastActivityAt) -
+            sortableTimestampMs(a.lastActivityAt),
+        ),
+    [archivedThreadsByWorkspace],
+  );
   const archivedThreads = useMemo(
     () =>
-      activeWorkspaceId
-        ? archivedThreadsByWorkspace[activeWorkspaceId] ?? []
-        : [],
-    [archivedThreadsByWorkspace, activeWorkspaceId],
+      sidebarListMode === "status"
+        ? filterThreadsByWorkspace(allArchivedThreads, projectFilterId)
+        : activeWorkspaceId
+          ? archivedThreadsByWorkspace[activeWorkspaceId] ?? []
+          : [],
+    [
+      activeWorkspaceId,
+      allArchivedThreads,
+      archivedThreadsByWorkspace,
+      projectFilterId,
+      sidebarListMode,
+    ],
+  );
+  const statusThreads = useMemo(
+    () => filterThreadsByWorkspace(threads, projectFilterId),
+    [threads, projectFilterId],
   );
 
   const toggleCollapse = (wsId: string) =>
@@ -181,18 +235,46 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
   }, [workspaceIds, activeWorkspaceId]);
 
   useEffect(() => {
+    if (
+      projectFilterId &&
+      !workspaces.some((workspace) => workspace.id === projectFilterId)
+    ) {
+      setProjectFilterId(null);
+    }
+  }, [projectFilterId, setProjectFilterId, workspaces]);
+
+  useEffect(() => {
     void refreshArchivedWorkspaces();
   }, [refreshArchivedWorkspaces]);
 
   useEffect(() => {
-    if (!activeWorkspaceId) return;
-    void refreshArchivedThreads(activeWorkspaceId);
-  }, [activeWorkspaceId, refreshArchivedThreads]);
+    // Only the status list shows archives across projects; project mode needs
+    // the open project alone.
+    if (sidebarListMode === "status") {
+      void refreshAllArchivedThreads(workspaceIds);
+      return;
+    }
+    if (activeWorkspaceId) {
+      void refreshArchivedThreads(activeWorkspaceId);
+    }
+  }, [
+    activeWorkspaceId,
+    refreshAllArchivedThreads,
+    refreshArchivedThreads,
+    sidebarListMode,
+    workspaceIds,
+  ]);
 
   async function onOpenFolder() {
     const selected = await open({ directory: true, multiple: false });
     if (!selected || Array.isArray(selected)) return;
     await openWorkspace(selected, readLegacyDefaultScanDepth());
+  }
+
+  async function onChangeSidebarListMode(mode: SidebarListMode) {
+    if (mode === sidebarListMode) return;
+    const saved = await setSidebarListMode(mode);
+    if (!saved) toast.error(t("app:sidebar.sidebarListModeFailed"));
   }
 
   async function onSelectThread(thread: Thread) {
@@ -211,8 +293,8 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
   async function onSelectProject(wsId: string) {
     if (activeView !== "chat") setActiveView("chat");
-    setCollapsed(
-      Object.fromEntries(projects.map((p) => [p.workspace.id, p.workspace.id !== wsId]))
+    setCollapsed(() =>
+      Object.fromEntries(projects.map((p) => [p.workspace.id, p.workspace.id !== wsId])),
     );
     await setActiveWorkspace(wsId);
   }
@@ -239,6 +321,23 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
 
   function onDeleteThread(thread: Thread) {
     setArchiveThreadPrompt({ thread });
+  }
+
+  async function onRenameThread(thread: Thread, title: string): Promise<boolean> {
+    await renameThread(thread.id, title);
+    if (useThreadStore.getState().error) {
+      toast.error(t("app:sidebar.renameThreadFailed"));
+      return false;
+    }
+    return true;
+  }
+
+  async function onSettleThread(thread: Thread): Promise<boolean> {
+    return settleThreadWithUndo(thread);
+  }
+
+  async function onUnsettleThread(thread: Thread): Promise<boolean> {
+    return unsettleThreadWithUndo(thread);
   }
 
   async function executeArchiveThread(thread: Thread) {
@@ -294,8 +393,9 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             type="button"
             className="sb-nav-item"
             onClick={() => {
+              const targetProjectId = resolveNewThreadWorkspaceId();
               const activeProject = projects.find(
-                (p) => p.workspace.id === activeWorkspaceId,
+                (project) => project.workspace.id === targetProjectId,
               );
               if (activeProject) {
                 void onCreateProjectThread(activeProject.workspace);
@@ -344,22 +444,44 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
       {/* ── Scrollable content ── */}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", paddingBottom: 4, borderTop: "1px solid var(--wash-06)", marginTop: 4 }}>
         <div className="sb-section-label">
-          <span>
-            {sidebarListMode === "fleet"
-              ? t("app:sidebar.threads")
-              : t("app:sidebar.workspaces")}
-          </span>
-          <button
-            type="button"
-            className="sb-add-project-btn"
-            title={t("app:sidebar.openWorkspace")}
-            onClick={() => {
+          {sidebarListMode === "status" ? (
+            <div className="sb-project-filter">
+              <Dropdown
+                value={projectFilterId ?? ALL_PROJECTS_FILTER_VALUE}
+                options={[
+                  {
+                    value: ALL_PROJECTS_FILTER_VALUE,
+                    label: t("app:sidebar.allProjects"),
+                    icon: <FolderGit2 size={13} />,
+                  },
+                  ...projects.map((project) => {
+                    const label = getWorkspaceLabel(project.workspace);
+                    return {
+                      value: project.workspace.id,
+                      label,
+                      icon: <ProjectIcon label={label} />,
+                    };
+                  }),
+                ]}
+                onChange={(value) =>
+                  setProjectFilterId(
+                    value === ALL_PROJECTS_FILTER_VALUE ? null : value,
+                  )
+                }
+                title={t("app:sidebar.filterByProject")}
+              />
+            </div>
+          ) : (
+            <span>{t("app:sidebar.projects")}</span>
+          )}
+          <SidebarListMenu
+            mode={sidebarListMode}
+            onNewProject={() => {
               if (activeView !== "chat") setActiveView("chat");
               void onOpenFolder();
             }}
-          >
-            <Plus size={12} strokeWidth={2.2} />
-          </button>
+            onChangeMode={(mode) => void onChangeSidebarListMode(mode)}
+          />
         </div>
 
         {projects.length === 0 ? (
@@ -368,13 +490,16 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             <br />
             {t("app:sidebar.openFolder")}
           </div>
-        ) : sidebarListMode === "fleet" ? (
-          <FleetList
-            threads={threads}
+        ) : sidebarListMode === "status" ? (
+          <StatusThreadList
+            threads={statusThreads}
             workspaces={workspaces}
             activeThreadId={activeThreadId}
             onSelectThread={(thread) => void onSelectThread(thread)}
             onArchiveThread={onDeleteThread}
+            onSettleThread={onSettleThread}
+            onUnsettleThread={onUnsettleThread}
+            onRenameThread={onRenameThread}
             getThreadLabel={getThreadLabel}
             getWorkspaceLabel={getWorkspaceLabel}
           />
@@ -384,9 +509,16 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
             const isCollapsed = collapsed[project.workspace.id] ?? false;
             const projectName = getWorkspaceLabel(project.workspace);
             const isShowingAll = showAll[project.workspace.id] ?? false;
-            const visibleThreads = isShowingAll
-              ? project.threads
-              : project.threads.slice(0, MAX_VISIBLE_THREADS);
+            // The open thread is never hidden behind "Show more".
+            const preview = getVisibleThreads({
+              threads: project.threads,
+              activeThreadId,
+              visibleCount: isShowingAll
+                ? project.threads.length
+                : MAX_VISIBLE_THREADS,
+            });
+            const visibleThreads = preview.visibleThreads;
+            const hiddenCount = preview.hiddenCount;
             const hasMore = project.threads.length > MAX_VISIBLE_THREADS;
             const constrainExpandedThreads = isShowingAll && hasMore;
 
@@ -409,13 +541,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                   ) : (
                     <ChevronDown size={12} style={{ flexShrink: 0, opacity: 0.4 }} />
                   )}
-                  <FolderGit2
-                    size={14}
-                    style={{
-                      flexShrink: 0,
-                      color: isActiveProject ? "var(--accent)" : "var(--text-3)",
-                    }}
-                  />
+                  <ProjectIcon label={projectName} active={isActiveProject} />
                   <span className="sb-project-name">{projectName}</span>
 
                   <span className="sb-project-trailing">
@@ -443,12 +569,19 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                       <>
                         {visibleThreads.map((thread, i) => {
                           const isActive = thread.id === activeThreadId;
+                          const display = resolveThreadDisplayStatus(
+                            thread,
+                            lastVisitedAtByThread[thread.id],
+                            isActive,
+                          );
                           return (
                             <div
                               key={thread.id}
                               role="button"
                               tabIndex={0}
                               className={`sb-thread sb-thread-animate ${isActive ? "sb-thread-active" : ""}`}
+                              data-status={display.status}
+                              data-unread={display.isUnread ? "true" : undefined}
                               style={{ animationDelay: `${i * 20}ms` }}
                               onClick={() => void onSelectThread(thread)}
                               onKeyDown={(e) => {
@@ -458,44 +591,74 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                                 }
                               }}
                             >
-                              <span className="sb-thread-title">
-                                {getThreadLabel(thread)}
-                              </span>
+                              <InlineThreadTitle
+                                className="sb-thread-title"
+                                label={getThreadLabel(thread)}
+                                renameLabel={t("app:sidebar.renameThread")}
+                                onRename={(title) => onRenameThread(thread, title)}
+                              />
                               <span className="sb-thread-trailing">
-                                {thread.status === "awaiting_approval" ? (
-                                  <span
-                                    className="sb-thread-approval"
-                                    title={t("app:sidebar.needsApproval")}
-                                  >
-                                    <span className="sb-thread-approval-dot" />
-                                    {t("app:sidebar.needsApproval")}
-                                  </span>
-                                ) : (
+                                {display.status === "ready" ? (
                                   <span className="sb-thread-time">
                                     {thread.lastActivityAt
                                       ? formatRelativeTime(thread.lastActivityAt, i18n.language)
                                       : ""}
                                   </span>
+                                ) : (
+                                  <ThreadStatusLabel
+                                    status={display.status}
+                                    startedAt={resolveWorkingStartedAt(thread)}
+                                  />
                                 )}
-                                <button
-                                  type="button"
-                                  title={t("app:sidebar.archiveThread")}
-                                  aria-label={t("app:sidebar.archiveThread")}
-                                  className="sb-thread-archive"
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void onDeleteThread(thread);
-                                  }}
-                                >
-                                  <Archive size={11} />
-                                </button>
+                                <span className="sb-thread-row-actions">
+                                  <button
+                                    type="button"
+                                    title={
+                                      thread.settledAt
+                                        ? t("app:sidebar.unsettleThread")
+                                        : t("app:sidebar.settleThread")
+                                    }
+                                    aria-label={
+                                      thread.settledAt
+                                        ? t("app:sidebar.unsettleThread")
+                                        : t("app:sidebar.settleThread")
+                                    }
+                                    className="sb-thread-action"
+                                    disabled={!thread.settledAt && !canSettleThread(thread)}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void (thread.settledAt
+                                        ? onUnsettleThread(thread)
+                                        : onSettleThread(thread));
+                                    }}
+                                  >
+                                    {thread.settledAt ? (
+                                      <RotateCcw size={11} />
+                                    ) : (
+                                      <CircleCheck size={11} />
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title={t("app:sidebar.archiveThread")}
+                                    aria-label={t("app:sidebar.archiveThread")}
+                                    className="sb-thread-action"
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void onDeleteThread(thread);
+                                    }}
+                                  >
+                                    <Archive size={11} />
+                                  </button>
+                                </span>
                               </span>
                             </div>
                           );
                         })}
 
-                        {hasMore && !isShowingAll && (
+                        {hiddenCount > 0 && !isShowingAll && (
                           <button
                             type="button"
                             className="sb-show-more"
@@ -506,9 +669,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
                               }))
                             }
                           >
-                            {t("app:sidebar.showMore", {
-                              count: project.threads.length - MAX_VISIBLE_THREADS,
-                            })}
+                            {t("app:sidebar.showMore", { count: hiddenCount })}
                           </button>
                         )}
                       </>

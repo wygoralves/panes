@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { sortThreadsForSidebar } from "../components/sidebar/statusGrouping";
 import { ipc } from "../lib/ipc";
 import {
   NEW_THREAD_FALLBACK_RUNTIME,
@@ -10,6 +11,7 @@ import type { Thread } from "../types";
 import { useChatComposerStore } from "./chatComposerStore";
 import { useEngineStore } from "./engineStore";
 import { useOnboardingStore } from "./onboardingStore";
+import { useThreadReadStore } from "./threadReadStore";
 
 interface EnsureThreadInput {
   workspaceId: string;
@@ -44,6 +46,16 @@ interface ThreadState {
   refreshThreads: (workspaceId: string) => Promise<void>;
   refreshArchivedThreads: (workspaceId: string) => Promise<void>;
   refreshAllThreads: (workspaceIds: string[]) => Promise<void>;
+  refreshAllArchivedThreads: (workspaceIds: string[]) => Promise<void>;
+  settleThread: (
+    threadId: string,
+    restore?: { settledAt: string | null },
+  ) => Promise<boolean>;
+  unsettleThread: (
+    threadId: string,
+    restore?: { unsettledAt: string | null },
+  ) => Promise<boolean>;
+  markThreadReadIfActive: (threadId: string) => boolean;
   removeThread: (threadId: string) => Promise<void>;
   restoreThread: (threadId: string) => Promise<void>;
   forkCodexThread: (threadId: string) => Promise<Thread | null>;
@@ -81,10 +93,10 @@ function mergeWorkspaceThreads(
   };
 }
 
+/** Static order: activity never reorders the sidebar, so a row holds its
+ * position while a thread streams and only moves on a lifecycle change. */
 function flattenThreadsByWorkspace(threadsByWorkspace: Record<string, Thread[]>): Thread[] {
-  return Object.values(threadsByWorkspace)
-    .flat()
-    .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
+  return sortThreadsForSidebar(Object.values(threadsByWorkspace).flat());
 }
 
 function applyThreadReasoningEffort(
@@ -382,10 +394,63 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       set({ loading: false, error: String(error) });
     }
   },
+  refreshAllArchivedThreads: async (workspaceIds) => {
+    if (!workspaceIds.length) {
+      set({ archivedThreadsByWorkspace: {} });
+      return;
+    }
+
+    try {
+      const results = await Promise.all(
+        workspaceIds.map(async (workspaceId) => ({
+          workspaceId,
+          threads: await ipc.listArchivedThreads(workspaceId),
+        })),
+      );
+      const archivedThreadsByWorkspace = results.reduce<Record<string, Thread[]>>(
+        (acc, item) => {
+          acc[item.workspaceId] = item.threads;
+          return acc;
+        },
+        {},
+      );
+      set({ archivedThreadsByWorkspace });
+    } catch (error) {
+      set({ error: String(error) });
+    }
+  },
+  settleThread: async (threadId, restore) => {
+    set({ loading: true, error: undefined });
+    try {
+      const updated = await ipc.settleThread(threadId, restore);
+      get().applyThreadUpdateLocal(updated);
+      // Shelving a thread is acknowledging it, so it must not sit there unread.
+      useThreadReadStore.getState().markThreadVisited(threadId);
+      set({ loading: false });
+      return true;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return false;
+    }
+  },
+  unsettleThread: async (threadId, restore) => {
+    set({ loading: true, error: undefined });
+    try {
+      const updated = await ipc.unsettleThread(threadId, restore);
+      get().applyThreadUpdateLocal(updated);
+      set({ loading: false });
+      return true;
+    } catch (error) {
+      set({ loading: false, error: String(error) });
+      return false;
+    }
+  },
   removeThread: async (threadId) => {
     set({ loading: true, error: undefined });
     try {
       await ipc.archiveThread(threadId);
+      // An archived thread has no row left to be unread in.
+      useThreadReadStore.getState().forgetThread(threadId);
       let archivedThread: Thread | null = null;
       let archivedWorkspaceId: string | null = null;
       const nextThreadsByWorkspace = Object.entries(get().threadsByWorkspace).reduce<
@@ -625,9 +690,19 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       return null;
     }
   },
+  markThreadReadIfActive: (threadId) => {
+    if (get().activeThreadId !== threadId) return false;
+    // A turn that finishes in the thread the user is watching is read the
+    // moment it lands: the completion bumps lastActivityAt past the last
+    // visit, which would otherwise light the open row up as unread.
+    useThreadReadStore.getState().markThreadVisited(threadId);
+    return true;
+  },
   setActiveThread: (threadId) => {
     if (threadId) {
       localStorage.setItem(LAST_THREAD_KEY, threadId);
+      // Opening a thread is what clears its unread completion.
+      useThreadReadStore.getState().markThreadVisited(threadId);
     } else {
       localStorage.removeItem(LAST_THREAD_KEY);
     }
