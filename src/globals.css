@@ -8191,7 +8191,7 @@ button, input, textarea, select {
   justify-content: flex-end;
   align-items: center;
   text-align: center;
-  padding-bottom: 22px;
+  padding-bottom: 4px;
 }
 
 .chat-draft-headline {
@@ -8278,6 +8278,7 @@ button, input, textarea, select {
 .chat-section-draft .chat-messages-viewport {
   flex: 1 1 0px;
   overflow: hidden;
+  padding-bottom: 8px;
 }
 
 .chat-section-draft .chat-composer-surface {
