@@ -51,6 +51,7 @@ import { DraftScopePicker } from "./DraftScopePicker";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
 import { useChatComposerStore } from "../../stores/chatComposerStore";
+import { useComposerDraftStore } from "../../stores/composerDraftStore";
 import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
 import { useChatProvidersStore } from "../../stores/chatProvidersStore";
 import { useEngineStore } from "../../stores/engineStore";
@@ -1765,6 +1766,37 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
   const gitStatus = useGitStore((s) => s.status);
   const setComposerRuntime = useChatComposerStore((state) => state.setWorkspaceRuntime);
   const clearComposerRuntime = useChatComposerStore((state) => state.clearWorkspaceRuntime);
+
+  // The composer text belongs to the thread it was typed in. Switching threads
+  // parks the current text and brings back whatever the next thread had, so a
+  // half-written prompt never follows the user into another conversation.
+  const setComposerPrompt = useComposerDraftStore((state) => state.setPrompt);
+  const composerThreadIdRef = useRef<string | null | undefined>(undefined);
+  const skipPromptMirrorRef = useRef(false);
+  const inputLiveRef = useRef(input);
+  inputLiveRef.current = input;
+  const composerThreadId = activeThread?.id ?? null;
+  useEffect(() => {
+    if (composerThreadIdRef.current === composerThreadId) return;
+    composerThreadIdRef.current = composerThreadId;
+    const restored = composerThreadId
+      ? (useComposerDraftStore.getState().promptByThread[composerThreadId] ?? "")
+      : "";
+    if (restored === inputLiveRef.current) return;
+    // The restore itself must not be mirrored back under the new thread id
+    // before React applies it, or the old text would land in the new slot.
+    skipPromptMirrorRef.current = true;
+    inputHistCursorRef.current = -1;
+    setInput(restored);
+  }, [composerThreadId]);
+  useEffect(() => {
+    if (skipPromptMirrorRef.current) {
+      skipPromptMirrorRef.current = false;
+      return;
+    }
+    if (!composerThreadId) return;
+    setComposerPrompt(composerThreadId, input);
+  }, [composerThreadId, input, setComposerPrompt]);
   const terminalWorkspaceState = useTerminalStore((s) =>
     activeWorkspaceId ? s.workspaces[activeWorkspaceId] : undefined,
   );
