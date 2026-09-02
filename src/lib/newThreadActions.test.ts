@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { findReusableDraftThread } from "./DraftScopePicker";
-import type { Thread } from "../../types";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useComposerDraftStore } from "../stores/composerDraftStore";
+import type { Thread } from "../types";
+
+vi.mock("../i18n", () => ({ t: (key: string) => key }));
+
+const { findReusableDraftThread } = await import("./newThreadActions");
 
 function thread(overrides: Partial<Thread>): Thread {
   return {
@@ -20,6 +24,15 @@ function thread(overrides: Partial<Thread>): Thread {
 }
 
 describe("findReusableDraftThread", () => {
+  beforeEach(() => {
+    useComposerDraftStore.setState({ promptByThread: {} });
+  });
+
+  it("leaves a draft the user has typed into alone", () => {
+    useComposerDraftStore.getState().setPrompt("typed", "half a thought");
+    expect(findReusableDraftThread([thread({ id: "typed" })])).toBeNull();
+  });
+
   it("returns an untouched idle thread", () => {
     const draft = thread({ id: "draft" });
     expect(findReusableDraftThread([thread({ id: "busy", messageCount: 3 }), draft])).toBe(draft);

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import {
   Archive,
   Check,
@@ -10,10 +11,12 @@ import {
   PencilLine,
   Plus,
   RotateCcw,
+  X,
 } from "lucide-react";
 import { engineKind } from "../../lib/engineKind";
 import { formatRelativeTime } from "../../lib/formatters";
 import { canSettleThread } from "../../lib/threadActions";
+import { draftPreview, useComposerDraftStore } from "../../stores/composerDraftStore";
 import { useSidebarViewStore } from "../../stores/sidebarViewStore";
 import { useThreadReadStore } from "../../stores/threadReadStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
@@ -43,6 +46,7 @@ interface Props {
   onSettleThread: (thread: Thread) => Promise<boolean>;
   onUnsettleThread: (thread: Thread) => Promise<boolean>;
   onRenameThread: (thread: Thread, title: string) => Promise<boolean>;
+  onDiscardDraft: (thread: Thread) => void;
   onNewThread: () => void;
   getThreadLabel: (thread: Thread) => string;
   getWorkspaceLabel: (workspace: Workspace) => string;
@@ -79,6 +83,7 @@ export function StatusThreadList({
   onSettleThread,
   onUnsettleThread,
   onRenameThread,
+  onDiscardDraft,
   onNewThread,
   getThreadLabel,
   getWorkspaceLabel,
@@ -124,6 +129,57 @@ export function StatusThreadList({
     [activeThreadId, groups.settled, settledVisibleCount],
   );
 
+  // A draft earns a row once it holds typed text. The open draft is the
+  // exception: its row is frozen at the moment it became active, so typing
+  // never repaints the list and a fresh New thread shows no row at all until
+  // the user leaves and comes back.
+  const [frozenDraft, setFrozenDraft] = useState<{
+    threadId: string | null;
+    preview: string | null;
+  }>({ threadId: null, preview: null });
+  if (frozenDraft.threadId !== activeThreadId) {
+    const isActiveDraft =
+      activeThreadId !== null && groups.drafts.some((thread) => thread.id === activeThreadId);
+    setFrozenDraft({
+      threadId: activeThreadId,
+      preview: isActiveDraft
+        ? draftPreview(useComposerDraftStore.getState().promptByThread[activeThreadId ?? ""])
+        : null,
+    });
+  }
+  // Flat strings so the shallow compare only fires when a parked draft's
+  // preview changes, never per keystroke in the open one.
+  const parkedDraftEntries = useComposerDraftStore(
+    useShallow((state) =>
+      groups.drafts.flatMap((thread) => {
+        if (thread.id === activeThreadId) return [];
+        const preview = draftPreview(state.promptByThread[thread.id]);
+        return preview ? [`${thread.id}\u0000${preview}`] : [];
+      }),
+    ),
+  );
+  const draftRows = useMemo(() => {
+    const previewById = new Map(
+      parkedDraftEntries.map((entry) => {
+        const separator = entry.indexOf("\u0000");
+        return [entry.slice(0, separator), entry.slice(separator + 1)] as const;
+      }),
+    );
+    if (frozenDraft.threadId && frozenDraft.preview) {
+      previewById.set(frozenDraft.threadId, frozenDraft.preview);
+    }
+    return groups.drafts.flatMap((thread) => {
+      const preview = previewById.get(thread.id);
+      return preview ? [{ thread, preview }] : [];
+    });
+  }, [frozenDraft, groups.drafts, parkedDraftEntries]);
+
+  const listIsEmpty =
+    draftRows.length === 0 &&
+    groups.needsYou.length === 0 &&
+    groups.working.length === 0 &&
+    groups.done.length === 0 &&
+    groups.settled.length === 0;
   const quiet = groups.needsYou.length === 0 && groups.working.length === 0;
   // With nothing left above it, the shelf is the list: it opens on its own so
   // a fully settled project never shows a blank sidebar.
@@ -173,7 +229,7 @@ export function StatusThreadList({
       isActive,
     );
     const glyphStatus = sectionId === "settled" ? "settled" : display.status;
-    const canSettle = canSettleThread(thread) && display.status !== "draft";
+    const canSettle = canSettleThread(thread);
     const engineIcon = getHarnessIcon(engineKind(thread.engineId), 10);
 
     return (
@@ -259,7 +315,69 @@ export function StatusThreadList({
     );
   }
 
-  function renderSection(sectionId: Exclude<InboxSectionId, "settled">, labelKey: string) {
+  function renderDraftRow(thread: Thread, preview: string) {
+    const isActive = thread.id === activeThreadId;
+    const workspace = workspaceById.get(thread.workspaceId);
+    const workspaceLabel = workspace
+      ? getWorkspaceLabel(workspace)
+      : t("app:sidebar.workspaceFallback");
+    const engineIcon = getHarnessIcon(engineKind(thread.engineId), 10);
+
+    return (
+      <div
+        key={thread.id}
+        role="button"
+        tabIndex={0}
+        className={`sb-status-row sb-status-row-draft${isActive ? " sb-status-row-active" : ""}`}
+        data-status="draft"
+        onClick={() => onSelectThread(thread)}
+        onKeyDown={(event) => {
+          if ((event.target as HTMLElement).closest("button")) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelectThread(thread);
+          }
+        }}
+      >
+        <StatusGlyph status="draft" />
+        <span className="sb-status-main">
+          <span className="sb-status-top">
+            <span className="sb-status-title" title={preview}>
+              {preview}
+            </span>
+            <span className="sb-status-trailing">
+              <span className="sb-status-row-actions sb-status-row-actions-single">
+                <button
+                  type="button"
+                  title={t("app:sidebar.discardDraft")}
+                  aria-label={t("app:sidebar.discardDraft")}
+                  className="sb-status-action"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDiscardDraft(thread);
+                  }}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            </span>
+          </span>
+          <span className="sb-status-meta">
+            <span className="sb-status-meta-project">{workspaceLabel}</span>
+            <span className="sb-status-meta-engine" aria-hidden="true">
+              {engineIcon}
+            </span>
+          </span>
+        </span>
+      </div>
+    );
+  }
+
+  function renderSection(
+    sectionId: Exclude<InboxSectionId, "settled" | "drafts">,
+    labelKey: string,
+  ) {
     const items = groups[sectionId];
     if (items.length === 0) return null;
     return (
@@ -275,7 +393,7 @@ export function StatusThreadList({
     );
   }
 
-  if (threads.length === 0) {
+  if (listIsEmpty) {
     return (
       <div className="sb-inbox-empty">
         <span className="sb-inbox-empty-mark">
@@ -309,7 +427,13 @@ export function StatusThreadList({
         </div>
       )}
 
-      {renderSection("drafts", "app:sidebar.inboxDrafts")}
+      {draftRows.length > 0 && (
+        <div className="sb-inbox-section sb-inbox-drafts" data-section="drafts">
+          <div className="sb-status-list">
+            {draftRows.map(({ thread, preview }) => renderDraftRow(thread, preview))}
+          </div>
+        </div>
+      )}
       {renderSection("needsYou", "app:sidebar.inboxNeedsYou")}
       {renderSection("working", "app:sidebar.inboxWorking")}
       {renderSection("done", "app:sidebar.inboxDone")}

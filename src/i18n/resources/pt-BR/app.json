@@ -122,8 +122,8 @@
     "openFolderAction": "Abrir pasta",
     "clearFilter": "Limpar",
     "moreCount": "Mais {{count}}",
-    "inboxDrafts": "Rascunhos",
-    "statusLabelDraft": "Rascunho"
+    "statusLabelDraft": "Rascunho",
+    "discardDraft": "Descartar rascunho"
   },
   "commandPalette": {
     "placeholder": "Busque comandos, threads, workspaces ou arquivos...",

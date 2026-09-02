@@ -5259,13 +5259,40 @@ button, input, textarea, select {
   opacity: 0.55;
 }
 
-.sb-status-row[data-status="draft"] .sb-status-title {
-  color: var(--text-3);
-  font-style: italic;
+/* Draft rows: unsent text the user has invested in. Warm tint and a pencil,
+   nothing else, so they read as "yours to finish" rather than as a status. */
+.sb-status-row-draft {
+  background: color-mix(in srgb, var(--warning) 5%, transparent);
 }
 
-.sb-status-row-active[data-status="draft"] .sb-status-title {
-  color: var(--text-2);
+.sb-status-row-draft:hover {
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+}
+
+.sb-status-row-draft.sb-status-row-active {
+  background: var(--wash-06);
+}
+
+.sb-status-glyph[data-status="draft"] {
+  color: var(--warning);
+}
+
+.sb-status-row-draft .sb-status-title {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+.sb-status-row-actions-single.sb-status-row-actions {
+  width: 0;
+}
+
+.sb-status-row:hover .sb-status-row-actions-single,
+.sb-status-row:focus-within .sb-status-row-actions-single {
+  width: 22px;
+}
+
+.sb-inbox-drafts + .sb-inbox-section {
+  margin-top: 8px;
 }
 
 .sb-status-main {

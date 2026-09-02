@@ -110,6 +110,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
     setActiveThread,
     renameThread,
     removeThread,
+    discardThread,
     restoreThread,
     refreshArchivedThreads,
     refreshAllArchivedThreads,
@@ -524,6 +525,7 @@ function SidebarContent({ onPin }: { onPin?: () => void }) {
               workspaces.find((workspace) => workspace.id === projectFilterId) ?? null
             }
             onNewThread={onNewThreadFromSidebar}
+            onDiscardDraft={(thread) => void discardThread(thread.id)}
             onSelectThread={(thread) => void onSelectThread(thread)}
             onArchiveThread={onDeleteThread}
             onSettleThread={onSettleThread}

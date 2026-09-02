@@ -122,8 +122,8 @@
     "openFolderAction": "Open folder",
     "clearFilter": "Clear",
     "moreCount": "{{count}} more",
-    "inboxDrafts": "Drafts",
-    "statusLabelDraft": "Draft"
+    "statusLabelDraft": "Draft",
+    "discardDraft": "Discard draft"
   },
   "commandPalette": {
     "placeholder": "Search commands, threads, workspaces, or files...",

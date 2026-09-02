@@ -2,25 +2,21 @@ import type { ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { createAndActivateWorkspaceThread } from "../../lib/newThreadActions";
+import {
+  createAndActivateWorkspaceThread,
+  findReusableDraftThread,
+} from "../../lib/newThreadActions";
 import { activateThread } from "../../lib/threadActions";
 import { useThreadStore } from "../../stores/threadStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { Dropdown } from "../shared/Dropdown";
 import { ProjectIcon } from "../sidebar/ProjectIcon";
-import { isDraftThread } from "../sidebar/statusGrouping";
 import type { Thread, Workspace } from "../../types";
 
 const NEW_PROJECT_VALUE = "__new-project__";
 
 function workspaceLabel(workspace: Workspace, fallback: string): string {
   return workspace.name || workspace.rootPath.split("/").pop() || fallback;
-}
-
-/** An untouched draft in the target project is reused instead of stacking a
- * second empty thread next to it. */
-export function findReusableDraftThread(threads: Thread[]): Thread | null {
-  return threads.find(isDraftThread) ?? null;
 }
 
 interface Props {
