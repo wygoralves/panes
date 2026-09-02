@@ -419,7 +419,8 @@
     "draftNoProjectsFound": "Nenhum projeto encontrado",
     "placeholders": {
       "plan": "Descreva o que você quer planejar...",
-      "chat": "Peça alterações de continuação"
+      "chat": "Peça alterações de continuação",
+      "draft": "Descreva a mudança que você quer"
     },
     "repoAccess": "Acesso ao repo",
     "workspaceAccess": "Acesso ao workspace",

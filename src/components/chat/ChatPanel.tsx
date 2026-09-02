@@ -5885,7 +5885,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   placeholder={
                     activePlanMode
                       ? t("panel.placeholders.plan")
-                      : t("panel.placeholders.chat")
+                      : messages.length === 0 && !pendingSubmission
+                        ? t("panel.placeholders.draft")
+                        : t("panel.placeholders.chat")
                   }
                   disabled={!activeWorkspaceId}
                   style={{

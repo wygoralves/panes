@@ -419,7 +419,8 @@
     "draftNoProjectsFound": "No projects match",
     "placeholders": {
       "plan": "Describe what you want to plan...",
-      "chat": "Ask for follow-up changes"
+      "chat": "Ask for follow-up changes",
+      "draft": "Describe the change you want"
     },
     "repoAccess": "Repo access",
     "workspaceAccess": "Workspace access",
