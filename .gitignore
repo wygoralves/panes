@@ -42,3 +42,6 @@ remotion/
 # Local flatpak-builder build output
 .flatpak-builder/
 build-flatpak/
+
+# Stray literal home directories created by mis-expanded paths
+/~/
