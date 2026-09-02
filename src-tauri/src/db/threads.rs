@@ -10,6 +10,7 @@ use super::Database;
 pub struct RuntimeRecoveryReport {
     pub messages_marked_interrupted: usize,
     pub thread_status_updates: usize,
+    pub message_counts_repaired: usize,
 }
 
 pub fn create_thread(
@@ -336,7 +337,7 @@ pub fn bump_message_counters(
     let conn = db.connect()?;
     conn.execute(
         "UPDATE threads
-     SET message_count = message_count + 1,
+     SET message_count = (SELECT COUNT(*) FROM messages WHERE thread_id = ?3),
          total_tokens = total_tokens + ?1 + ?2,
          last_activity_at = datetime('now')
      WHERE id = ?3",
@@ -464,12 +465,25 @@ pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryR
         thread_status_updates += changed;
     }
 
+    // Counts written by older builds only moved on completed replies, so
+    // threads that were interrupted or errored on their first turn still say
+    // zero. Bring every row back in line with its messages.
+    let message_counts_repaired = tx
+        .execute(
+            "UPDATE threads
+       SET message_count = (SELECT COUNT(*) FROM messages WHERE messages.thread_id = threads.id)
+       WHERE message_count != (SELECT COUNT(*) FROM messages WHERE messages.thread_id = threads.id)",
+            [],
+        )
+        .context("failed to repair thread message counts")?;
+
     tx.commit()
         .context("failed to commit runtime recovery transaction")?;
 
     Ok(RuntimeRecoveryReport {
         messages_marked_interrupted,
         thread_status_updates,
+        message_counts_repaired,
     })
 }
 
@@ -658,6 +672,61 @@ mod tests {
         assert_eq!(refreshed.message_count, 2);
         assert_eq!(refreshed.total_tokens, 34);
         assert!(!refreshed.last_activity_at.is_empty());
+    }
+
+    #[test]
+    fn message_count_follows_inserted_rows_even_without_a_completed_reply() {
+        let db = test_db();
+        let thread = test_thread(&db, "Interrupted first turn");
+
+        messages::insert_user_message(&db, &thread.id, "hello", None, None, None, None).unwrap();
+        assert_eq!(
+            get_thread(&db, &thread.id).unwrap().unwrap().message_count,
+            1
+        );
+
+        let assistant =
+            messages::insert_assistant_placeholder(&db, &thread.id, None, None, None).unwrap();
+        messages::complete_assistant_message(
+            &db,
+            &assistant.id,
+            crate::models::MessageStatusDto::Interrupted,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            get_thread(&db, &thread.id).unwrap().unwrap().message_count,
+            2
+        );
+
+        bump_message_counters(&db, &thread.id, Some((1, 1))).unwrap();
+        assert_eq!(
+            get_thread(&db, &thread.id).unwrap().unwrap().message_count,
+            2
+        );
+    }
+
+    #[test]
+    fn reconcile_runtime_state_repairs_stale_message_counts() {
+        let db = test_db();
+        let thread = test_thread(&db, "Stale count");
+        messages::insert_user_message(&db, &thread.id, "hello", None, None, None, None).unwrap();
+        db.connect()
+            .unwrap()
+            .execute(
+                "UPDATE threads SET message_count = 0 WHERE id = ?1",
+                params![thread.id],
+            )
+            .unwrap();
+
+        let report = reconcile_runtime_state(&db).unwrap();
+
+        assert_eq!(report.message_counts_repaired, 1);
+        assert_eq!(
+            get_thread(&db, &thread.id).unwrap().unwrap().message_count,
+            1
+        );
     }
 
     #[test]

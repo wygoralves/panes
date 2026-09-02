@@ -892,6 +892,16 @@ fn insert_message(
     )
     .context("failed to insert message")?;
 
+    // The stored count follows the rows, not the turn outcome, so a thread
+    // with a user message and an interrupted reply never reads as empty.
+    conn.execute(
+        "UPDATE threads
+         SET message_count = (SELECT COUNT(*) FROM messages WHERE thread_id = ?1)
+         WHERE id = ?1",
+        params![thread_id],
+    )
+    .context("failed to sync thread message count")?;
+
     let conn = db.connect()?;
     conn.query_row(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,

@@ -51,11 +51,15 @@ pub fn run() {
     let db = Database::init().expect("failed to initialize database");
     match db::threads::reconcile_runtime_state(&db) {
         Ok(report) => {
-            if report.messages_marked_interrupted > 0 || report.thread_status_updates > 0 {
+            if report.messages_marked_interrupted > 0
+                || report.thread_status_updates > 0
+                || report.message_counts_repaired > 0
+            {
                 log::info!(
-                    "runtime recovery applied: interrupted_messages={}, thread_status_updates={}",
+                    "runtime recovery applied: interrupted_messages={}, thread_status_updates={}, message_counts_repaired={}",
                     report.messages_marked_interrupted,
-                    report.thread_status_updates
+                    report.thread_status_updates,
+                    report.message_counts_repaired
                 );
             }
         }
