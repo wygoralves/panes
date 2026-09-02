@@ -6453,6 +6453,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             {(isCodexEngine || engineKind(selectedEngineId) === "claude") && (
               usageLimits ? (
                 <div className="chat-status-usage">
+                  {usageLimits.windowFiveHourPercent !== null && (
                   <button
                     type="button"
                     className="chat-context-section"
@@ -6478,9 +6479,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       </span>
                     )}
                   </button>
+                  )}
 
-                  <span className="chat-context-divider">&middot;</span>
-
+                  {usageLimits.windowWeeklyPercent !== null && (
+                  <>
+                  {usageLimits.windowFiveHourPercent !== null && (
+                    <span className="chat-context-divider">&middot;</span>
+                  )}
                   <button
                     type="button"
                     className="chat-context-section"
@@ -6506,10 +6511,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       </span>
                     )}
                   </button>
+                  </>
+                  )}
 
                   {selectedClaudeWeeklyUsage && (
                     <>
-                      <span className="chat-context-divider">&middot;</span>
+                      {(usageLimits.windowFiveHourPercent !== null ||
+                        usageLimits.windowWeeklyPercent !== null) && (
+                        <span className="chat-context-divider">&middot;</span>
+                      )}
 
                       <button
                         type="button"
