@@ -170,6 +170,9 @@ pub struct GeneralConfig {
     /// Whether the chat composer shows the Plan mode toggle; `None` means shown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub composer_plan_mode_visible: Option<bool>,
+    /// Whether the model picker lists legacy models; `None` means hidden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composer_legacy_models_visible: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +237,7 @@ impl Default for GeneralConfig {
             default_autonomy_preset: None,
             sidebar_list_mode: None,
             composer_plan_mode_visible: None,
+            composer_legacy_models_visible: None,
         }
     }
 }
@@ -277,6 +281,11 @@ impl AppConfig {
     /// Whether the chat composer should show the Plan mode toggle.
     pub fn composer_plan_mode_visible(&self) -> bool {
         self.general.composer_plan_mode_visible.unwrap_or(true)
+    }
+
+    /// Whether the model picker should list legacy models.
+    pub fn composer_legacy_models_visible(&self) -> bool {
+        self.general.composer_legacy_models_visible.unwrap_or(false)
     }
 
     /// Interface zoom percentage, clamped into the supported range.

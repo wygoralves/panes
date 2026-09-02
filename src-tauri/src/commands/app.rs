@@ -244,6 +244,35 @@ pub async fn set_composer_plan_mode_visible(
 }
 
 #[tauri::command]
+pub async fn get_composer_legacy_models_visible() -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = AppConfig::load_or_create().map_err(err_to_string)?;
+        Ok(config.composer_legacy_models_visible())
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
+pub async fn set_composer_legacy_models_visible(
+    state: State<'_, AppState>,
+    visible: bool,
+) -> Result<bool, String> {
+    let config_write_lock = state.config_write_lock.clone();
+    let _guard = config_write_lock.lock_owned().await;
+
+    tokio::task::spawn_blocking(move || {
+        AppConfig::mutate(|config| {
+            config.general.composer_legacy_models_visible = Some(visible);
+            Ok(visible)
+        })
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(err_to_string)?
+}
+
+#[tauri::command]
 pub async fn get_ui_zoom_percent() -> Result<u32, String> {
     tokio::task::spawn_blocking(move || {
         let config = AppConfig::load_or_create().map_err(err_to_string)?;

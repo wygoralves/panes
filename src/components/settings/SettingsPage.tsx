@@ -38,6 +38,7 @@ import {
   Trash2,
   KeyRound,
   ZoomIn,
+  History,
 } from "lucide-react";
 import { ipc } from "../../lib/ipc";
 import {
@@ -205,6 +206,8 @@ export function SettingsPage() {
   const loadSidebarListMode = useSidebarListModeStore((state) => state.load);
 
   const composerPlanModeVisible = useComposerSettingsStore((state) => state.planModeVisible);
+  const composerLegacyModelsVisible = useComposerSettingsStore((state) => state.legacyModelsVisible);
+  const setComposerLegacyModelsVisible = useComposerSettingsStore((state) => state.setLegacyModelsVisible);
   const setComposerPlanModeVisible = useComposerSettingsStore((state) => state.setPlanModeVisible);
   const loadComposerSettings = useComposerSettingsStore((state) => state.load);
   const chatProviders = useChatProvidersStore((state) => state.providers);
@@ -498,6 +501,12 @@ export function SettingsPage() {
     if (visible === composerPlanModeVisible) return;
     const saved = await setComposerPlanModeVisible(visible);
     if (!saved) toast.error(t("app:settingsPage.chat.composerPlanModeFailed"));
+  }
+
+  async function changeComposerLegacyModelsVisible(visible: boolean) {
+    if (visible === composerLegacyModelsVisible) return;
+    const saved = await setComposerLegacyModelsVisible(visible);
+    if (!saved) toast.error(t("app:settingsPage.chat.composerLegacyModelsFailed"));
   }
 
   async function toggleChatProviderEnabled(provider: ChatProviderInstance, enabled: boolean) {
@@ -982,6 +991,17 @@ export function SettingsPage() {
                       checked={composerPlanModeVisible}
                       label={t("app:settingsPage.chat.composerPlanMode")}
                       onChange={(checked) => void changeComposerPlanModeVisible(checked)}
+                    />
+                  </SettingsRow>
+                  <SettingsRow
+                    icon={<History size={17} />}
+                    title={t("app:settingsPage.chat.composerLegacyModels")}
+                    description={t("app:settingsPage.chat.composerLegacyModelsDescription")}
+                  >
+                    <Toggle
+                      checked={composerLegacyModelsVisible}
+                      label={t("app:settingsPage.chat.composerLegacyModels")}
+                      onChange={(checked) => void changeComposerLegacyModelsVisible(checked)}
                     />
                   </SettingsRow>
                 </div>

@@ -18,6 +18,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
 import { modelFavoriteKey, useModelFavoritesStore } from "../../stores/modelFavoritesStore";
+import { useComposerSettingsStore } from "../../stores/composerSettingsStore";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import type { EngineHealth, EngineInfo, EngineModel } from "../../types";
 import type { CodexServiceTierValue } from "./CodexConfigPicker";
@@ -262,38 +263,6 @@ function modelMetadataIcon(icon: ModelMetadataChip["icon"]) {
   }
 }
 
-function ModelDetail({ model, chips }: { model: EngineModel; chips: ModelMetadataChip[] }) {
-  return (
-    <div className="mp-detail" aria-live="polite">
-      <span className="mp-detail-name">{formatModelName(model.displayName)}</span>
-      {chips.some((chip) => chip.icon) ? (
-        <span className="mp-detail-icons">
-          {chips
-            .filter((chip) => chip.icon)
-            .map((chip) => (
-              <span
-                key={chip.label}
-                className="mp-detail-icon"
-                role="img"
-                aria-label={chip.label}
-                title={chip.title ?? chip.label}
-              >
-                {modelMetadataIcon(chip.icon)}
-              </span>
-            ))}
-        </span>
-      ) : null}
-      {chips
-        .filter((chip) => !chip.icon)
-        .map((chip) => (
-          <span key={chip.label} className="mp-detail-chip" title={chip.title ?? chip.label}>
-            {chip.label}
-          </span>
-        ))}
-    </div>
-  );
-}
-
 function shouldShowModelDescription(engineId: string, model: EngineModel): boolean {
   if (!model.description) {
     return false;
@@ -383,6 +352,7 @@ export function ModelPicker({
   const ensureEngineHealth = useEngineStore((state) => state.ensureHealth);
   const favoriteKeys = useModelFavoritesStore((state) => state.favorites);
   const toggleFavorite = useModelFavoritesStore((state) => state.toggleFavorite);
+  const legacyModelsVisible = useComposerSettingsStore((state) => state.legacyModelsVisible);
 
   useEffect(() => {
     if (!open) {
@@ -515,6 +485,7 @@ export function ModelPicker({
       favoriteKeys.includes(modelFavoriteKey(selectedEngineId, model.id));
     const favoriteModels = filterOpenCodeModelsForQuery(currentModels.filter(isFavorite), trimmedQuery);
     const rest = (models: EngineModel[]) => models.filter((model) => !isFavorite(model));
+    const legacyOf = (models: EngineModel[]) => (legacyModelsVisible ? models : []);
     if (isOpenCode) {
       const ordered = [...openCodeProviderGroups].sort((left, right) => {
         if (left.providerId === currentOpenCodeProviderId) return -1;
@@ -526,7 +497,7 @@ export function ModelPicker({
           key: group.providerId,
           label: group.providerLabel,
           active: filterOpenCodeModelsForQuery(rest(group.activeModels), trimmedQuery),
-          legacy: filterOpenCodeModelsForQuery(rest(group.legacyModels), trimmedQuery),
+          legacy: filterOpenCodeModelsForQuery(legacyOf(rest(group.legacyModels)), trimmedQuery),
         }))
         .filter((group) => group.active.length > 0 || group.legacy.length > 0);
       return { favoriteModels, modelSections };
@@ -536,7 +507,7 @@ export function ModelPicker({
       trimmedQuery,
     );
     const legacy = filterOpenCodeModelsForQuery(
-      rest(currentModels.filter((model) => model.hidden)),
+      legacyOf(rest(currentModels.filter((model) => model.hidden))),
       trimmedQuery,
     );
     return {
@@ -546,7 +517,7 @@ export function ModelPicker({
           ? [{ key: "all", label: null as string | null, active, legacy }]
           : [],
     };
-  }, [currentModels, currentOpenCodeProviderId, favoriteKeys, isOpenCode, openCodeProviderGroups, query, selectedEngineId]);
+  }, [currentModels, currentOpenCodeProviderId, favoriteKeys, isOpenCode, legacyModelsVisible, openCodeProviderGroups, query, selectedEngineId]);
 
   const legacyCount = modelSections.reduce((total, section) => total + section.legacy.length, 0);
   const showLegacy = legacyExpanded || query.trim().length > 0;
@@ -644,9 +615,6 @@ export function ModelPicker({
   const triggerEffortLabel =
     selectedEffort && currentEfforts.length > 0 ? effortDisplayLabel(t, selectedEffort) : null;
   const fastMode = isCodex && selectedServiceTier === "fast";
-  const highlightedRow = rows.find((row) => row.key === highlightedKey);
-  const detailModel = highlightedRow?.type === "model" ? highlightedRow.model : currentModel;
-  const detailChips = detailModel ? modelMetadataChips(t, detailModel) : [];
   const showEngineNames = engines.length <= 3 || engines.some((engine) => !isBuiltinKindName(engine));
 
   const trigger = (
@@ -842,10 +810,6 @@ export function ModelPicker({
               </div>
             ) : null}
           </div>
-
-          {detailModel && detailChips.length > 0 ? (
-            <ModelDetail model={detailModel} chips={detailChips} />
-          ) : null}
 
           {isCodex ? (
             <label className="mp-footer">
