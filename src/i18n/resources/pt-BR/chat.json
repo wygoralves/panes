@@ -520,8 +520,8 @@
     },
     "outputTruncated": "Mostrando apenas a saída mais recente da ação (blocos anteriores truncados por desempenho).",
     "actionGroup": {
-      "summary_one": "{{count}} ação",
-      "summary_other": "{{count}} ações",
+      "summary_one": "{{count}} chamada de ferramenta",
+      "summary_other": "{{count}} chamadas de ferramenta",
       "errorCount_one": "{{count}} erro",
       "errorCount_other": "{{count}} erros",
       "types": {
@@ -541,7 +541,30 @@
         "search_other": "{{count}} buscas",
         "other_one": "{{count}} outro",
         "other_other": "{{count}} outros"
-      }
+      },
+      "moreFiles": "+{{count}} mais",
+      "filesChanged_one": "{{count}} arquivo alterado",
+      "filesChanged_other": "{{count}} arquivos alterados"
+    },
+    "actionVerbs": {
+      "command": "Executou",
+      "file_read": "Leu",
+      "file_write": "Escreveu",
+      "file_edit": "Editou",
+      "file_delete": "Excluiu",
+      "git": "Git",
+      "search": "Pesquisou",
+      "other": "Chamou"
+    },
+    "actionVerbsActive": {
+      "command": "Executando",
+      "file_read": "Lendo",
+      "file_write": "Escrevendo",
+      "file_edit": "Editando",
+      "file_delete": "Excluindo",
+      "git": "Git",
+      "search": "Pesquisando",
+      "other": "Chamando"
     },
     "approval": {
       "decision": {

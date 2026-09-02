@@ -520,8 +520,8 @@
     },
     "outputTruncated": "Showing latest action output only (older chunks truncated for performance).",
     "actionGroup": {
-      "summary_one": "{{count}} action",
-      "summary_other": "{{count}} actions",
+      "summary_one": "{{count}} tool call",
+      "summary_other": "{{count}} tool calls",
       "errorCount_one": "{{count}} error",
       "errorCount_other": "{{count}} errors",
       "types": {
@@ -541,7 +541,30 @@
         "search_other": "{{count}} searches",
         "other_one": "{{count}} other",
         "other_other": "{{count}} other"
-      }
+      },
+      "moreFiles": "+{{count}} more",
+      "filesChanged_one": "{{count}} file changed",
+      "filesChanged_other": "{{count}} files changed"
+    },
+    "actionVerbs": {
+      "command": "Ran",
+      "file_read": "Read",
+      "file_write": "Wrote",
+      "file_edit": "Edited",
+      "file_delete": "Deleted",
+      "git": "Git",
+      "search": "Searched",
+      "other": "Called"
+    },
+    "actionVerbsActive": {
+      "command": "Running",
+      "file_read": "Reading",
+      "file_write": "Writing",
+      "file_edit": "Editing",
+      "file_delete": "Deleting",
+      "git": "Git",
+      "search": "Searching",
+      "other": "Calling"
     },
     "approval": {
       "decision": {

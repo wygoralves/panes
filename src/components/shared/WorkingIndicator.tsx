@@ -101,7 +101,9 @@ export function WorkingIndicator({
       <PixelGrid tone={tone} variant={variant} />
       <span className={`working-label${shimmer ? " msg-shimmer" : ""}`}>{label}</span>
       {chip != null && (
-        <span className={`working-chip${chipMono ? "" : " working-chip--sans"}`}>{chip}</span>
+        <span className={`msg-chip${chipMono ? "" : " msg-chip--sans"}`}>
+          <span className="msg-chip-text">{chip}</span>
+        </span>
       )}
       {elapsed != null && <span className="working-time">{formatElapsed(elapsed)}</span>}
     </div>

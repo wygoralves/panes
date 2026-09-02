@@ -1,5 +1,6 @@
 import { engineKind } from "../../lib/engineKind";
 import { PixelGrid, formatElapsed, useElapsed } from "../shared/WorkingIndicator";
+import { countDiffStats, looksLikeFilePath, previewDiffLines, type DiffPreviewLine } from "../../lib/diffStats";
 import {
   memo,
   useCallback,
@@ -27,6 +28,11 @@ import {
   Terminal,
   Shield,
   Loader2,
+  Pencil,
+  Search,
+  Trash2,
+  FileText,
+  GitBranch,
   XCircle,
   Brain,
   Info,
@@ -213,6 +219,8 @@ interface MessageBlockHeaderProps {
   meta?: ReactNode;
   expanded?: boolean;
   labelMono?: boolean;
+  /** Lay the label out as a row of verb and chips instead of one truncating line. */
+  labelRow?: boolean;
   tileTone?: "neutral" | "violet" | "amber" | "info";
   onToggle?: () => void;
 }
@@ -223,6 +231,7 @@ function MessageBlockHeader({
   meta,
   expanded = false,
   labelMono = false,
+  labelRow = false,
   tileTone = "neutral",
   onToggle,
 }: MessageBlockHeaderProps) {
@@ -253,7 +262,7 @@ function MessageBlockHeader({
       )}
       <span className={`msg-block-tile${tileToneClass}`}>{icon}</span>
       <span
-        className={`msg-block-label${labelMono ? " msg-block-label--mono" : ""}`}
+        className={`msg-block-label${labelMono ? " msg-block-label--mono" : ""}${labelRow ? " msg-block-label--row" : ""}`}
       >
         {label}
       </span>
@@ -265,10 +274,19 @@ function MessageBlockHeader({
 const actionIcons: Record<string, typeof Terminal> = {
   command: Terminal,
   file_write: FileCode2,
-  file_edit: FileCode2,
-  file_read: FileCode2,
-  file_delete: FileCode2,
+  file_edit: Pencil,
+  file_read: FileText,
+  file_delete: Trash2,
+  search: Search,
+  git: GitBranch,
 };
+
+/** Chip text is mono for commands and paths, sans for queries and prose summaries. */
+function actionChipIsMono(actionType: string, summary: string): boolean {
+  if (actionType === "command" || actionType === "git") return true;
+  if (actionType === "search" || actionType === "other") return false;
+  return looksLikeFilePath(summary);
+}
 
 /* ── Action Group Segmentation ── */
 
@@ -817,13 +835,36 @@ function ActionBlockView({
     }
   }, [outputDeferred, outputChunks.length]);
 
+  const diffStats = useMemo(
+    () => (block.result?.diff ? countDiffStats(block.result.diff) : null),
+    [block.result?.diff],
+  );
+  const verb = t(
+    `messageBlocks.${isRunning || isPending ? "actionVerbsActive" : "actionVerbs"}.${block.actionType}`,
+  );
+  const summary = String(block.summary ?? "").trim();
+
   const toggleExpanded = useCallback(() => setExpanded((v) => !v), []);
   return (
     <div>
       <MessageBlockHeader
         icon={isRunning ? <PixelGrid tone="amber" /> : <Icon size={11} />}
-        label={block.summary}
-        labelMono={block.actionType === "command"}
+        label={
+          <>
+            <span className="msg-action-verb">{verb}</span>
+            {summary && (
+              <span
+                className={`msg-chip${actionChipIsMono(block.actionType, summary) ? "" : " msg-chip--sans"}`}
+                title={summary}
+              >
+                <span className="msg-chip-text">{summary}</span>
+                {diffStats && diffStats.adds > 0 && <span className="msg-chip-add">+{diffStats.adds}</span>}
+                {diffStats && diffStats.dels > 0 && <span className="msg-chip-del">−{diffStats.dels}</span>}
+              </span>
+            )}
+          </>
+        }
+        labelRow
         expanded={expanded}
         onToggle={canToggle ? toggleExpanded : undefined}
         meta={
@@ -997,15 +1038,139 @@ const actionTypeLabels: Record<string, string> = {
   other: "other",
 };
 
+interface ChangedFile {
+  file: string;
+  adds: number;
+  dels: number;
+  diff: string | null;
+}
+
+const FILE_STRIP_LIMIT = 4;
+
+/** Files a finished action group touched, merged by path with their diff stats. */
+function collectChangedFiles(blocks: ActionBlock[]): ChangedFile[] {
+  const byFile = new Map<string, ChangedFile>();
+  for (const block of blocks) {
+    if (block.status !== "done") continue;
+    if (!["file_edit", "file_write", "file_delete"].includes(block.actionType)) continue;
+    const diff = block.result?.diff ?? null;
+    const summary = String(block.summary ?? "").trim();
+    const file = (diff ? extractDiffFilename(diff) : null) ?? (looksLikeFilePath(summary) ? summary : null);
+    if (!file) continue;
+    const stats = diff ? countDiffStats(diff) : { adds: 0, dels: 0 };
+    const existing = byFile.get(file);
+    if (existing) {
+      existing.adds += stats.adds;
+      existing.dels += stats.dels;
+      if (diff) existing.diff = diff;
+    } else {
+      byFile.set(file, { file, ...stats, diff });
+    }
+  }
+  return [...byFile.values()];
+}
+
+function fileBaseName(path: string): string {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+function ChangedFileStrip({
+  files,
+  onOpenDiffFile,
+}: {
+  files: ChangedFile[];
+  onOpenDiffFile?: (filePath: string) => void;
+}) {
+  const { t } = useTranslation("chat");
+  const [showAll, setShowAll] = useState(false);
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const visible = showAll ? files : files.slice(0, FILE_STRIP_LIMIT);
+  const hidden = files.length - visible.length;
+  const preview = previewFile ? files.find((f) => f.file === previewFile) ?? null : null;
+  const previewLines: DiffPreviewLine[] = preview?.diff ? previewDiffLines(preview.diff) : [];
+
+  return (
+    <div
+      className="msg-file-strip"
+      aria-label={t("messageBlocks.actionGroup.filesChanged", { count: files.length })}
+      onMouseLeave={() => setPreviewFile(null)}
+    >
+      {preview && previewLines.length > 0 && (
+        <div className="msg-diff-preview" role="tooltip">
+          <div className="msg-diff-preview-head">
+            <span className="msg-file-chip-name">{preview.file}</span>
+            <span>
+              {preview.adds > 0 && <span className="msg-chip-add">+{preview.adds}</span>}{" "}
+              {preview.dels > 0 && <span className="msg-chip-del">−{preview.dels}</span>}
+            </span>
+          </div>
+          <div className="msg-diff-preview-body">
+            {previewLines.map((line, index) => (
+              <div key={index} className={`msg-diff-preview-line msg-diff-preview-line--${line.tone}`}>
+                <span className="g">{line.tone === "add" ? "+" : line.tone === "del" ? "−" : " "}</span>
+                <span>{line.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {visible.map((entry) => (
+        <button
+          key={entry.file}
+          type="button"
+          className="msg-file-chip"
+          title={onOpenDiffFile ? `${entry.file} · ${t("messageBlocks.openInEditor")}` : entry.file}
+          onMouseEnter={() => setPreviewFile(entry.file)}
+          onFocus={() => setPreviewFile(entry.file)}
+          onBlur={() => setPreviewFile((current) => (current === entry.file ? null : current))}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenDiffFile?.(entry.file);
+          }}
+        >
+          <FileCode2 size={11} />
+          <span className="msg-file-chip-name">{fileBaseName(entry.file)}</span>
+          {entry.adds > 0 && <span className="msg-chip-add">+{entry.adds}</span>}
+          {entry.dels > 0 && <span className="msg-chip-del">−{entry.dels}</span>}
+        </button>
+      ))}
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="msg-file-strip-more"
+          onClick={(event) => {
+            event.stopPropagation();
+            setShowAll(true);
+          }}
+        >
+          {t("messageBlocks.actionGroup.moreFiles", { count: hidden })}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ActionGroupView({
   blocks,
   onLoadActionOutput,
+  onOpenDiffFile,
 }: {
   blocks: ActionBlock[];
   onLoadActionOutput?: (actionId: string) => Promise<void>;
+  onOpenDiffFile?: (filePath: string) => void;
 }) {
   const { t } = useTranslation("chat");
   const [expanded, setExpanded] = useState(false);
+  const settled = useMemo(
+    () => blocks.every((b) => b.status === "done" || b.status === "error"),
+    [blocks],
+  );
+  const changedFiles = useMemo(() => (settled ? collectChangedFiles(blocks) : []), [blocks, settled]);
+  const totalDurationMs = useMemo(
+    () => blocks.reduce((sum, b) => sum + (b.result?.durationMs ?? 0), 0),
+    [blocks],
+  );
 
   const typeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1046,6 +1211,7 @@ function ActionGroupView({
         meta={
           <>
           <span>{typeBreakdown}</span>
+          {totalDurationMs >= 1000 && <span>{formatElapsed(totalDurationMs).replace(/\.\ds$/, "s")}</span>}
           {allErrored ? (
             <XCircle size={11} style={{ color: "var(--danger)", flexShrink: 0 }} />
           ) : hasAnyError ? (
@@ -1079,6 +1245,9 @@ function ActionGroupView({
             ))}
         </div>
       </div>
+      {changedFiles.length > 0 && (
+        <ChangedFileStrip files={changedFiles} onOpenDiffFile={onOpenDiffFile} />
+      )}
     </div>
   );
 }
@@ -1752,6 +1921,7 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
                       key={`action-group:${first.actionId}:${last.actionId}`}
                       blocks={inner.blocks}
                       onLoadActionOutput={onLoadActionOutput}
+                      onOpenDiffFile={onOpenDiffFile}
                     />
                   );
                 }
@@ -1808,6 +1978,7 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
               key={`action-group:${first.actionId}:${last.actionId}`}
               blocks={segment.blocks}
               onLoadActionOutput={onLoadActionOutput}
+              onOpenDiffFile={onOpenDiffFile}
             />
           );
         }
