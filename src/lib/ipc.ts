@@ -334,6 +334,12 @@ export const ipc = {
       agent: patch.agent ?? null,
     }),
   archiveThread: (threadId: string) => invoke<void>("archive_thread", { threadId }),
+  // `restore` carries the stamps the row held before the action, so an undo
+  // puts the thread back exactly instead of stamping the current time.
+  settleThread: (threadId: string, restore?: { settledAt: string | null }) =>
+    invoke<Thread>("settle_thread", { threadId, restore: restore ?? null }),
+  unsettleThread: (threadId: string, restore?: { unsettledAt: string | null }) =>
+    invoke<Thread>("unsettle_thread", { threadId, restore: restore ?? null }),
   restoreThread: (threadId: string) => invoke<Thread>("restore_thread", { threadId }),
   syncThreadFromEngine: (threadId: string) =>
     invoke<Thread>("sync_thread_from_engine", { threadId }),

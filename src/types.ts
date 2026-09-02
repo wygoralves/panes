@@ -166,6 +166,13 @@ export interface Thread {
   totalTokens: number;
   createdAt: string;
   lastActivityAt: string;
+  settledAt: string | null;
+  /** Stamped when a thread leaves the settled shelf. The sidebar sort is
+   * static, so this is what re-anchors an un-settled thread at the top. */
+  unsettledAt?: string | null;
+  /** Stamped when a turn starts. The sidebar's Working counter reads it, so
+   * the elapsed time does not jump when mid-turn writes move lastActivityAt. */
+  turnStartedAt?: string | null;
 }
 
 export interface CodexRemoteThread {
@@ -278,6 +285,25 @@ export interface NoticeBlock {
   level: "info" | "warning" | "error";
   title: string;
   message: string;
+}
+
+export type TaskStatus = "pending" | "in_progress" | "completed";
+
+export interface TaskListItem {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  activeForm?: string | null;
+  description?: string | null;
+  owner?: string | null;
+  blockedBy: string[];
+}
+
+export interface TaskListBlock {
+  type: "taskList";
+  source: "codex" | "claude" | string;
+  explanation?: string;
+  tasks: TaskListItem[];
 }
 
 export interface ActionBlock {
@@ -436,6 +462,7 @@ export type ContentBlock =
   | CodeBlock
   | DiffBlock
   | NoticeBlock
+  | TaskListBlock
   | ActionBlock
   | ApprovalBlock
   | ThinkingBlock
@@ -1255,6 +1282,13 @@ export interface NoticeEvent {
   message: string;
 }
 
+export interface TaskListUpdatedEvent {
+  type: "TaskListUpdated";
+  source: string;
+  explanation?: string | null;
+  tasks: TaskListItem[];
+}
+
 export type StreamEvent =
   | TurnStartedEvent
   | TurnCompletedEvent
@@ -1269,6 +1303,7 @@ export type StreamEvent =
   | ApprovalResolvedEvent
   | ModelReroutedEvent
   | NoticeEvent
+  | TaskListUpdatedEvent
   | ErrorEvent
   | UsageLimitsUpdatedEvent;
 

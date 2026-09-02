@@ -665,17 +665,55 @@ struct AutonomyPresetPolicy {
     allow_network: Option<bool>,
 }
 
+/// The autonomy ladder, least to most permissive after `inherit`.
+const AUTONOMY_PRESET_IDS: [&str; 5] = ["inherit", "read-only", "ask", "auto", "full"];
+
+fn available_autonomy_presets(engine_id: &str) -> &'static [&'static str] {
+    // OpenCode exposes approvals only, and its `allow` mode never asks, so a
+    // sandboxed "auto in workspace" rung does not exist there.
+    if engine_id == "opencode" {
+        &["inherit", "read-only", "ask", "full"]
+    } else {
+        &AUTONOMY_PRESET_IDS
+    }
+}
+
+/// Clamp a preset onto the ladder the engine actually exposes. A rung an
+/// engine does not implement steps *down* to the closest rung it does, never
+/// sideways onto a more permissive one: mapping the global "auto" default
+/// onto OpenCode's `allow` would silently hand an unsandboxed thread full
+/// autonomy at creation time.
+fn resolve_autonomy_preset_for_engine<'a>(engine_id: &str, preset: &'a str) -> &'a str {
+    let available = available_autonomy_presets(engine_id);
+    if available.iter().any(|rung| *rung == preset) {
+        return preset;
+    }
+
+    let Some(index) = AUTONOMY_PRESET_IDS.iter().position(|rung| *rung == preset) else {
+        return preset;
+    };
+
+    for rung in AUTONOMY_PRESET_IDS[1..index].iter().rev() {
+        if available.contains(rung) {
+            return rung;
+        }
+    }
+
+    "inherit"
+}
+
 fn autonomy_policy_for_preset(
     engine_id: &str,
-    preset: &str,
+    requested_preset: &str,
     codex_external_sandbox: bool,
 ) -> Result<AutonomyPresetPolicy, String> {
+    let preset = resolve_autonomy_preset_for_engine(engine_id, requested_preset);
     let policy = match engine_id {
         "opencode" => AutonomyPresetPolicy {
             approval_policy: json!(match preset {
                 "read-only" => "deny",
                 "ask" => "ask",
-                "auto" | "full" => "allow",
+                "full" => "allow",
                 _ => return Err(format!("unknown autonomy preset: {preset}")),
             }),
             sandbox_mode: None,
@@ -1037,6 +1075,57 @@ pub async fn rename_thread(
     })
     .await?
     .ok_or_else(|| format!("thread not found after rename: {thread_id}"))
+}
+
+/// Undo passes back the stamps the row already carried, so restoring a
+/// settlement never invents a new timestamp. An absent field clears the column,
+/// which is exactly what a thread that had never been un-settled needs.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettleRestore {
+    #[serde(default)]
+    pub settled_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsettleRestore {
+    #[serde(default)]
+    pub unsettled_at: Option<String>,
+}
+
+#[tauri::command]
+pub async fn settle_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    restore: Option<SettleRestore>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let stamp = match restore {
+        Some(restore) => db::threads::SettlementStamp::Restore(restore.settled_at),
+        None => db::threads::SettlementStamp::Now,
+    };
+    run_db(db, move |db| {
+        db::threads::settle_thread(db, &thread_id, stamp)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn unsettle_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    restore: Option<UnsettleRestore>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let stamp = match restore {
+        Some(restore) => db::threads::SettlementStamp::Restore(restore.unsettled_at),
+        None => db::threads::SettlementStamp::Now,
+    };
+    run_db(db, move |db| {
+        db::threads::unsettle_thread(db, &thread_id, stamp)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3340,6 +3429,9 @@ mod tests {
             total_tokens: 0,
             created_at: "2026-03-13T00:00:00Z".to_string(),
             last_activity_at: "2026-03-13T00:00:00Z".to_string(),
+            settled_at: None,
+            unsettled_at: None,
+            turn_started_at: None,
         };
 
         assert!(should_clone_local_branch_history(&thread));
@@ -3535,13 +3627,60 @@ mod tests {
             }
         );
         assert_eq!(
-            autonomy_policy_for_preset("opencode", "auto", false).unwrap(),
+            autonomy_policy_for_preset("opencode", "full", false).unwrap(),
             AutonomyPresetPolicy {
                 approval_policy: json!("allow"),
                 sandbox_mode: None,
                 allow_network: None,
             }
         );
+    }
+
+    #[test]
+    fn autonomy_preset_steps_down_to_the_rung_the_engine_exposes() {
+        assert_eq!(resolve_autonomy_preset_for_engine("opencode", "auto"), "ask");
+        assert_eq!(resolve_autonomy_preset_for_engine("codex", "auto"), "auto");
+        assert_eq!(resolve_autonomy_preset_for_engine("claude", "auto"), "auto");
+
+        // "auto" must never become OpenCode's unsandboxed `allow`.
+        assert_eq!(
+            autonomy_policy_for_preset("opencode", "auto", false).unwrap(),
+            AutonomyPresetPolicy {
+                approval_policy: json!("ask"),
+                sandbox_mode: None,
+                allow_network: None,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn create_thread_inner_downgrades_a_default_preset_the_engine_lacks() {
+        let state = test_app_state();
+        let workspace = test_workspace(&state);
+
+        let created = create_thread_inner(
+            &state,
+            workspace.id,
+            None,
+            "opencode".to_string(),
+            "opencode/big-pickle".to_string(),
+            "Thread".to_string(),
+            None,
+            None,
+            Some("auto".to_string()),
+        )
+        .await
+        .expect("expected thread creation to succeed");
+
+        let metadata = created
+            .engine_metadata
+            .expect("expected autonomy metadata to be stored");
+        assert_eq!(
+            metadata.get(approval_policy_metadata_key("opencode")),
+            Some(&json!("ask"))
+        );
+        assert_eq!(metadata.get("sandboxMode"), None);
+        assert_eq!(metadata.get("sandboxAllowNetwork"), None);
     }
 
     #[test]

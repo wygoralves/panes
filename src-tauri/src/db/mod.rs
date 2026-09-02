@@ -124,6 +124,9 @@ impl Database {
         conn.execute_batch(include_str!("migrations/001_initial.sql"))
             .context("failed to apply migrations")?;
         ensure_archived_columns(&conn)?;
+        ensure_thread_settlement_column(&conn)?;
+        ensure_thread_unsettled_at_column(&conn)?;
+        ensure_thread_turn_started_at_column(&conn)?;
         ensure_workspace_git_columns(&conn)?;
         ensure_repo_columns(&conn)?;
         ensure_workspace_startup_columns(&conn)?;
@@ -182,6 +185,43 @@ fn configure_connection(conn: &Connection) -> anyhow::Result<()> {
 fn ensure_archived_columns(conn: &Connection) -> anyhow::Result<()> {
     ensure_column(conn, "workspaces", "archived_at", "TEXT")?;
     ensure_column(conn, "threads", "archived_at", "TEXT")?;
+    Ok(())
+}
+
+fn ensure_thread_settlement_column(conn: &Connection) -> anyhow::Result<()> {
+    let had_settlement_column = table_has_column(conn, "threads", "settled_at")?;
+    ensure_column(conn, "threads", "settled_at", "TEXT")?;
+
+    if !had_settlement_column {
+        // Everything that already stopped belongs on the shelf, not in the
+        // inbox: an upgrade must not dump every historical idle or failed
+        // thread into the active list.
+        conn.execute(
+            "UPDATE threads
+             SET settled_at = last_activity_at
+             WHERE archived_at IS NULL
+               AND status IN ('completed', 'idle', 'error')",
+            [],
+        )
+        .context("failed to seed settled thread state")?;
+    }
+
+    Ok(())
+}
+
+/// Un-settling re-anchors a thread at the top of the active list, so the
+/// sidebar needs the moment it happened. The sort is otherwise static, and
+/// `last_activity_at` moves on every turn, so it cannot carry the anchor.
+fn ensure_thread_unsettled_at_column(conn: &Connection) -> anyhow::Result<()> {
+    ensure_column(conn, "threads", "unsettled_at", "TEXT")?;
+    Ok(())
+}
+
+/// The sidebar's Working counter needs the moment the turn started.
+/// `last_activity_at` moves again mid-turn (message counters, status flushes),
+/// so a counter anchored to it would jump backwards while the agent works.
+fn ensure_thread_turn_started_at_column(conn: &Connection) -> anyhow::Result<()> {
+    ensure_column(conn, "threads", "turn_started_at", "TEXT")?;
     Ok(())
 }
 
@@ -745,6 +785,121 @@ mod tests {
         };
         db.run_migrations().expect("failed to initialize test db");
         db
+    }
+
+    #[test]
+    fn settlement_migration_seeds_only_existing_stopped_threads_once() {
+        let conn = Connection::open_in_memory().expect("failed to open legacy database");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+               id TEXT PRIMARY KEY,
+               status TEXT NOT NULL,
+               archived_at TEXT,
+               last_activity_at TEXT NOT NULL
+             );
+             INSERT INTO threads VALUES
+               ('completed-visible', 'completed', NULL, '2026-08-01T10:00:00Z'),
+               ('completed-archived', 'completed', '2026-08-02T10:00:00Z', '2026-08-01T10:00:00Z'),
+               ('idle-visible', 'idle', NULL, '2026-08-01T10:00:00Z'),
+               ('error-visible', 'error', NULL, '2026-08-01T10:00:00Z'),
+               ('streaming-visible', 'streaming', NULL, '2026-08-01T10:00:00Z');",
+        )
+        .expect("failed to build legacy thread table");
+
+        ensure_thread_settlement_column(&conn).expect("failed to add settlement column");
+
+        let visible_settled: Option<String> = conn
+            .query_row(
+                "SELECT settled_at FROM threads WHERE id = 'completed-visible'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let archived_settled: Option<String> = conn
+            .query_row(
+                "SELECT settled_at FROM threads WHERE id = 'completed-archived'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let idle_settled: Option<String> = conn
+            .query_row(
+                "SELECT settled_at FROM threads WHERE id = 'idle-visible'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let error_settled: Option<String> = conn
+            .query_row(
+                "SELECT settled_at FROM threads WHERE id = 'error-visible'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let streaming_settled: Option<String> = conn
+            .query_row(
+                "SELECT settled_at FROM threads WHERE id = 'streaming-visible'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(visible_settled.as_deref(), Some("2026-08-01T10:00:00Z"));
+        assert_eq!(idle_settled.as_deref(), Some("2026-08-01T10:00:00Z"));
+        assert_eq!(error_settled.as_deref(), Some("2026-08-01T10:00:00Z"));
+        assert!(archived_settled.is_none());
+        assert!(streaming_settled.is_none());
+
+        conn.execute(
+            "UPDATE threads SET status = 'completed' WHERE id = 'streaming-visible'",
+            [],
+        )
+        .unwrap();
+        ensure_thread_settlement_column(&conn).expect("failed to rerun settlement migration");
+        let newly_completed_settled: Option<String> = conn
+            .query_row(
+                "SELECT settled_at FROM threads WHERE id = 'streaming-visible'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(newly_completed_settled.is_none());
+    }
+
+    #[test]
+    fn turn_started_at_migration_is_idempotent() {
+        let conn = Connection::open_in_memory().expect("failed to open legacy database");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+               id TEXT PRIMARY KEY,
+               status TEXT NOT NULL
+             );
+             INSERT INTO threads VALUES ('thread-1', 'idle');",
+        )
+        .expect("failed to build legacy thread table");
+
+        ensure_thread_turn_started_at_column(&conn).expect("failed to add turn_started_at");
+        ensure_thread_turn_started_at_column(&conn).expect("failed to rerun turn_started_at");
+
+        assert!(table_has_column(&conn, "threads", "turn_started_at").unwrap());
+    }
+
+    #[test]
+    fn unsettled_at_migration_is_idempotent() {
+        let conn = Connection::open_in_memory().expect("failed to open legacy database");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+               id TEXT PRIMARY KEY,
+               status TEXT NOT NULL
+             );
+             INSERT INTO threads VALUES ('thread-1', 'idle');",
+        )
+        .expect("failed to build legacy thread table");
+
+        ensure_thread_unsettled_at_column(&conn).expect("failed to add unsettled_at column");
+        ensure_thread_unsettled_at_column(&conn).expect("failed to rerun unsettled_at migration");
+
+        assert!(table_has_column(&conn, "threads", "unsettled_at").unwrap());
     }
 
     #[test]

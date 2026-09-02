@@ -16,6 +16,7 @@ import {
   Globe2,
   Gauge,
   LayoutGrid,
+  ListFilter,
   LockKeyhole,
   Minus,
   Monitor,
@@ -24,7 +25,6 @@ import {
   PanelLeft,
   Play,
   Plus,
-  Radar,
   RefreshCw,
   Search,
   Sun,
@@ -753,7 +753,7 @@ export function SettingsPage() {
                 >
                   <div className="usp-segmented">
                     {SIDEBAR_LIST_MODES.map((mode) => {
-                      const ModeIcon = mode === "fleet" ? Radar : FolderGit2;
+                      const ModeIcon = mode === "status" ? ListFilter : FolderGit2;
                       return (
                         <button
                           key={mode}
