@@ -13,7 +13,7 @@ import {
   Star,
   Zap,
 } from "lucide-react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useEngineStore } from "../../stores/engineStore";
@@ -576,7 +576,14 @@ export function ModelPicker({
   const triggerEffortLabel =
     selectedEffort && currentEfforts.length > 0 ? effortDisplayLabel(t, selectedEffort) : null;
   const fastMode = isCodex && selectedServiceTier === "fast";
-  const compactEfforts = shouldUseCompactEffortLabels(currentEfforts.length);
+  const effortIndex = Math.max(
+    0,
+    currentEfforts.findIndex((option) => option.reasoningEffort === selectedEffort),
+  );
+  // Stops sit inside the track with room for the thumb at both ends.
+  const stopPercent = (index: number) =>
+    currentEfforts.length < 2 ? 50 : 6 + (index / (currentEfforts.length - 1)) * 88;
+  const effortPercent = stopPercent(effortIndex);
   const selectedRowKey = currentModel ? rowKey(selectedEngineId, currentModel.id) : null;
   // When two accounts share a provider kind, the model name alone is
   // ambiguous, so favorites and the trigger carry the account name.
@@ -719,28 +726,48 @@ export function ModelPicker({
           {currentEfforts.length > 0 || isCodex ? (
             <div className="mp-footer">
               {currentEfforts.length > 0 ? (
-                <div className="mp-footer-row">
-                  <span className="mp-footer-label">{t("modelPicker.reasoning")}</span>
-                  <div className="mp-chips" role="radiogroup" aria-label={t("modelPicker.reasoning")}>
-                    {currentEfforts.map((option) => {
-                      const selected = option.reasoningEffort === selectedEffort;
-                      return (
-                        <button
-                          key={option.reasoningEffort}
-                          type="button"
-                          role="radio"
-                          aria-checked={selected}
-                          className={`mp-chip${selected ? " mp-chip-selected" : ""}`}
-                          title={option.description || effortDisplayLabel(t, option.reasoningEffort)}
-                          onClick={() => onEffortChange(option.reasoningEffort)}
-                        >
-                          {compactEfforts
-                            ? shortEffortLabel(t, option.reasoningEffort)
-                            : effortDisplayLabel(t, option.reasoningEffort)}
-                        </button>
-                      );
-                    })}
+                <div className="mp-effort">
+                  <div className="mp-effort-head">
+                    <span className="mp-effort-title">{t("modelPicker.reasoning")}</span>
+                    <span className="mp-effort-value">
+                      {effortDisplayLabel(t, currentEfforts[effortIndex]?.reasoningEffort ?? selectedEffort)}
+                    </span>
                   </div>
+                  {currentEfforts.length > 1 ? (
+                    <>
+                      <div className="mp-effort-ends" aria-hidden="true">
+                        <span>{t("modelPicker.faster")}</span>
+                        <span>{t("modelPicker.smarter")}</span>
+                      </div>
+                      <div className="mp-slider" style={{ "--mp-slider-pct": `${effortPercent}%` } as CSSProperties}>
+                        <div className="mp-slider-track">
+                          <div className="mp-slider-fill" />
+                          <div className="mp-slider-dots" />
+                          {currentEfforts.map((option, index) => (
+                            <span
+                              key={option.reasoningEffort}
+                              className={`mp-slider-stop${index <= effortIndex ? " mp-slider-stop-filled" : ""}`}
+                              style={{ left: `${stopPercent(index)}%` }}
+                            />
+                          ))}
+                        </div>
+                        <input
+                          type="range"
+                          className="mp-slider-input"
+                          min={0}
+                          max={currentEfforts.length - 1}
+                          step={1}
+                          value={effortIndex}
+                          aria-label={t("modelPicker.reasoning")}
+                          aria-valuetext={effortDisplayLabel(t, currentEfforts[effortIndex]?.reasoningEffort ?? "")}
+                          onChange={(event) => {
+                            const option = currentEfforts[Number(event.target.value)];
+                            if (option) onEffortChange(option.reasoningEffort);
+                          }}
+                        />
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
               {isCodex ? (
