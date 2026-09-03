@@ -754,11 +754,22 @@ impl EngineManager {
         *instances = next;
     }
 
-    pub fn set_resource_dir(&self, resource_dir: Option<PathBuf>) {
+    /// Records the bundled resource dir and hands it to every Claude engine,
+    /// including extra instances built from config before the app resolved
+    /// its resource dir. Packaged builds have no dev sidecar path, so an
+    /// instance without the resource dir cannot find the sidecar and reads
+    /// as unavailable.
+    pub async fn set_resource_dir(&self, resource_dir: Option<PathBuf>) {
         if let Ok(mut current) = self.resource_dir.lock() {
             *current = resource_dir.clone();
         }
-        self.claude.set_resource_dir(resource_dir);
+        self.claude.set_resource_dir(resource_dir.clone()).await;
+        let instances = self.instances.read().await;
+        for handle in instances.iter() {
+            if let EngineHandle::Claude(engine) = handle {
+                engine.set_resource_dir(resource_dir.clone()).await;
+            }
+        }
     }
 
     /// Engine handles in display order: the built-in engines first, then the
@@ -1528,5 +1539,51 @@ mod tests {
         // account of its kind.
         assert!(manager.handle("claude_disabled").await.is_none());
         assert!(manager.handle("codex_missing").await.is_none());
+    }
+
+    fn claude_engine(handle: &EngineHandle) -> &Arc<ClaudeSidecarEngine> {
+        match handle {
+            EngineHandle::Claude(engine) => engine,
+            _ => unreachable!("expected a Claude handle"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resource_dir_reaches_claude_instances_built_before_it_was_known() {
+        let config = AppConfig {
+            chat_providers: vec![provider_entry("claude_work", "claude", true)],
+            ..AppConfig::default()
+        };
+        let manager = EngineManager::from_config(&config);
+        let resource_dir = PathBuf::from("/tmp/panes-test-resources");
+
+        manager.set_resource_dir(Some(resource_dir.clone())).await;
+
+        let builtin = manager.handle("claude").await.expect("claude");
+        assert_eq!(
+            claude_engine(&builtin).resource_dir().await,
+            Some(resource_dir.clone())
+        );
+        let work = manager.handle("claude_work").await.expect("claude_work");
+        assert_eq!(
+            claude_engine(&work).resource_dir().await,
+            Some(resource_dir.clone())
+        );
+
+        // Instances added after the resource dir is known pick it up too.
+        manager
+            .apply_chat_providers(&[
+                provider_entry("claude_work", "claude", true),
+                provider_entry("claude_personal", "claude", true),
+            ])
+            .await;
+        let personal = manager
+            .handle("claude_personal")
+            .await
+            .expect("claude_personal");
+        assert_eq!(
+            claude_engine(&personal).resource_dir().await,
+            Some(resource_dir)
+        );
     }
 }
