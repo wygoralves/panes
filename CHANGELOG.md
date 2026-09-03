@@ -1,5 +1,11 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.65.0...vnull) (2026-09-03)
+
+### Bug Fixes
+
+* **engines:** hand the bundled resource dir to extra Claude instances so they stay available in packaged builds ([b979624](https://github.com/wygoralves/panes/commit/b9796243e91555fc3100be3fb72a7c3bcbebd2d1))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.64.0...vnull) (2026-09-02)
 
 ### Features
