@@ -165,7 +165,7 @@ pub fn run() {
             {
                 log::warn!("failed to start terminal notification ingress: {error}");
             }
-            state.engines.set_resource_dir(resource_dir);
+            tauri::async_runtime::block_on(state.engines.set_resource_dir(resource_dir));
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();

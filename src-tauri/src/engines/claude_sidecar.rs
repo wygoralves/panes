@@ -706,9 +706,14 @@ struct NodeRuntimeProbe {
 }
 
 impl ClaudeSidecarEngine {
-    pub fn set_resource_dir(&self, resource_dir: Option<PathBuf>) {
-        let mut state = self.state.blocking_lock();
+    pub async fn set_resource_dir(&self, resource_dir: Option<PathBuf>) {
+        let mut state = self.state.lock().await;
         state.resource_dir = resource_dir;
+    }
+
+    #[cfg(test)]
+    pub async fn resource_dir(&self) -> Option<PathBuf> {
+        self.state.lock().await.resource_dir.clone()
     }
 
     pub async fn prewarm(&self) -> anyhow::Result<()> {
