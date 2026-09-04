@@ -481,8 +481,26 @@ async fn remove_git_worktree_inner(
         return Err(format!("{WORKTREE_BUSY_ERROR_PREFIX}{}", busy.join(", ")));
     }
 
-    // Idle threads fall back to the main checkout, so the removal never leaves
-    // a thread pointing at a directory that is about to disappear.
+    tokio::task::spawn_blocking(move || {
+        worktree::remove_worktree(
+            &repo_path,
+            &worktree_path,
+            force,
+            branch_name.as_deref(),
+            delete_branch,
+        )
+        .map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+
+    // Only now that git confirmed the worktree is gone do the idle threads fall
+    // back to the main checkout. Detaching first would strand them: without
+    // `force`, removal fails on a dirty or locked worktree, the directory stays,
+    // and the frontend never refreshes on the error path, so the UI would keep
+    // showing a binding the backend had already dropped. The reverse order is
+    // safe because `send_message` re-verifies a bound worktree on every turn and
+    // surfaces a detach hint when it is missing.
     if !idle.is_empty() {
         run_db(state.db.clone(), move |db| {
             for thread in &idle {
@@ -496,18 +514,7 @@ async fn remove_git_worktree_inner(
         .await?;
     }
 
-    tokio::task::spawn_blocking(move || {
-        worktree::remove_worktree(
-            &repo_path,
-            &worktree_path,
-            force,
-            branch_name.as_deref(),
-            delete_branch,
-        )
-        .map_err(err_to_string)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    Ok(())
 }
 
 #[tauri::command]
@@ -813,7 +820,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_git_worktree_detaches_idle_threads_before_removing() {
+    async fn remove_git_worktree_keeps_bindings_when_git_refuses_the_removal() {
+        let repo = TestRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let idle = repo.thread_bound_to(&worktree_path, "Idle thread");
+        // `git worktree remove` refuses a worktree with uncommitted work unless
+        // it is forced, which is the failure the detach must not run ahead of.
+        fs::write(
+            std::path::Path::new(&worktree_path).join("a.txt"),
+            "uncommitted\n",
+        )
+        .expect("dirty the worktree");
+
+        let error = remove_git_worktree_inner(
+            &repo.state,
+            repo.path_str().to_string(),
+            worktree_path.clone(),
+            false,
+            Some("feature".to_string()),
+            false,
+        )
+        .await
+        .expect_err("expected git to refuse removing a dirty worktree");
+
+        assert!(
+            !error.starts_with(WORKTREE_BUSY_ERROR_PREFIX),
+            "the refusal must come from git, not the busy check: {error}"
+        );
+        assert!(
+            std::path::Path::new(&worktree_path).is_dir(),
+            "the worktree must survive a failed removal"
+        );
+        assert_eq!(
+            crate::commands::threads::thread_worktree_path(
+                repo.reload(&idle.id).engine_metadata.as_ref()
+            )
+            .as_deref(),
+            Some(worktree_path.as_str()),
+            "a failed removal must leave the idle thread bound to the worktree that still exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_git_worktree_detaches_idle_threads_after_removing() {
         let repo = TestRepo::init();
         let worktree_path = repo.add_worktree("feature");
         let other_worktree_path = repo.add_worktree("other");
