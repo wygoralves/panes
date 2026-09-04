@@ -128,6 +128,28 @@ pub fn list_archived_threads_for_workspace(
     Ok(out)
 }
 
+/// Every thread whose engine metadata carries a worktree binding, archived ones
+/// included. The stored path is compared by the caller, which knows how to match
+/// worktree paths across canonical and trailing-separator forms.
+pub fn list_threads_with_worktree_binding(db: &Database) -> anyhow::Result<Vec<ThreadDto>> {
+    let conn = db.connect()?;
+    let mut stmt = conn.prepare(
+    "SELECT id, workspace_id, repo_id, engine_id, model_id, engine_thread_id, engine_metadata_json,
+            COALESCE(title, ''), status, message_count, total_tokens, created_at, last_activity_at,
+            settled_at, unsettled_at, turn_started_at
+     FROM threads
+     WHERE engine_metadata_json IS NOT NULL
+       AND engine_metadata_json LIKE '%worktreePath%'",
+  )?;
+
+    let rows = stmt.query_map([], map_thread_row)?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 pub fn update_thread_status(
     db: &Database,
     thread_id: &str,
@@ -259,6 +281,20 @@ pub fn set_engine_thread_id(
         params![engine_thread_id, thread_id],
     )
     .context("failed to set engine thread id")?;
+    Ok(())
+}
+
+pub fn set_thread_repo_id(
+    db: &Database,
+    thread_id: &str,
+    repo_id: Option<&str>,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE threads SET repo_id = ?1 WHERE id = ?2",
+        params![repo_id, thread_id],
+    )
+    .context("failed to set thread repo")?;
     Ok(())
 }
 

@@ -539,7 +539,11 @@ pub async fn send_message(
     };
     let scope = if let Some(repo) = selected_repo.as_ref() {
         ThreadScope::Repo {
-            repo_path: repo.path.clone(),
+            repo_path: super::threads::resolve_thread_repo_cwd_async(
+                repo.path.as_str(),
+                thread.engine_metadata.as_ref(),
+            )
+            .await?,
         }
     } else {
         ThreadScope::Workspace {

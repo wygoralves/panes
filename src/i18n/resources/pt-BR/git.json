@@ -133,6 +133,9 @@
       "created": "Worktree criada: {{branchName}}",
       "pruned": "Worktrees obsoletas removidas",
       "removed": "Worktree removida"
+    },
+    "errors": {
+      "threadRunning": "Esta worktree ainda está executando um chat ({{threads}}). Pare o turno antes de removê-la."
     }
   },
   "changes": {
