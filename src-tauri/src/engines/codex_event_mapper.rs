@@ -154,13 +154,20 @@ impl TurnEventMapper {
                     "Codex compacted the active thread context to keep the conversation moving."
                         .to_string(),
             }],
-            "warning" => vec![map_simple_notice(
-                "codex_warning",
-                "warning",
-                "Codex warning",
-                extract_any_string(params, &["message"])
-                    .unwrap_or_else(|| "Codex reported a warning".to_string()),
-            )],
+            "warning" => {
+                let message = extract_any_string(params, &["message"])
+                    .unwrap_or_else(|| "Codex reported a warning".to_string());
+                if is_skills_context_budget_warning(&message) {
+                    Vec::new()
+                } else {
+                    vec![map_simple_notice(
+                        "codex_warning",
+                        "warning",
+                        "Codex warning",
+                        message,
+                    )]
+                }
+            }
             "guardianwarning" => vec![map_simple_notice(
                 "codex_guardian_warning",
                 "warning",
@@ -888,6 +895,12 @@ fn map_simple_notice(kind: &str, level: &str, title: &str, message: String) -> E
         title: title.to_string(),
         message,
     }
+}
+
+fn is_skills_context_budget_warning(message: &str) -> bool {
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    normalized.starts_with("Skill descriptions were shortened to fit the skills context budget.")
+        && normalized.contains("Codex can still see every skill")
 }
 
 fn map_model_verification_notice(params: &Value) -> Option<EngineEvent> {
@@ -2104,6 +2117,48 @@ mod tests {
                 assert_eq!(level, "info");
                 assert_eq!(title, "Context compacted");
                 assert!(message.contains("compacted"));
+            }
+            other => panic!("expected notice event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_notification_suppresses_skills_context_budget_warning() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "warning",
+            &json!({
+                "message": "Skill descriptions were shortened to fit the skills context budget.\nCodex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+            }),
+        );
+
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn map_notification_preserves_other_codex_warnings() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "warning",
+            &json!({
+                "message": "The configured model is unavailable."
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            EngineEvent::Notice {
+                kind,
+                level,
+                title,
+                message,
+            } => {
+                assert_eq!(kind, "codex_warning");
+                assert_eq!(level, "warning");
+                assert_eq!(title, "Codex warning");
+                assert_eq!(message, "The configured model is unavailable.");
             }
             other => panic!("expected notice event, got {other:?}"),
         }
