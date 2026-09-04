@@ -1795,7 +1795,7 @@ async fn run_turn(
                 }
             }
         } else {
-            event_rx.recv().await
+            recv_engine_event(&mut event_rx, &cancellation, TURN_CANCEL_GRACE).await
         };
 
         let Some(incoming_event) = incoming_event else {
@@ -2004,7 +2004,25 @@ async fn run_turn(
         .await;
     }
 
-    match engine_task.await {
+    // A stopped turn waits a bounded time for the engine task, then aborts it:
+    // a task that ignored the interrupt must not keep the thread registered.
+    let engine_abort = engine_task.abort_handle();
+    let engine_outcome = async {
+        if !cancellation.is_cancelled() {
+            return engine_task.await;
+        }
+        match tokio::time::timeout(TURN_CANCEL_GRACE, engine_task).await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                engine_abort.abort();
+                log::warn!(
+                    "engine task did not stop within {TURN_CANCEL_GRACE:?} after cancel; aborting it"
+                );
+                Ok(Ok(()))
+            }
+        }
+    };
+    match engine_outcome.await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
             blocks.push(ContentBlock::Error {
@@ -2348,7 +2366,7 @@ async fn run_codex_review_turn(
                 }
             }
         } else {
-            event_rx.recv().await
+            recv_engine_event(&mut event_rx, &cancellation, TURN_CANCEL_GRACE).await
         };
 
         let Some(incoming_event) = incoming_event else {
@@ -2557,7 +2575,25 @@ async fn run_codex_review_turn(
         .await;
     }
 
-    match engine_task.await {
+    // A stopped turn waits a bounded time for the engine task, then aborts it:
+    // a task that ignored the interrupt must not keep the thread registered.
+    let engine_abort = engine_task.abort_handle();
+    let engine_outcome = async {
+        if !cancellation.is_cancelled() {
+            return engine_task.await;
+        }
+        match tokio::time::timeout(TURN_CANCEL_GRACE, engine_task).await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                engine_abort.abort();
+                log::warn!(
+                    "engine task did not stop within {TURN_CANCEL_GRACE:?} after cancel; aborting it"
+                );
+                Ok(Ok(()))
+            }
+        }
+    };
+    match engine_outcome.await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
             blocks.push(ContentBlock::Error {
@@ -3288,6 +3324,32 @@ fn build_final_thread_event(
             },
             None,
         ),
+    }
+}
+
+/// How long a stopped turn waits for the engine to report the interruption
+/// before the turn is closed without it.
+const TURN_CANCEL_GRACE: Duration = Duration::from_secs(10);
+
+/// The next engine event, or `None` once the channel closes. After Stop the
+/// wait is bounded: an engine that never answers the interrupt (a killed
+/// sidecar whose sender is still alive, a hung transport) would otherwise keep
+/// the turn registered forever and block every later message on the thread.
+async fn recv_engine_event(
+    event_rx: &mut mpsc::Receiver<EngineEvent>,
+    cancellation: &CancellationToken,
+    grace: Duration,
+) -> Option<EngineEvent> {
+    if cancellation.is_cancelled() {
+        return tokio::time::timeout(grace, event_rx.recv())
+            .await
+            .unwrap_or(None);
+    }
+    tokio::select! {
+        event = event_rx.recv() => event,
+        _ = cancellation.cancelled() => tokio::time::timeout(grace, event_rx.recv())
+            .await
+            .unwrap_or(None),
     }
 }
 
@@ -4322,6 +4384,55 @@ fn normalize_codex_approval_policy_value(value: &Value) -> Result<Value, String>
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn recv_engine_event_returns_events_while_the_turn_runs() {
+        let (tx, mut rx) = mpsc::channel::<EngineEvent>(4);
+        let cancellation = CancellationToken::new();
+        tx.send(EngineEvent::TextDelta {
+            content: "hi".to_string(),
+        })
+        .await
+        .unwrap();
+        let event = recv_engine_event(&mut rx, &cancellation, Duration::from_millis(50)).await;
+        assert!(matches!(event, Some(EngineEvent::TextDelta { .. })));
+    }
+
+    #[tokio::test]
+    async fn recv_engine_event_gives_up_after_the_grace_once_stopped() {
+        let (_tx, mut rx) = mpsc::channel::<EngineEvent>(4);
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let started = std::time::Instant::now();
+        let event = recv_engine_event(&mut rx, &cancellation, Duration::from_millis(50)).await;
+        assert!(event.is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn recv_engine_event_still_takes_the_interruption_report_after_stop() {
+        let (tx, mut rx) = mpsc::channel::<EngineEvent>(4);
+        let cancellation = CancellationToken::new();
+        let waiter = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move { recv_engine_event(&mut rx, &cancellation, Duration::from_secs(5)).await }
+        });
+        cancellation.cancel();
+        tx.send(EngineEvent::TurnCompleted {
+            token_usage: None,
+            status: TurnCompletionStatus::Interrupted,
+        })
+        .await
+        .unwrap();
+        let event = waiter.await.unwrap();
+        assert!(matches!(
+            event,
+            Some(EngineEvent::TurnCompleted {
+                status: TurnCompletionStatus::Interrupted,
+                ..
+            })
+        ));
+    }
+
     use std::{fs, sync::Arc};
 
     use super::*;

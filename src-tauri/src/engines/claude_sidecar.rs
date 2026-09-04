@@ -2325,11 +2325,12 @@ impl Engine for ClaudeSidecarEngine {
                                     is_auth_error,
                                     ..
                                 } => {
-                                    if Self::is_claude_auth_error(
+                                    let auth_failure = Self::is_claude_auth_error(
                                         &message,
                                         error_type.as_deref(),
                                         is_auth_error.unwrap_or(false),
-                                    ) {
+                                    );
+                                    if auth_failure {
                                         auth_invalidated_transport = true;
                                         let mut state = self.state.lock().await;
                                         if state
@@ -2350,6 +2351,26 @@ impl Engine for ClaudeSidecarEngine {
                                         })
                                         .await
                                         .ok();
+                                    if auth_failure {
+                                        // The child is gone, but this loop still holds the
+                                        // transport and with it the event sender, so the
+                                        // channel never closes on its own. End the turn here
+                                        // or the thread stays registered as running.
+                                        event_tx
+                                            .send(EngineEvent::TurnCompleted {
+                                                token_usage: None,
+                                                status: TurnCompletionStatus::Failed,
+                                            })
+                                            .await
+                                            .ok();
+                                        let mut state = self.state.lock().await;
+                                        if let Some(config) =
+                                            state.threads.get_mut(&engine_thread_id_owned)
+                                        {
+                                            config.active_request_id = None;
+                                        }
+                                        break;
+                                    }
                                 }
                                 SidecarEvent::Ready
                                 | SidecarEvent::Models { .. }
