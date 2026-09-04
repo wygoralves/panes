@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalResponse, ChatProviderUsage, StreamEvent } from "../types";
 
 const mockIpc = vi.hoisted(() => ({
+  cancelTurn: vi.fn(),
   sendMessage: vi.fn(),
   steerMessage: vi.fn(),
   getThreadMessagesWindow: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("../lib/perfTelemetry", () => ({
 }));
 
 import { useChatStore } from "./chatStore";
+import { useChatQueueStore } from "./chatQueueStore";
 import { useThreadStore } from "./threadStore";
 
 function deferred<T>() {
@@ -1605,4 +1607,119 @@ describe("chatStore send", () => {
     expect(useChatStore.getState().messages).toBe(visibleMessages);
   });
 
+});
+
+describe("chatStore drainQueue", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIpc.sendMessage.mockResolvedValue("assistant-message-id");
+    mockIpc.cancelTurn.mockResolvedValue(undefined);
+    mockListenThreadEvents.mockResolvedValue(() => {});
+    useChatQueueStore.setState({ queuesByThread: {} });
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [],
+      olderCursor: null,
+      hasOlderMessages: false,
+      loadingOlderMessages: false,
+      olderLoadBlockedUntil: 0,
+      status: "idle",
+      streaming: false,
+      usageLimits: null,
+      usageLimitsLoading: false,
+      error: undefined,
+      unlisten: undefined,
+    });
+  });
+
+  function queue(threadId: string, text: string) {
+    return useChatQueueStore.getState().enqueue({ threadId, text });
+  }
+
+  it("sends the next queued message when the turn completed", async () => {
+    queue("thread-1", "queued one");
+
+    await useChatStore.getState().drainQueue("thread-1", "completed");
+
+    expect(mockIpc.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockIpc.sendMessage.mock.calls[0]?.[1]).toBe("queued one");
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toBeUndefined();
+  });
+
+  it("leaves the queue alone when the turn was interrupted", async () => {
+    queue("thread-1", "queued one");
+
+    await useChatStore.getState().drainQueue("thread-1", "interrupted");
+
+    expect(mockIpc.sendMessage).not.toHaveBeenCalled();
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toHaveLength(1);
+  });
+
+  it("leaves the queue alone when the turn failed", async () => {
+    queue("thread-1", "queued one");
+
+    await useChatStore.getState().drainQueue("thread-1", "failed");
+
+    expect(mockIpc.sendMessage).not.toHaveBeenCalled();
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toHaveLength(1);
+  });
+
+  it("drains when asked without a turn status", async () => {
+    queue("thread-1", "queued one");
+
+    await useChatStore.getState().drainQueue("thread-1");
+
+    expect(mockIpc.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockIpc.sendMessage.mock.calls[0]?.[1]).toBe("queued one");
+  });
+
+  it("waits while the visible thread is still streaming", async () => {
+    queue("thread-1", "queued one");
+    useChatStore.setState({ streaming: true });
+
+    await useChatStore.getState().drainQueue("thread-1", "completed");
+
+    expect(mockIpc.sendMessage).not.toHaveBeenCalled();
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toHaveLength(1);
+  });
+
+  it("requeues a background message when the send fails", async () => {
+    useChatStore.setState({ threadId: "thread-2" });
+    queue("thread-1", "queued one");
+    mockIpc.sendMessage.mockRejectedValueOnce(new Error("engine is down"));
+
+    await useChatStore.getState().drainQueue("thread-1", "completed");
+
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toHaveLength(1);
+  });
+
+  it("drops a background message whose thread is gone", async () => {
+    useChatStore.setState({ threadId: "thread-2" });
+    queue("thread-1", "queued one");
+    mockIpc.sendMessage.mockRejectedValueOnce(new Error("thread not found: thread-1"));
+
+    await useChatStore.getState().drainQueue("thread-1", "completed");
+
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toBeUndefined();
+  });
+
+  it("clears the queue when the user stops the turn", async () => {
+    queue("thread-1", "queued one");
+    queue("thread-1", "queued two");
+    useChatStore.setState({ streaming: true, status: "streaming" });
+
+    await useChatStore.getState().cancel();
+
+    expect(mockIpc.cancelTurn).toHaveBeenCalledWith("thread-1");
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toBeUndefined();
+  });
+
+  it("keeps the queue when the cancel request fails", async () => {
+    queue("thread-1", "queued one");
+    mockIpc.cancelTurn.mockRejectedValueOnce(new Error("cancel failed"));
+
+    await useChatStore.getState().cancel();
+
+    expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toHaveLength(1);
+  });
 });

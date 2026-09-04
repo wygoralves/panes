@@ -1437,4 +1437,414 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(firstCompletion?.actionId).not.toBe(secondStart?.actionId);
     expect(secondCompletion?.actionId).not.toBe(firstStart?.actionId);
   });
+
+  it("steers a running turn by pushing a next-priority user message", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "init",
+            session_id: "session-steer",
+          },
+        },
+        { type: "await_input", count: 2 },
+        { type: "observe_input" },
+      ],
+      emitObservationResult: true,
+      sessionId: "session-steer",
+    });
+
+    harness.send({
+      id: "query-steer",
+      method: "query",
+      params: { prompt: "start the work", cwd: repoRoot },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-steer" && event.type === "session_init",
+    );
+
+    harness.send({
+      id: "steer-1",
+      method: "steer",
+      params: { requestId: "query-steer", prompt: "also update the docs" },
+    });
+
+    const steered = await harness.waitFor((event) => event.id === "steer-1");
+    expect(steered).toMatchObject({ type: "steer_result", ok: true });
+
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-steer" && event.type === "turn_completed",
+    );
+    expect(completed.status).toBe("completed");
+
+    const observations = parseObservationResults(harness, "query-steer");
+    const inputs = observations.find((entry) => entry.type === "input_messages")
+      ?.result as unknown as Array<Record<string, unknown>>;
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toMatchObject({
+      type: "user",
+      parent_tool_use_id: null,
+      message: { role: "user", content: [{ type: "text", text: "start the work" }] },
+    });
+    expect(inputs[0]).not.toHaveProperty("priority");
+    expect(inputs[1]).toMatchObject({
+      type: "user",
+      parent_tool_use_id: null,
+      priority: "next",
+      message: { role: "user", content: [{ type: "text", text: "also update the docs" }] },
+    });
+    expect(typeof inputs[1]?.uuid).toBe("string");
+  });
+
+  it("rejects a steer for a request that is not running", async () => {
+    const harness = await spawnHarness({ steps: [] });
+
+    harness.send({
+      id: "steer-missing",
+      method: "steer",
+      params: { requestId: "query-nope", prompt: "hello" },
+    });
+
+    const errorEvent = await harness.waitFor((event) => event.id === "steer-missing");
+    expect(errorEvent.type).toBe("error");
+    expect(errorEvent.message).toContain("No active Claude query for request query-nope");
+  });
+
+
+  it("interrupts the running query on cancel and keeps the interrupted session", async () => {
+    const harness = await spawnHarness({
+      supportsInterrupt: true,
+      interruptedSessionId: "session-after-interrupt",
+      steps: [
+        {
+          type: "yield",
+          message: { type: "system", subtype: "init", session_id: "session-cancel" },
+        },
+        {
+          type: "permission",
+          toolName: "Bash",
+          input: { command: "npm test" },
+          toolUseID: "tool-cancel",
+        },
+      ],
+      sessionId: "session-cancel",
+    });
+
+    harness.send({
+      id: "query-cancel",
+      method: "query",
+      params: { prompt: "wait for approval", cwd: repoRoot, approvalPolicy: "restricted" },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-cancel" && event.type === "approval_requested",
+    );
+    harness.send({ method: "cancel", params: { requestId: "query-cancel" } });
+
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-cancel" && event.type === "turn_completed",
+    );
+    expect(completed).toMatchObject({
+      status: "interrupted",
+      sessionId: "session-after-interrupt",
+    });
+    expect(
+      harness.events.some(
+        (event) => event.id === "query-cancel" && event.type === "text_delta",
+      ),
+    ).toBe(false);
+  });
+
+  it("acknowledges a cancel only once the interrupted query has stopped", async () => {
+    const harness = await spawnHarness({
+      supportsInterrupt: true,
+      interruptedSessionId: "session-cancel-ack",
+      steps: [
+        {
+          type: "yield",
+          message: { type: "system", subtype: "init", session_id: "session-cancel-ack" },
+        },
+        {
+          type: "permission",
+          toolName: "Bash",
+          input: { command: "npm test" },
+          toolUseID: "tool-cancel-ack",
+        },
+      ],
+      sessionId: "session-cancel-ack",
+    });
+
+    harness.send({
+      id: "query-cancel-ack",
+      method: "query",
+      params: { prompt: "wait for approval", cwd: repoRoot, approvalPolicy: "restricted" },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-cancel-ack" && event.type === "approval_requested",
+    );
+    harness.send({
+      id: "cancel-ack-1",
+      method: "cancel",
+      params: { requestId: "query-cancel-ack" },
+    });
+
+    const ack = await harness.waitFor(
+      (event) => event.id === "cancel-ack-1" && event.type === "cancel_result",
+    );
+    expect(ack).toMatchObject({
+      ok: true,
+      requestId: "query-cancel-ack",
+      closed: false,
+    });
+
+    const completedIndex = harness.events.findIndex(
+      (event) => event.id === "query-cancel-ack" && event.type === "turn_completed",
+    );
+    expect(completedIndex).toBeGreaterThanOrEqual(0);
+    // The acknowledgement is the last word: the query had already yielded its
+    // final result when it landed.
+    expect(harness.events.indexOf(ack)).toBeGreaterThan(completedIndex);
+  });
+
+  it("acknowledges a cancel for a turn that already finished", async () => {
+    const harness = await spawnHarness({ steps: [] });
+
+    harness.send({
+      id: "cancel-unknown",
+      method: "cancel",
+      params: { requestId: "query-gone" },
+    });
+
+    const ack = await harness.waitFor((event) => event.id === "cancel-unknown");
+    expect(ack).toMatchObject({
+      type: "cancel_result",
+      ok: true,
+      requestId: "query-gone",
+      closed: false,
+    });
+  });
+
+  it("closes a query that ignores the interrupt once the cancel grace expires", async () => {
+    const harness = await spawnHarness(
+      {
+        steps: [
+          {
+            type: "yield",
+            message: { type: "system", subtype: "init", session_id: "session-grace" },
+          },
+          { type: "delay", durationMs: 4_000 },
+        ],
+        sessionId: "session-grace",
+      },
+      { PANES_CLAUDE_CANCEL_GRACE_MS: "200" },
+    );
+
+    harness.send({
+      id: "query-grace",
+      method: "query",
+      params: { prompt: "run a long tool", cwd: repoRoot, approvalPolicy: "trusted" },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-grace" && event.type === "session_init",
+    );
+    harness.send({
+      id: "cancel-grace",
+      method: "cancel",
+      params: { requestId: "query-grace" },
+    });
+
+    const ack = await harness.waitFor(
+      (event) => event.id === "cancel-grace" && event.type === "cancel_result",
+    );
+    // The query never answered the interrupt, so the sidecar closed it and
+    // reported the request as over anyway.
+    expect(ack).toMatchObject({ ok: true, requestId: "query-grace", closed: true });
+    expect(
+      harness.events.some(
+        (event) => event.id === "query-grace" && event.type === "turn_completed",
+      ),
+    ).toBe(false);
+  });
+
+  it("holds the next turn on a session until the canceled query has stopped", async () => {
+    const harness = await spawnHarness({
+      supportsInterrupt: true,
+      interruptedSessionId: "session-serialized",
+      steps: [
+        {
+          type: "yield",
+          message: { type: "system", subtype: "init", session_id: "session-serialized" },
+        },
+        {
+          type: "permission",
+          toolName: "Bash",
+          input: { command: "npm test" },
+          toolUseID: "tool-serialized",
+        },
+      ],
+      sessionId: "session-serialized",
+    });
+
+    harness.send({
+      id: "query-first",
+      method: "query",
+      params: {
+        prompt: "start the work",
+        cwd: repoRoot,
+        approvalPolicy: "restricted",
+        sessionId: "session-serialized",
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-first" && event.type === "approval_requested",
+    );
+    harness.send({
+      id: "cancel-first",
+      method: "cancel",
+      params: { requestId: "query-first" },
+    });
+    harness.send({
+      id: "query-second",
+      method: "query",
+      params: {
+        prompt: "start the replacement",
+        cwd: repoRoot,
+        approvalPolicy: "restricted",
+        sessionId: "session-serialized",
+      },
+    });
+
+    const ack = await harness.waitFor(
+      (event) => event.id === "cancel-first" && event.type === "cancel_result",
+    );
+    const secondInit = await harness.waitFor(
+      (event) => event.id === "query-second" && event.type === "session_init",
+    );
+
+    // The replacement turn only reached the CLI after the canceled one stopped.
+    expect(harness.events.indexOf(secondInit)).toBeGreaterThan(
+      harness.events.indexOf(ack),
+    );
+  });
+
+  it("answers steer requests the canceled turn never delivered", async () => {
+    const harness = await spawnHarness(
+      {
+        steps: [
+          {
+            type: "yield",
+            message: { type: "system", subtype: "init", session_id: "session-queued-steer" },
+          },
+          { type: "delay", durationMs: 4_000 },
+        ],
+        sessionId: "session-queued-steer",
+      },
+      { PANES_CLAUDE_CANCEL_GRACE_MS: "700" },
+    );
+
+    harness.send({
+      id: "query-blocking",
+      method: "query",
+      params: {
+        prompt: "run a long tool",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sessionId: "session-queued-steer",
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-blocking" && event.type === "session_init",
+    );
+    // The first query cannot be interrupted, so the next turn queues behind it.
+    harness.send({
+      id: "cancel-blocking",
+      method: "cancel",
+      params: { requestId: "query-blocking" },
+    });
+    harness.send({
+      id: "query-waiting",
+      method: "query",
+      params: {
+        prompt: "start the replacement",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sessionId: "session-queued-steer",
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-waiting" && event.type === "turn_started",
+    );
+    harness.send({
+      id: "steer-waiting",
+      method: "steer",
+      params: { requestId: "query-waiting", prompt: "also update the docs" },
+    });
+    await harness.waitFor(
+      (event) => event.id === "steer-waiting" && event.type === "steer_result",
+    );
+
+    harness.send({
+      id: "cancel-waiting",
+      method: "cancel",
+      params: { requestId: "query-waiting" },
+    });
+
+    const steerError = await harness.waitFor(
+      (event) => event.id === "steer-waiting" && event.type === "error",
+    );
+    expect(String(steerError.message)).toContain(
+      "was canceled before this message was delivered",
+    );
+
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-waiting" && event.type === "turn_completed",
+    );
+    expect(completed.status).toBe("interrupted");
+    await harness.waitFor(
+      (event) => event.id === "cancel-waiting" && event.type === "cancel_result",
+    );
+  });
+
+
+  it("falls back to closing the query when the runtime cannot interrupt", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: { type: "system", subtype: "init", session_id: "session-close" },
+        },
+        {
+          type: "permission",
+          toolName: "Bash",
+          input: { command: "npm test" },
+          toolUseID: "tool-close",
+        },
+      ],
+      sessionId: "session-close",
+    });
+
+    harness.send({
+      id: "query-close",
+      method: "query",
+      params: { prompt: "wait for approval", cwd: repoRoot, approvalPolicy: "restricted" },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-close" && event.type === "approval_requested",
+    );
+    harness.send({ method: "cancel", params: { requestId: "query-close" } });
+
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-close" && event.type === "turn_completed",
+    );
+    expect(completed).toMatchObject({ status: "interrupted", sessionId: "session-close" });
+  });
 });

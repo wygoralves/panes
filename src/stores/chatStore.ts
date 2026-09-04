@@ -4,6 +4,8 @@ import { ipc, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
 import { useThreadStore } from "./threadStore";
 import { useThreadReadStore } from "./threadReadStore";
+import { useChatQueueStore } from "./chatQueueStore";
+import type { QueuedMessage } from "./chatQueueStore";
 import type {
   ApprovalResponse,
   ActionBlock,
@@ -23,7 +25,8 @@ import type {
   StreamEvent,
   TaskListBlock,
   TaskStatus,
-  ThreadStatus
+  ThreadStatus,
+  TurnCompletionStatus
 } from "../types";
 
 interface ChatState {
@@ -69,6 +72,33 @@ interface ChatState {
     threadIdOverride?: string,
   ) => Promise<boolean>;
   hydrateActionOutput: (messageId: string, actionId: string) => Promise<void>;
+  /**
+   * Sends the next queued message for a thread that just went idle. A turn
+   * that was interrupted or failed leaves the queue alone; called without a
+   * status (the explicit "Send next" control) it always drains.
+   */
+  drainQueue: (threadId: string, status?: TurnCompletionStatus) => Promise<void>;
+}
+
+/**
+ * The backend answers a send for a thread that is gone with "thread not
+ * found: <id>". Requeuing then only replays the same failure forever.
+ */
+function isMissingThreadError(message: string): boolean {
+  return /thread not found/i.test(message);
+}
+
+function queuedSendOptions(message: QueuedMessage) {
+  return {
+    threadIdOverride: message.threadId,
+    engineId: message.engineId ?? null,
+    modelId: message.modelId ?? null,
+    reasoningEffort: message.reasoningEffort ?? null,
+    attachments:
+      message.attachments && message.attachments.length > 0 ? message.attachments : undefined,
+    inputItems: message.inputItems && message.inputItems.length > 0 ? message.inputItems : undefined,
+    planMode: message.planMode ?? false,
+  };
 }
 
 let activeThreadBindSeq = 0;
@@ -1752,6 +1782,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       listenThreadEvents(currentThreadId, (event) => {
         if (event.type === "TurnCompleted") {
           cleanupBackgroundListener(currentThreadId!);
+          void useChatStore.getState().drainQueue(currentThreadId!, event.status);
         }
       }).then((unsub) => {
         // If the user already switched back to this thread, don't register
@@ -1977,6 +2008,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           useThreadStore.getState().markThreadReadIfActive(threadId);
           flushQueuedStreamEvents();
           emitEventRateMetric(performance.now());
+          void useChatStore.getState().drainQueue(threadId, event.status);
           return;
         }
         if (queuedStreamEvents.length >= STREAM_EVENT_QUEUE_FLUSH_THRESHOLD) {
@@ -2289,6 +2321,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       await ipc.cancelTurn(threadId);
+      // Stop means stop: whatever was waiting behind this turn is dropped.
+      useChatQueueStore.getState().clear(threadId);
       pendingTurnMetaByThread.delete(threadId);
       // Remove the trailing assistant message if it has no meaningful content
       // (e.g. only thinking blocks with no text, or completely empty)
@@ -2307,6 +2341,73 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: String(error) });
     }
   },
+  drainQueue: async (threadId, status) => {
+    if (status !== undefined && status !== "completed") {
+      // The turn was interrupted or failed; sending the next message would
+      // walk over whatever the user stopped for.
+      return;
+    }
+    const queue = useChatQueueStore.getState();
+    const nextMessage = queue.peek(threadId);
+    if (!nextMessage) {
+      return;
+    }
+    const state = get();
+    if (state.threadId === threadId) {
+      if (state.streaming) {
+        return;
+      }
+      queue.remove(threadId, nextMessage.id);
+      const sent = await get().send(nextMessage.text, queuedSendOptions(nextMessage));
+      if (!sent) {
+        useChatQueueStore.getState().restoreFront(nextMessage);
+      }
+      return;
+    }
+
+    // The thread is in the background: send without touching the visible
+    // transcript and keep listening so the rest of the queue follows. The
+    // listener goes up before the send so a fast turn cannot finish unseen.
+    queue.remove(threadId, nextMessage.id);
+    cleanupBackgroundListener(threadId);
+    const unsub = await listenThreadEvents(threadId, (event) => {
+      if (event.type === "TurnCompleted") {
+        cleanupBackgroundListener(threadId);
+        void useChatStore.getState().drainQueue(threadId, event.status);
+      }
+    });
+    backgroundStreamListeners.set(threadId, unsub);
+    try {
+      await ipc.sendMessage(
+        threadId,
+        nextMessage.text,
+        nextMessage.modelId ?? null,
+        nextMessage.reasoningEffort ?? null,
+        nextMessage.attachments && nextMessage.attachments.length > 0
+          ? nextMessage.attachments
+          : null,
+        nextMessage.inputItems && nextMessage.inputItems.length > 0
+          ? nextMessage.inputItems
+          : null,
+        nextMessage.planMode ?? false,
+        crypto.randomUUID(),
+      );
+    } catch (error) {
+      cleanupBackgroundListener(threadId);
+      const message = String(error);
+      if (!isMissingThreadError(message)) {
+        useChatQueueStore.getState().restoreFront(nextMessage);
+      }
+      set({ error: message });
+      return;
+    }
+    if (useChatStore.getState().threadId === threadId) {
+      // The thread became active meanwhile; its own listener drains the rest.
+      cleanupBackgroundListener(threadId);
+    }
+  },
+
+
   respondApproval: async (approvalId, response, threadIdOverride) => {
     const threadId = threadIdOverride ?? get().threadId;
     if (!threadId) {

@@ -22,11 +22,13 @@ import {
   Check,
   Clock,
   Copy,
+  CornerDownLeft,
   DollarSign,
   FilePen,
   FlaskConical,
   GitBranch,
   ListChecks,
+  ListPlus,
   Loader2,
   MessageSquare,
   Minimize2,
@@ -44,6 +46,7 @@ import {
   SquareCode,
   SquareTerminal,
   UserCircle,
+  X,
   Zap,
 } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
@@ -68,6 +71,12 @@ import {
   resolveThreadFileRootPath,
 } from "../../lib/fileRootUtils";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { engineSupportsSteering } from "../../lib/engineSteering";
+import {
+  selectThreadQueue,
+  useChatQueueStore,
+  type QueuedMessage,
+} from "../../stores/chatQueueStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
@@ -2049,7 +2058,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       !threadId ||
       !activeThread ||
       !activeWorkspaceId ||
-      engineKind(selectedEngineId) !== "codex"
+      !engineSupportsSteering(selectedEngineId)
     ) {
       return false;
     }
@@ -2059,7 +2068,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       activeThread.id === threadId &&
       activeThread.workspaceId === activeWorkspaceId &&
       activeThread.repoId === activeScopeRepoId &&
-      engineKind(activeThread.engineId) === "codex"
+      engineSupportsSteering(activeThread.engineId)
     );
   }, [
     activeRepo?.id,
@@ -2069,6 +2078,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     streaming,
     threadId,
   ]);
+  const queuedMessages = useChatQueueStore(selectThreadQueue(threadId));
+  // Any running turn on the open thread can take a queued follow-up; the
+  // engine only decides whether it is delivered now (steer) or after the turn.
+  const canQueueMessage = useMemo(() => {
+    if (!streaming || !threadId || !activeThread || !activeWorkspaceId) {
+      return false;
+    }
+    return (
+      activeThread.id === threadId &&
+      activeThread.workspaceId === activeWorkspaceId &&
+      activeThread.repoId === (activeRepo?.id ?? null)
+    );
+  }, [activeRepo?.id, activeThread, activeWorkspaceId, streaming, threadId]);
   const codexReferencesAvailable = codexSkills.length > 0 || codexApps.length > 0;
   const openCodeSelectableAgents = useMemo(
     () =>
@@ -4045,6 +4067,65 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
   }
 
+  function rememberSubmittedInput(text: string) {
+    const hist = inputHistoryRef.current;
+    if (hist[0] !== text) {
+      inputHistoryRef.current = [text, ...hist].slice(0, 50);
+    }
+    inputHistCursorRef.current = -1;
+    inputLiveDraftRef.current = "";
+  }
+
+  async function enqueueDraft(): Promise<boolean> {
+    const text = input.trim();
+    if (!text || !canQueueMessage || !threadId || !activeThread) {
+      return false;
+    }
+    const engineId = activeThread.engineId;
+    const runtime = resolveComposerRuntimeSelection();
+    const inputItems = await resolveCodexInputItems(text, engineId);
+    const currentAttachments = [...attachments];
+    useChatQueueStore.getState().enqueue({
+      threadId,
+      text,
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      inputItems: inputItems && inputItems.length > 0 ? inputItems : undefined,
+      planMode: engineKind(engineId) === "opencode" ? false : planMode,
+      engineId,
+      modelId: runtime && runtime.engineId === engineId ? runtime.modelId : activeThread.modelId,
+      reasoningEffort:
+        runtime && runtime.engineId === engineId ? runtime.reasoningEffort ?? null : null,
+    });
+    rememberSubmittedInput(text);
+    setInput("");
+    setAttachments([]);
+    return true;
+  }
+
+  async function sendQueuedNow(item: QueuedMessage): Promise<void> {
+    if (!threadId || !canSteerActiveTurn) {
+      return;
+    }
+    const queue = useChatQueueStore.getState();
+    // The drain may have taken this message between the render and the click.
+    const stillQueued = (queue.queuesByThread[threadId] ?? []).some(
+      (queued) => queued.id === item.id,
+    );
+    if (!stillQueued) {
+      return;
+    }
+    queue.remove(threadId, item.id);
+    const steered = await steer(item.text, {
+      threadIdOverride: threadId,
+      attachments: item.attachments && item.attachments.length > 0 ? item.attachments : undefined,
+      inputItems: item.inputItems,
+      planMode: item.planMode ?? false,
+    });
+    if (!steered) {
+      useChatQueueStore.getState().restoreFront(item);
+    }
+  }
+
   async function submitMessage(): Promise<boolean> {
     if (!input.trim() || !activeWorkspaceId) return false;
     const preflightStartedAt = performance.now();
@@ -4061,7 +4142,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return false;
       }
 
-      const inputItems = await resolveCodexInputItems(text, "codex");
+      const inputItems = await resolveCodexInputItems(text, activeThread?.engineId ?? "codex");
       const steered = await steer(text, {
         threadIdOverride: activeThreadId,
         attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
@@ -5525,6 +5606,70 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             gap: 8,
           }}
         >
+          {queuedMessages.length > 0 && threadId && (
+            <div className="chat-queue-strip">
+              <div className="chat-queue-head">
+                <span className="chat-queue-title">
+                  <ListPlus size={11} aria-hidden="true" />
+                  {t("panel.queue.title", { count: queuedMessages.length })}
+                </span>
+                <span className="chat-queue-hint">
+                  {streaming ? t("panel.queue.sendsWhenIdle") : t("panel.queue.idle")}
+                </span>
+                {!streaming && (
+                  <button
+                    type="button"
+                    className="chat-queue-head-btn"
+                    onClick={() => void useChatStore.getState().drainQueue(threadId)}
+                  >
+                    {t("panel.queue.sendNext")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="chat-queue-head-btn"
+                  onClick={() => useChatQueueStore.getState().clear(threadId)}
+                >
+                  {t("panel.queue.clear")}
+                </button>
+              </div>
+              <ol className="chat-queue-list">
+                {queuedMessages.map((item, index) => (
+                  <li key={item.id} className="chat-queue-item">
+                    <span className="chat-queue-index">{index + 1}</span>
+                    <span className="chat-queue-text" title={item.text}>
+                      {item.text}
+                    </span>
+                    {item.attachments && item.attachments.length > 0 ? (
+                      <span className="chat-queue-meta">
+                        {t("panel.queue.attachments", { count: item.attachments.length })}
+                      </span>
+                    ) : null}
+                    {canSteerActiveTurn && (
+                      <button
+                        type="button"
+                        className="chat-queue-action"
+                        title={t("panel.queue.sendNow")}
+                        aria-label={t("panel.queue.sendNow")}
+                        onClick={() => void sendQueuedNow(item)}
+                      >
+                        <CornerDownLeft size={11} aria-hidden="true" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="chat-queue-action"
+                      title={t("panel.queue.remove")}
+                      aria-label={t("panel.queue.remove")}
+                      onClick={() => useChatQueueStore.getState().remove(threadId, item.id)}
+                    >
+                      <X size={11} aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
           {/* Pending approvals: one request in focus, lifted above the composer */}
           {activeApproval && (() => {
             const approval = activeApproval;
@@ -5923,6 +6068,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       }
                       return;
                     }
+                    if (
+                      e.key === "Enter" &&
+                      e.altKey &&
+                      !e.nativeEvent.isComposing &&
+                      canQueueMessage
+                    ) {
+                      e.preventDefault();
+                      void enqueueDraft();
+                      return;
+                    }
                     if (shouldSubmitChatInput({
                       key: e.key,
                       ctrlKey: e.ctrlKey,
@@ -5932,6 +6087,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     })) {
                       e.preventDefault();
                       if (streaming && !canSteerActiveTurn) {
+                        if (canQueueMessage) {
+                          void enqueueDraft();
+                        }
                         return;
                       }
                       void onSubmit(e);
@@ -5946,9 +6104,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   placeholder={
                     activePlanMode
                       ? t("panel.placeholders.plan")
-                      : messages.length === 0 && !pendingSubmission
-                        ? t("panel.placeholders.draft")
-                        : t("panel.placeholders.chat")
+                      : streaming && canSteerActiveTurn
+                        ? t("panel.placeholders.steer")
+                        : streaming && canQueueMessage
+                          ? t("panel.placeholders.queue")
+                          : messages.length === 0 && !pendingSubmission
+                            ? t("panel.placeholders.draft")
+                            : t("panel.placeholders.chat")
                   }
                   disabled={!activeWorkspaceId}
                   style={{
@@ -6273,6 +6435,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   >
                     <Square size={11} fill="currentColor" />
                     {t("panel.stop")}
+                  </button>
+                )}
+
+                {canQueueMessage && !showSpecialInputComposer && (
+                  <button
+                    type="button"
+                    className={`chat-queue-btn${input.trim() ? " chat-queue-btn--ready" : ""}`}
+                    disabled={!input.trim() || isSubmitting}
+                    onClick={() => void enqueueDraft()}
+                    title={t("panel.queueMessageHint")}
+                    aria-label={t("panel.queueMessageHint")}
+                  >
+                    <ListPlus size={13} aria-hidden="true" />
                   </button>
                 )}
 

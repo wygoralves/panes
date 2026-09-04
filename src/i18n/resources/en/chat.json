@@ -381,6 +381,19 @@
     "defaultSaveFailed": "Failed to save the default autonomy: {{error}}"
   },
   "panel": {
+    "queueMessageHint": "Queue this message (Alt+Enter)",
+    "queue": {
+      "title_one": "{{count}} queued",
+      "title_other": "{{count}} queued",
+      "sendsWhenIdle": "Sends when this turn ends",
+      "idle": "Waiting to send",
+      "sendNext": "Send next",
+      "clear": "Clear",
+      "sendNow": "Send now",
+      "remove": "Remove",
+      "attachments_one": "{{count}} attachment",
+      "attachments_other": "{{count}} attachments"
+    },
     "assistantFallback": "Assistant",
     "workspaceChatTitle": "Workspace Chat",
     "repoChatTitle": "{{name}} Chat",
@@ -418,6 +431,8 @@
     "draftSearchProjects": "Search projects",
     "draftNoProjectsFound": "No projects match",
     "placeholders": {
+      "steer": "Steer the current turn. Alt+Enter queues it for later.",
+      "queue": "Queue a message for when this turn ends",
       "plan": "Describe what you want to plan...",
       "chat": "Ask for follow-up changes",
       "draft": "Describe the change you want"

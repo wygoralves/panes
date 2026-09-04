@@ -1062,6 +1062,10 @@ impl Engine for CodexEngine {
         Ok(())
     }
 
+    fn supports_steering(&self) -> bool {
+        true
+    }
+
     async fn steer_message(
         &self,
         engine_thread_id: &str,

@@ -441,6 +441,11 @@ pub trait Engine: Send + Sync {
         input: TurnInput,
     ) -> Result<(), anyhow::Error>;
 
+    /// Whether `steer_message` can inject input into a running turn.
+    fn supports_steering(&self) -> bool {
+        false
+    }
+
     async fn respond_to_approval(
         &self,
         approval_id: &str,
@@ -1115,6 +1120,13 @@ impl EngineManager {
             .steer_message(engine_thread_id, input)
             .await
             .with_context(|| format!("{} steer_message failed", handle.kind()))
+    }
+
+    pub async fn supports_steering(&self, thread: &ThreadDto) -> bool {
+        match self.require(&thread.engine_id).await {
+            Ok(handle) => handle.engine().supports_steering(),
+            Err(_) => false,
+        }
     }
 
     pub async fn respond_to_approval(

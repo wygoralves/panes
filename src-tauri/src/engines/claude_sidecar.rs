@@ -34,6 +34,8 @@ const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const NODE_RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const CLAUDE_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(12);
 const CLAUDE_RUNTIME_INFO_TIMEOUT: Duration = Duration::from_secs(5);
+const CLAUDE_STEER_TIMEOUT: Duration = Duration::from_secs(10);
+const CLAUDE_CANCEL_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const ARCHIVED_CLAUDE_SDK_NODE_MODULES: &str = "claude-sdk-node_modules.tar.gz";
 const SIDECAR_EVENT_BUFFER_CAPACITY: usize = 1024;
 const MINIMUM_NODE_VERSION: &str = "20.5";
@@ -78,6 +80,15 @@ enum SidecarEvent {
     TurnStarted {
         id: Option<String>,
     },
+    /// Sent once a cancelled query has stopped for good, either because it
+    /// yielded its final result or because the sidecar closed it.
+    CancelResult {
+        id: Option<String>,
+        #[serde(rename = "requestId")]
+        request_id: Option<String>,
+        #[serde(default)]
+        closed: bool,
+    },
     TextDelta {
         id: Option<String>,
         content: String,
@@ -94,6 +105,10 @@ enum SidecarEvent {
         action_type: String,
         summary: String,
         details: Option<serde_json::Value>,
+    },
+    SteerResult {
+        id: Option<String>,
+        ok: bool,
     },
     ActionOutputDelta {
         id: Option<String>,
@@ -198,6 +213,8 @@ impl SidecarEvent {
             | SidecarEvent::TextDelta { id, .. }
             | SidecarEvent::ThinkingDelta { id, .. }
             | SidecarEvent::ActionStarted { id, .. }
+            | SidecarEvent::SteerResult { id, .. }
+            | SidecarEvent::CancelResult { id, .. }
             | SidecarEvent::ActionOutputDelta { id, .. }
             | SidecarEvent::ActionProgressUpdated { id, .. }
             | SidecarEvent::ActionCompleted { id, .. }
@@ -816,6 +833,67 @@ impl ClaudeSidecarEngine {
             "stderr" => OutputStream::Stderr,
             _ => OutputStream::Stdout,
         }
+    }
+
+    /// Sends a steer command for the thread's running turn and waits for the
+    /// sidecar to acknowledge it.
+    async fn send_steer_command(
+        &self,
+        engine_thread_id: &str,
+        method: &str,
+        mut params: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let (transport, request_id) = {
+            let state = self.state.lock().await;
+            let transport = state
+                .transport
+                .clone()
+                .context("Claude sidecar is not running")?;
+            let request_id = state
+                .threads
+                .get(engine_thread_id)
+                .and_then(|config| config.active_request_id.clone())
+                .context("No active Claude turn to steer")?;
+            (transport, request_id)
+        };
+
+        params["requestId"] = serde_json::Value::String(request_id);
+        let steer_id = Uuid::new_v4().to_string();
+        let mut receiver = transport.subscribe();
+        transport
+            .send_command(&serde_json::json!({
+                "id": steer_id,
+                "method": method,
+                "params": params,
+            }))
+            .await?;
+
+        timeout(CLAUDE_STEER_TIMEOUT, async {
+            loop {
+                match receiver.recv().await {
+                    Ok(SidecarEvent::SteerResult { id, ok })
+                        if id.as_deref() == Some(steer_id.as_str()) =>
+                    {
+                        if ok {
+                            return Ok(());
+                        }
+                        anyhow::bail!("Claude sidecar rejected the steer request");
+                    }
+                    Ok(SidecarEvent::Error { id, message, .. })
+                        if id.as_deref() == Some(steer_id.as_str()) =>
+                    {
+                        anyhow::bail!(message);
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        anyhow::bail!("Claude sidecar closed while steering the turn");
+                    }
+                }
+            }
+        })
+        .await
+        .context("timed out waiting for the Claude sidecar to accept the steer")?
     }
 
     fn is_claude_auth_error(message: &str, error_type: Option<&str>, is_auth_error: bool) -> bool {
@@ -1973,14 +2051,26 @@ impl Engine for ClaudeSidecarEngine {
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => {
+                    let cancel_id = Uuid::new_v4().to_string();
                     let cancel_cmd = serde_json::json!({
+                        "id": cancel_id.clone(),
                         "method": "cancel",
                         "params": { "requestId": request_id.clone() },
                     });
                     let _ = transport.send_command(&cancel_cmd).await;
+                    // The sidecar answers only once the cancelled query has
+                    // stopped. Releasing the thread before that would let the
+                    // next turn overlap the query being torn down.
+                    if !wait_for_cancel_ack(&mut rx, &request_id, &cancel_id).await {
+                        log::warn!(
+                            "claude sidecar did not acknowledge the cancel for request {request_id}"
+                        );
+                    }
                     let mut state = self.state.lock().await;
                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
-                        config.active_request_id = None;
+                        if config.active_request_id.as_deref() == Some(request_id.as_str()) {
+                            config.active_request_id = None;
+                        }
                     }
                     return Ok(());
                 }
@@ -2263,7 +2353,9 @@ impl Engine for ClaudeSidecarEngine {
                                 }
                                 SidecarEvent::Ready
                                 | SidecarEvent::Models { .. }
-                                | SidecarEvent::Version { .. } => {}
+                                | SidecarEvent::Version { .. }
+                                | SidecarEvent::SteerResult { .. }
+                                | SidecarEvent::CancelResult { .. } => {}
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -2341,10 +2433,35 @@ impl Engine for ClaudeSidecarEngine {
 
     async fn steer_message(
         &self,
-        _engine_thread_id: &str,
-        _input: TurnInput,
+        engine_thread_id: &str,
+        input: TurnInput,
     ) -> Result<(), anyhow::Error> {
-        anyhow::bail!("Claude does not support mid-turn steering")
+        let TurnInput {
+            message,
+            attachments,
+            plan_mode: _,
+            input_items: _,
+        } = input;
+        let params = serde_json::json!({
+            "prompt": message,
+            "attachments": attachments
+                .iter()
+                .map(|attachment| {
+                    serde_json::json!({
+                        "fileName": attachment.file_name,
+                        "filePath": attachment.file_path,
+                        "sizeBytes": attachment.size_bytes,
+                        "mimeType": attachment.mime_type,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        });
+        self.send_steer_command(engine_thread_id, "steer", params)
+            .await
+    }
+
+    fn supports_steering(&self) -> bool {
+        true
     }
 
     async fn respond_to_approval(
@@ -2399,9 +2516,70 @@ impl Engine for ClaudeSidecarEngine {
     }
 }
 
+/// Waits for the sidecar to confirm that a cancelled query stopped. Returns
+/// false when the acknowledgement never arrives so the caller can carry on
+/// instead of hanging.
+async fn wait_for_cancel_ack(
+    rx: &mut broadcast::Receiver<SidecarEvent>,
+    request_id: &str,
+    cancel_id: &str,
+) -> bool {
+    let acknowledged = timeout(CLAUDE_CANCEL_ACK_TIMEOUT, async {
+        loop {
+            match rx.recv().await {
+                Ok(SidecarEvent::CancelResult {
+                    id,
+                    request_id: cancelled_request_id,
+                    closed,
+                }) if cancelled_request_id.as_deref() == Some(request_id)
+                    || id.as_deref() == Some(cancel_id) =>
+                {
+                    if closed {
+                        log::warn!(
+                            "claude sidecar closed request {request_id} because it did not stop within the cancel grace period"
+                        );
+                    }
+                    return true;
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return false,
+            }
+        }
+    })
+    .await;
+
+    acknowledged.unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deserializes_cancel_result_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "cancel_result",
+            "id": "cancel-1",
+            "requestId": "request-1",
+            "ok": true,
+            "closed": true,
+        }))
+        .expect("cancel_result should deserialize");
+
+        match event {
+            SidecarEvent::CancelResult {
+                id,
+                request_id,
+                closed,
+            } => {
+                assert_eq!(id.as_deref(), Some("cancel-1"));
+                assert_eq!(request_id.as_deref(), Some("request-1"));
+                assert!(closed);
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
 
     #[test]
     fn deserializes_action_output_delta_events() {
@@ -2428,6 +2606,23 @@ mod tests {
             }
             other => panic!("unexpected event variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn deserializes_steer_result_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "steer_result",
+            "id": "steer-1",
+            "ok": true,
+        }))
+        .expect("steer_result should deserialize");
+        assert_eq!(event.request_id(), Some("steer-1"));
+        assert!(matches!(event, SidecarEvent::SteerResult { ok: true, .. }));
+    }
+
+    #[test]
+    fn claude_engine_advertises_steering() {
+        assert!(ClaudeSidecarEngine::default().supports_steering());
     }
 
     #[test]

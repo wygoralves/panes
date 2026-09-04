@@ -40,9 +40,56 @@ async function runHooks(options, hookName, input) {
   }
 }
 
-export function query({ options }) {
+function isAsyncIterable(value) {
+  return (
+    value != null &&
+    typeof value !== "string" &&
+    typeof value[Symbol.asyncIterator] === "function"
+  );
+}
+
+export function query({ prompt, options }) {
   const scenario = parseScenario();
   let closed = false;
+  let interrupted = false;
+
+  // Mirror the real SDK: a string prompt becomes one user message, an async
+  // iterable is drained as messages arrive (the sidecar's steering path).
+  const inputMessages = [];
+  const inputWaiters = [];
+  const wakeInputWaiters = () => {
+    for (const wake of inputWaiters.splice(0)) {
+      wake();
+    }
+  };
+  if (typeof prompt === "string") {
+    inputMessages.push({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: prompt }] },
+      parent_tool_use_id: null,
+    });
+  } else if (isAsyncIterable(prompt)) {
+    (async () => {
+      for await (const message of prompt) {
+        inputMessages.push(clone(message));
+        wakeInputWaiters();
+      }
+    })()
+      .catch(() => {})
+      .finally(wakeInputWaiters);
+  }
+
+  const waitForInput = (count) =>
+    new Promise((resolve) => {
+      const check = () => {
+        if (inputMessages.length >= count || closed || interrupted) {
+          resolve();
+          return;
+        }
+        inputWaiters.push(check);
+      };
+      check();
+    });
 
   const iterator = (async function* () {
     const observations = [];
@@ -63,7 +110,7 @@ export function query({ options }) {
     }
 
     for (const step of scenario.steps ?? []) {
-      if (closed) {
+      if (closed || interrupted) {
         break;
       }
 
@@ -79,6 +126,19 @@ export function query({ options }) {
 
       if (step.type === "hook") {
         await runHooks(options, step.hook, step.input);
+        continue;
+      }
+
+      if (step.type === "await_input") {
+        await waitForInput(step.count ?? 1);
+        continue;
+      }
+
+      if (step.type === "observe_input") {
+        observations.push({
+          type: "input_messages",
+          result: clone(inputMessages),
+        });
         continue;
       }
 
@@ -100,6 +160,19 @@ export function query({ options }) {
       }
     }
 
+    if (closed) {
+      // A closed query is a killed CLI: nothing else reaches the consumer.
+      return;
+    }
+
+    if (interrupted) {
+      yield defaultResult({
+        session_id: scenario.interruptedSessionId ?? scenario.sessionId ?? "mock-session",
+        result: "",
+      });
+      return;
+    }
+
     if (scenario.emitObservationResult) {
       yield defaultResult({
         result: JSON.stringify(observations),
@@ -110,7 +183,15 @@ export function query({ options }) {
 
   iterator.close = () => {
     closed = true;
+    wakeInputWaiters();
   };
+  if (scenario.supportsInterrupt) {
+    iterator.interrupt = async () => {
+      interrupted = true;
+      wakeInputWaiters();
+      return { still_queued: [] };
+    };
+  }
   iterator.supportedModels = async () => clone(
     scenario.models ?? [
       {

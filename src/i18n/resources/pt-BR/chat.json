@@ -381,6 +381,19 @@
     "defaultSaveFailed": "Falha ao salvar a autonomia padrão: {{error}}"
   },
   "panel": {
+    "queueMessageHint": "Enfileirar esta mensagem (Alt+Enter)",
+    "queue": {
+      "title_one": "{{count}} na fila",
+      "title_other": "{{count}} na fila",
+      "sendsWhenIdle": "Envia quando este turno terminar",
+      "idle": "Aguardando envio",
+      "sendNext": "Enviar próxima",
+      "clear": "Limpar",
+      "sendNow": "Enviar agora",
+      "remove": "Remover",
+      "attachments_one": "{{count}} anexo",
+      "attachments_other": "{{count}} anexos"
+    },
     "assistantFallback": "Assistente",
     "workspaceChatTitle": "Chat do workspace",
     "repoChatTitle": "Chat de {{name}}",
@@ -418,6 +431,8 @@
     "draftSearchProjects": "Buscar projetos",
     "draftNoProjectsFound": "Nenhum projeto encontrado",
     "placeholders": {
+      "steer": "Direcione o turno atual. Alt+Enter enfileira para depois.",
+      "queue": "Enfileire uma mensagem para quando este turno terminar",
       "plan": "Descreva o que você quer planejar...",
       "chat": "Peça alterações de continuação",
       "draft": "Descreva a mudança que você quer"

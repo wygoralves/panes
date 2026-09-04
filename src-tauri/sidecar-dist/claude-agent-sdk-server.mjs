@@ -4,7 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -303,43 +303,118 @@ async function buildAttachmentContentBlock(attachment, cwd) {
   };
 }
 
-function buildPromptInput(prompt, attachments, cwd, sessionIdHint) {
-  if (!Array.isArray(attachments) || attachments.length === 0) {
-    return prompt;
-  }
-
-  if (attachments.length > MAX_ATTACHMENTS_PER_TURN) {
+async function buildUserMessageContent(prompt, attachments, cwd) {
+  const attachmentList = Array.isArray(attachments) ? attachments : [];
+  if (attachmentList.length > MAX_ATTACHMENTS_PER_TURN) {
     throw new Error(
       `You can attach at most ${MAX_ATTACHMENTS_PER_TURN} files per Claude turn.`,
     );
   }
 
-  return (async function* promptWithAttachments() {
-    const content = [];
-    if (typeof prompt === "string" && prompt.length > 0) {
-      content.push({ type: "text", text: prompt });
-    }
+  const content = [];
+  if (typeof prompt === "string" && prompt.length > 0) {
+    content.push({ type: "text", text: prompt });
+  }
 
-    for (const attachment of attachments) {
-      content.push(await buildAttachmentContentBlock(attachment, cwd));
-    }
+  for (const attachment of attachmentList) {
+    content.push(await buildAttachmentContentBlock(attachment, cwd));
+  }
 
-    if (content.length === 0) {
-      throw new Error(
-        "Claude turn must include either a prompt or at least one supported attachment.",
-      );
-    }
+  if (content.length === 0) {
+    throw new Error(
+      "Claude turn must include either a prompt or at least one supported attachment.",
+    );
+  }
 
-    yield {
-      type: "user",
-      message: {
-        role: "user",
-        content,
-      },
-      parent_tool_use_id: null,
-      session_id: sessionIdHint || "",
-    };
-  })();
+  return content;
+}
+
+// Shape follows SDKUserMessage in sdk.d.ts. The SDK writes a string prompt as
+// a single text block, so the initial message mirrors that exactly.
+async function buildUserMessage(prompt, attachments, cwd, sessionIdHint, extra = {}) {
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content: await buildUserMessageContent(prompt, attachments, cwd),
+    },
+    parent_tool_use_id: null,
+    session_id: sessionIdHint || "",
+    ...extra,
+  };
+}
+
+// The query prompt is a pushable async iterable so more user messages can be
+// written to the running CLI while a turn is in flight (mid-turn steering).
+// The SDK forwards each pushed message to the CLI stdin as it arrives and
+// closes stdin once the iterable ends.
+function createInputStream() {
+  // Entries are { message, requestId }: requestId names the steer request that
+  // queued the message, so a dropped message can be answered.
+  const queue = [];
+  const waiters = [];
+  let ended = false;
+
+  const settleWaiters = () => {
+    while (waiters.length > 0 && (queue.length > 0 || ended)) {
+      const waiter = waiters.shift();
+      if (queue.length > 0) {
+        waiter({ value: queue.shift().message, done: false });
+      } else {
+        waiter({ value: undefined, done: true });
+      }
+    }
+  };
+
+  return {
+    get ended() {
+      return ended;
+    },
+    push(message, requestId = null) {
+      if (ended) {
+        return false;
+      }
+      queue.push({ message, requestId });
+      settleWaiters();
+      return true;
+    },
+    // Discards every message the query has not read yet and reports the steer
+    // requests that were still waiting in the queue.
+    dropQueued() {
+      const dropped = queue.splice(0);
+      settleWaiters();
+      return dropped
+        .map((entry) => entry.requestId)
+        .filter((requestId) => typeof requestId === "string" && requestId.length > 0);
+    },
+    end() {
+      if (ended) {
+        return;
+      }
+      ended = true;
+      settleWaiters();
+    },
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => {
+          if (queue.length > 0) {
+            return Promise.resolve({ value: queue.shift().message, done: false });
+          }
+          if (ended) {
+            return Promise.resolve({ value: undefined, done: true });
+          }
+          return new Promise((resolve) => {
+            waiters.push(resolve);
+          });
+        },
+        return: () => {
+          ended = true;
+          settleWaiters();
+          return Promise.resolve({ value: undefined, done: true });
+        },
+      };
+    },
+  };
 }
 
 function mapToolNameToActionType(toolName) {
@@ -455,22 +530,37 @@ function createQueryContext(id, sessionIdHint = null) {
     typeof sessionIdHint === "string"
       ? taskSnapshotsBySessionId.get(sessionIdHint)
       : null;
-  return {
+  const context = {
     id,
     query: null,
+    input: null,
+    cwd: null,
+    cancelTimer: null,
     actionCounter: 0,
     actionIdsByToolUseId: new Map(),
     streamToolUseIdsByIndex: new Map(),
     suppressedToolUseIds: new Set(),
     pendingApprovalIds: new Set(),
     cancelled: false,
+    // Cancel requests waiting for this query to stop, answered once it has.
+    cancelAckIds: [],
+    cancelSettled: false,
     turnCompleted: false,
     sessionId: sessionIdHint,
+    // The session this query was started for, kept even after the CLI reports
+    // its own session id, so a follow-up turn can find a query still stopping.
+    sessionKeyHint: sessionIdHint,
     tasks: new Map(cachedTasks || []),
     taskCounter: 0,
     tokenUsage: null,
     stopReason: null,
   };
+  // Resolves once the query has stopped for good, so the next turn on the same
+  // session can wait for it instead of overlapping it.
+  context.finished = new Promise((resolve) => {
+    context.markFinished = resolve;
+  });
+  return context;
 }
 
 function setContextSessionId(context, sessionId) {
@@ -1670,7 +1760,10 @@ async function handleQuery(req) {
     reasoningEffort,
   } = params;
 
-  const context = createQueryContext(id, sessionId || resume || null);
+  const sessionKey = sessionId || resume || null;
+  const context = createQueryContext(id, sessionKey);
+  // Registered before the wait below so a stop that lands while the previous
+  // query is still winding down still finds this turn.
   activeQueries.set(id, context);
 
   // Task tools belong to the default tool set only. A caller that supplied an
@@ -1912,14 +2005,31 @@ async function handleQuery(req) {
 
     let sawTextDelta = false;
     let terminalStatus = "completed";
-    const promptInput = buildPromptInput(
-      prompt,
-      attachments,
-      sessionCwd,
-      sessionId || resume || "",
+    context.cwd = sessionCwd;
+    const input = createInputStream();
+    context.input = input;
+    input.push(
+      await buildUserMessage(prompt, attachments, sessionCwd, sessionId || resume || ""),
     );
-    const query = queryFn({ prompt: promptInput, options });
+
+    // A stop on the previous turn can still be winding down, and the old CLI
+    // owns the session until it does, so this turn waits before starting.
+    // Anything steered meanwhile queues on the input above.
+    await waitForStoppingQueries(sessionKey);
+    if (context.cancelled) {
+      // Stop landed before this turn reached the CLI, so nothing runs.
+      input.end();
+      emitTurnCompleted(context, "interrupted");
+      return;
+    }
+
+    const query = queryFn({ prompt: input, options });
     context.query = query;
+    if (context.cancelled) {
+      // Cancel landed while the first message was still being assembled.
+      input.end();
+      void interruptQuery(context);
+    }
     void fetchClaudeUsageSnapshot().then((usage) => {
       if (usage && activeQueries.has(id)) {
         emit({ id, type: "usage_limits_updated", usage });
@@ -1928,7 +2038,20 @@ async function handleQuery(req) {
 
     for await (const message of query) {
       if (context.cancelled) {
-        break;
+        // After an interrupt the CLI still delivers the aborted turn's result;
+        // keep its session id and usage, drop everything else. A hard close
+        // ends the stream instead, and the cancel timer covers a CLI that
+        // never answers the interrupt.
+        if (message.type === "result") {
+          actualSessionId = message.session_id || actualSessionId;
+          setContextSessionId(context, actualSessionId);
+          updateContextTokenUsage(context, {
+            input: message.usage?.input_tokens,
+            output: message.usage?.output_tokens,
+          });
+          break;
+        }
+        continue;
       }
 
       if (message.type === "system" && message.subtype === "init") {
@@ -2004,6 +2127,9 @@ async function handleQuery(req) {
             recoverable: false,
           });
         }
+        // The turn is over: closing the input stream lets the SDK end the
+        // CLI stdin so the process exits the way a single-shot query does.
+        input.end();
       } else if (message.type === "stream_event") {
         const streamEvent = message.event;
         updateTokenUsageFromStreamEvent(context, streamEvent);
@@ -2084,12 +2210,103 @@ async function handleQuery(req) {
     setContextSessionId(context, actualSessionId);
     emitTurnCompleted(context, "failed");
   } finally {
+    if (context.cancelTimer) {
+      clearTimeout(context.cancelTimer);
+      context.cancelTimer = null;
+    }
+    context.input?.end();
     cleanupPendingApprovalsForQuery(id, "Claude query was canceled.");
     activeQueries.delete(id);
+    // Idempotent on a query that already finished; on a cancelled one it
+    // terminates the CLI so nothing queued behind the interrupt runs.
+    try {
+      context.query?.close?.();
+    } catch {
+      // The query is gone either way.
+    }
+    // The query yielded its last message, so the request is over: answer the
+    // cancel that was waiting on it and release the next turn.
+    settleCancelledQuery(context, false);
   }
 }
 
-function handleCancel(params = {}) {
+const DEFAULT_CANCEL_CLOSE_GRACE_MS = 5_000;
+
+function cancelCloseGraceMs() {
+  const raw = Number.parseInt(process.env.PANES_CLAUDE_CANCEL_GRACE_MS ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CANCEL_CLOSE_GRACE_MS;
+}
+
+// Answers every cancel request waiting on this query and releases the turns
+// queued behind it. `closed` reports that the grace period expired and the
+// query was closed instead of ending on its own final result.
+function settleCancelledQuery(context, closed) {
+  if (context.cancelSettled) {
+    context.markFinished?.();
+    return;
+  }
+  context.cancelSettled = true;
+  for (const ackId of context.cancelAckIds.splice(0)) {
+    emit({
+      ...(ackId ? { id: ackId } : {}),
+      type: "cancel_result",
+      requestId: context.id,
+      ok: true,
+      closed,
+    });
+  }
+  context.markFinished?.();
+}
+
+function queryMatchesSession(context, sessionKey) {
+  if (!sessionKey) {
+    return false;
+  }
+  return context.sessionId === sessionKey || context.sessionKeyHint === sessionKey;
+}
+
+// A turn started right after a stop must not overlap the query it replaces:
+// the old CLI still owns the session until it yields its final result.
+async function waitForStoppingQueries(sessionKey) {
+  const stopping = [...activeQueries.values()].filter(
+    (context) => context.cancelled && queryMatchesSession(context, sessionKey),
+  );
+  if (stopping.length === 0) {
+    return;
+  }
+  const graceMs = cancelCloseGraceMs() * 2;
+  await Promise.race([
+    Promise.all(stopping.map((context) => context.finished)),
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, graceMs);
+      timer.unref?.();
+    }),
+  ]);
+}
+
+async function interruptQuery(context) {
+  const query = context.query;
+  if (!query) {
+    return;
+  }
+  if (typeof query.interrupt === "function") {
+    try {
+      // Interrupt lets the CLI finish the turn cleanly (transcript persisted,
+      // result emitted) instead of killing the process outright.
+      await query.interrupt();
+      return;
+    } catch {
+      // Fall through to a hard close.
+    }
+  }
+  try {
+    query.close?.();
+  } catch {
+    // Nothing else to release.
+  }
+}
+
+function handleCancel(params = {}, envelopeId = null) {
   const requestId =
     params.requestId || params.request_id || params.id || null;
   if (!requestId) {
@@ -2098,15 +2315,97 @@ function handleCancel(params = {}) {
 
   const context = activeQueries.get(requestId);
   if (!context) {
+    // Nothing left to stop, so the caller is free to start the next turn.
+    emit({
+      ...(envelopeId ? { id: envelopeId } : {}),
+      type: "cancel_result",
+      requestId,
+      ok: true,
+      closed: false,
+    });
     return;
   }
 
   context.cancelled = true;
+  context.cancelAckIds.push(envelopeId);
   cleanupPendingApprovalsForQuery(
     requestId,
     "Claude query was canceled before approval was answered.",
   );
-  context.query?.close();
+  // Steer messages the query never read must not run after a stop, and the
+  // requests that queued them are told so instead of being dropped in silence.
+  const droppedSteerIds = context.input?.dropQueued() ?? [];
+  for (const steerId of droppedSteerIds) {
+    emit({
+      id: steerId,
+      type: "error",
+      message: `Claude query ${requestId} was canceled before this message was delivered.`,
+      recoverable: true,
+    });
+  }
+  context.input?.end();
+  if (!context.cancelTimer) {
+    context.cancelTimer = setTimeout(() => {
+      context.cancelTimer = null;
+      if (activeQueries.get(requestId) === context) {
+        try {
+          context.query?.close?.();
+        } catch {
+          // The process is already gone.
+        }
+        // The query outlived its grace period, so the request is over as far as
+        // this sidecar is concerned.
+        activeQueries.delete(requestId);
+      }
+      settleCancelledQuery(context, true);
+    }, cancelCloseGraceMs());
+    context.cancelTimer.unref?.();
+  }
+  void interruptQuery(context);
+}
+
+function findSteerableQuery(requestId) {
+  if (!requestId) {
+    throw new Error("Claude steer requests require a requestId.");
+  }
+  const context = activeQueries.get(requestId);
+  if (!context || context.cancelled || context.turnCompleted || !context.input) {
+    throw new Error(`No active Claude query for request ${requestId}.`);
+  }
+  if (context.input.ended) {
+    throw new Error(`Claude query ${requestId} is no longer accepting input.`);
+  }
+  return context;
+}
+
+// Pushes a user message into the running turn. `priority: "next"` makes the
+// CLI fold it into the current turn at the next tool round (a queued command)
+// instead of starting a new turn after this one ("later") or aborting the
+// running turn first ("now").
+async function pushSteerMessage(context, prompt, attachments, steerRequestId = null) {
+  const message = await buildUserMessage(
+    prompt,
+    attachments,
+    context.cwd || process.cwd(),
+    context.sessionId || "",
+    { priority: "next", uuid: randomUUID() },
+  );
+  if (!context.input.push(message, steerRequestId)) {
+    throw new Error(`Claude query ${context.id} is no longer accepting input.`);
+  }
+}
+
+async function handleSteer(req) {
+  const { id, params = {} } = req;
+  try {
+    const context = findSteerableQuery(
+      params.requestId || params.request_id || null,
+    );
+    await pushSteerMessage(context, params.prompt, params.attachments, id);
+    emit({ id, type: "steer_result", ok: true });
+  } catch (error) {
+    emit({ id, type: "error", message: error.message || String(error) });
+  }
 }
 
 function assertClaudeApprovalResponseShape(response) {
@@ -2173,6 +2472,7 @@ function handleShutdown(signal) {
       context.id,
       `Claude query was interrupted by ${signal}.`,
     );
+    context.input?.end();
     context.query?.close?.();
     emitTurnCompleted(context, "interrupted");
   }
@@ -2195,7 +2495,7 @@ rl.on("line", (line) => {
   }
 
   if (req.method === "cancel") {
-    handleCancel(req.params || {});
+    handleCancel(req.params || {}, typeof req.id === "string" ? req.id : null);
     return;
   }
 
@@ -2204,11 +2504,16 @@ rl.on("line", (line) => {
     return;
   }
 
+  if (req.method === "steer") {
+    void handleSteer(req);
+    return;
+  }
+
   if (req.method === "version") {
     emit({
       id: req.id,
       type: "version",
-      version: "1.0.0",
+      version: "1.1.0",
       runtimeSource: claudeCodeExecutable ? "system" : "bundled",
       runtimeExecutable: claudeCodeExecutable || undefined,
       sdkVersion: sdkVersion || undefined,

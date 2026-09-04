@@ -965,7 +965,7 @@ pub async fn steer_message(
 ) -> Result<(), String> {
     if state.turns.get(&thread_id).await.is_none() {
         return Err(
-            "No active turn is running for this thread yet. Wait for Codex to start the turn before steering."
+            "No active turn is running for this thread yet. Wait for the turn to start before steering."
                 .to_string(),
         );
     }
@@ -978,8 +978,8 @@ pub async fn steer_message(
     .await?
     .ok_or_else(|| format!("thread not found: {thread_id}"))?;
 
-    if engine_kind(&thread.engine_id) != "codex" {
-        return Err("Mid-turn steering is only available for Codex threads.".to_string());
+    if !state.engines.supports_steering(&thread).await {
+        return Err("Mid-turn steering is not available for this engine.".to_string());
     }
 
     let engine_thread_id = thread

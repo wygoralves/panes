@@ -11,6 +11,7 @@ import type { Thread } from "../types";
 import { useChatComposerStore } from "./chatComposerStore";
 import { useEngineStore } from "./engineStore";
 import { useOnboardingStore } from "./onboardingStore";
+import { useChatQueueStore } from "./chatQueueStore";
 import { useComposerDraftStore } from "./composerDraftStore";
 import { useThreadReadStore } from "./threadReadStore";
 
@@ -508,6 +509,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       await ipc.deleteThread(threadId);
       useThreadReadStore.getState().forgetThread(threadId);
       useComposerDraftStore.getState().clearPrompt(threadId);
+      // Nothing can deliver a queued message to a thread that no longer exists.
+      useChatQueueStore.getState().clear(threadId);
       set((state) => {
         const threadsByWorkspace = Object.fromEntries(
           Object.entries(state.threadsByWorkspace).map(([workspaceId, threads]) => [
