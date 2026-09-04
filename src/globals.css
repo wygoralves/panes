@@ -5920,6 +5920,355 @@ button, input, textarea, select {
   margin-left: auto;
 }
 
+/* ── Composer branch picker ── */
+.chat-branch-root {
+  position: relative;
+  display: inline-flex;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.chat-branch-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 6px 2px 5px;
+  border-radius: 99px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.chat-branch-trigger:hover,
+.chat-branch-trigger--open {
+  background: var(--bg-3);
+  border-color: var(--border);
+  color: var(--text-1);
+}
+
+.chat-branch-trigger-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-branch-trigger-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--accent-2-dim);
+  color: var(--accent-2);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.4;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-branch-chevron {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.chat-branch-trigger--open .chat-branch-chevron {
+  transform: rotate(180deg);
+}
+
+.bp-popover {
+  position: fixed;
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-height: 400px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--bg-3);
+  border: 1px solid var(--border-active);
+  box-shadow: var(--shadow-popover);
+  animation: dropdown-in var(--duration-fast) var(--ease-out) both;
+}
+
+.bp-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-3);
+}
+
+.bp-search .dropdown-search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.bp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.bp-section-label {
+  padding: 6px 8px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.bp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
+}
+
+.bp-row:hover,
+.bp-row--active {
+  background: var(--wash-06);
+  color: var(--text-1);
+}
+
+.bp-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.bp-row:disabled:hover {
+  background: transparent;
+  color: var(--text-2);
+}
+
+.bp-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.bp-row--current .bp-row-icon {
+  color: var(--accent);
+}
+
+.bp-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.bp-row-name--sans {
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.bp-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.bp-row-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.bp-row-badge {
+  flex-shrink: 0;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.bp-row-check {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.bp-empty {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.bp-footer {
+  border-top: 1px solid var(--divider);
+  padding: 4px;
+}
+
+.bp-footer--actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px;
+}
+
+.bp-note {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.bp-error {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--danger);
+  word-break: break-word;
+}
+
+.bp-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 4px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-2-dim);
+  color: var(--accent-2);
+  font-size: 11px;
+}
+
+.bp-context-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.bp-context-action {
+  color: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.bp-context-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bp-create-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.bp-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.bp-back:hover {
+  background: var(--wash-06);
+  color: var(--text-1);
+}
+
+.bp-create-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 8px 4px;
+}
+
+.bp-create-body .git-inline-input {
+  width: 100%;
+  font-family: var(--font-mono);
+}
+
+.bp-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.bp-field > .dropdown-root,
+.bp-field > .dropdown-root > .dropdown-trigger {
+  flex: 1;
+  min-width: 0;
+}
+
+.bp-field .dropdown-trigger {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--wash-03);
+  font-family: var(--font-mono);
+}
+
+.bp-field .dropdown-trigger:hover {
+  background: var(--wash-06);
+}
+
+.bp-base-menu {
+  width: 232px;
+  min-width: 0;
+}
+
+.bp-base-menu .dropdown-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
 /* ── Toasts ── */
 .toast-container {
   position: fixed;

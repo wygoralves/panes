@@ -625,6 +625,65 @@
       "blockedBy": "blocked by {{count}}"
     }
   },
+  "branchPicker": {
+    "title": "Branch",
+    "openMenu": "Switch branch or create a new one",
+    "searchPlaceholder": "Switch or create a branch",
+    "chooseRepo": "Choose a repository",
+    "local": "Local",
+    "remote": "Remote",
+    "noMatches": "No branches match",
+    "noBranches": "No branches yet",
+    "loading": "Loading branches",
+    "fetching": "Fetching remotes",
+    "current": "Current branch",
+    "ahead": "{{count}} ahead",
+    "behind": "{{count}} behind",
+    "newBranch": "New branch",
+    "newBranchNamed": "New branch \"{{name}}\"",
+    "back": "Back to branches",
+    "inWorktree": "This chat works in the worktree {{name}}",
+    "rowInWorktree": "Checked out in the worktree {{name}}. Selecting it moves this chat there.",
+    "leaveWorktree": "Back to main checkout",
+    "turnRunning": "Wait for the current turn to finish before changing branches.",
+    "badges": {
+      "default": "default"
+    },
+    "busy": {
+      "checkout": "Switching",
+      "pull": "Pulling",
+      "create": "Creating",
+      "detach": "Detaching",
+      "move": "Moving"
+    },
+    "create": {
+      "title": "New branch",
+      "namePlaceholder": "feature/short-description",
+      "from": "From",
+      "worktreeTitle": "Create in a worktree",
+      "worktreeDescription": "Checks it out in .panes/worktrees/{{folder}} so this chat leaves your current files alone.",
+      "worktreeNeedsThread": "Open a chat before creating a worktree.",
+      "submit": "Create branch",
+      "submitWorktree": "Create worktree",
+      "creating": "Creating",
+      "invalidName": "Branch names cannot contain spaces, \"..\", or characters like ~ ^ : ? * [ \\."
+    },
+    "toasts": {
+      "switched": "Switched to {{branch}}",
+      "switchedAndPulled": "Switched to {{branch}} and pulled the latest changes",
+      "pullFailed": "Switched to {{branch}}, but pull failed: {{error}}",
+      "switchFailed": "Could not switch branch: {{error}}",
+      "created": "Created {{branch}} and switched to it",
+      "worktreeCreated": "This chat now works in the {{branch}} worktree",
+      "detached": "Back to the main checkout",
+      "detachFailed": "Could not detach the worktree: {{error}}",
+      "movedToWorktree": "This chat now works on {{branch}} in the {{name}} worktree",
+      "movedToCheckout": "This chat now works on {{branch}} in the main checkout",
+      "moveFailed": "Could not move this chat: {{error}}",
+      "worktreeNeedsThread": "Open a chat before switching to a worktree.",
+      "loadFailed": "Could not load branches: {{error}}"
+    }
+  },
   "status": {
     "now": "now",
     "minutesShort": "{{count}} min",

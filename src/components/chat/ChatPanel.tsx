@@ -17,36 +17,38 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
 import {
-  Send,
-  Loader2,
-  Square,
-  GitBranch,
-  Shield,
-  Monitor,
-  SquareTerminal,
-  MessageSquare,
-  FilePen,
-  Pencil,
   AlertTriangle,
   AtSign,
-  DollarSign,
-  Plus,
-  ListChecks,
-  Copy,
   Check,
   Clock,
-  Zap,
-  RotateCcw,
-  Minimize2,
-  Search,
-  Scissors,
-  Sparkles,
-  Server,
-  SquareCode,
+  Copy,
+  DollarSign,
+  FilePen,
   FlaskConical,
+  GitBranch,
+  ListChecks,
+  Loader2,
+  MessageSquare,
+  Minimize2,
+  Monitor,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Scissors,
+  Search,
+  Send,
+  Server,
+  Shield,
+  Sparkles,
+  Square,
+  SquareCode,
+  SquareTerminal,
   UserCircle,
+  Zap,
 } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
+import { readThreadWorktreePath } from "../../lib/threadWorktree";
+import { BranchPicker } from "./BranchPicker";
 import { DraftScopePicker } from "./DraftScopePicker";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
@@ -143,6 +145,7 @@ import type {
   Message,
   OpenCodeRemoteSession,
   OpenCodeRuntimeCatalog,
+  Repo,
   Thread,
   TrustLevel,
 } from "../../types";
@@ -1764,6 +1767,32 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     })),
   );
   const gitStatus = useGitStore((s) => s.status);
+  // The branch picker acts on the repo the thread is bound to; a draft falls
+  // back to the workspace's active repo, and a single-repo workspace needs no
+  // choice at all.
+  const branchPickerRepo = useMemo<Repo | null>(() => {
+    if (activeThread?.repoId) {
+      return repos.find((repo) => repo.id === activeThread.repoId) ?? null;
+    }
+    return activeRepo ?? (repos.length === 1 ? repos[0] : null);
+  }, [activeThread?.repoId, activeRepo, repos]);
+  const activeThreadWorktreePath = readThreadWorktreePath(activeThread);
+  // The git panel follows the thread: a worktree-bound chat shows its
+  // worktree, and switching back to a plain chat returns to the checkout.
+  useEffect(() => {
+    if (!branchPickerRepo) return;
+    const git = useGitStore.getState();
+    if (activeThreadWorktreePath) {
+      if (git.activeRepoPath !== activeThreadWorktreePath) {
+        git.setActiveRepoPath(activeThreadWorktreePath);
+        git.setMainRepoPath(branchPickerRepo.path);
+      }
+      return;
+    }
+    if (git.mainRepoPath === branchPickerRepo.path && git.activeRepoPath !== branchPickerRepo.path) {
+      git.setActiveRepoPath(branchPickerRepo.path);
+    }
+  }, [activeThread?.id, activeThreadWorktreePath, branchPickerRepo]);
   const setComposerRuntime = useChatComposerStore((state) => state.setWorkspaceRuntime);
   const clearComposerRuntime = useChatComposerStore((state) => state.clearWorkspaceRuntime);
 
@@ -6388,12 +6417,14 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               ) : null
             )}
 
-            {/* Branch */}
-            {gitStatus?.branch && (
-              <span className="chat-status-branch">
-                <GitBranch size={11} />
-                {gitStatus.branch}
-              </span>
+            {/* Branch and worktree for this chat */}
+            {repos.length > 0 && (
+              <BranchPicker
+                thread={activeThread}
+                repo={branchPickerRepo}
+                repos={repos}
+                turnActive={streaming}
+              />
             )}
           </div>
         </form>
