@@ -3,8 +3,8 @@ import type { ContextUsage } from "../types";
 export type UsageLevel = "normal" | "warning" | "critical";
 
 export function usageLevel(remainingPercent: number): UsageLevel {
-  if (remainingPercent <= 10) return "critical";
-  if (remainingPercent <= 25) return "warning";
+  if (remainingPercent < 25) return "critical";
+  if (remainingPercent < 50) return "warning";
   return "normal";
 }
 

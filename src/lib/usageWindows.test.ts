@@ -35,10 +35,10 @@ const bindingLabels = {
 describe("usage windows", () => {
   it("maps the percent left to a level", () => {
     expect(usageLevel(80)).toBe("normal");
-    expect(usageLevel(26)).toBe("normal");
+    expect(usageLevel(50)).toBe("normal");
+    expect(usageLevel(49)).toBe("warning");
     expect(usageLevel(25)).toBe("warning");
-    expect(usageLevel(11)).toBe("warning");
-    expect(usageLevel(10)).toBe("critical");
+    expect(usageLevel(24)).toBe("critical");
     expect(usageLevel(0)).toBe("critical");
     expect(clampRemainingPercent(37.6)).toBe(62);
     expect(clampRemainingPercent(140)).toBe(0);
