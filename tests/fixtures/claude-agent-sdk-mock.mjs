@@ -107,6 +107,7 @@ export function query({ prompt, options }) {
           todoToolsEnabled: options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS,
           sandbox: options?.sandbox,
           additionalDirectories: options?.additionalDirectories,
+          forwardSubagentText: options?.forwardSubagentText,
         }),
       });
     }

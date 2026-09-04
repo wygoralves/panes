@@ -138,6 +138,10 @@ pub enum EngineEvent {
     ThinkingDelta {
         content: String,
     },
+    /// The engine began a new main-agent message item. Text that follows
+    /// starts its own block instead of extending the previous one, which
+    /// keeps two consecutive messages from being glued into one paragraph.
+    TextItemStarted,
     TaskListUpdated {
         source: String,
         explanation: Option<String>,
@@ -149,6 +153,35 @@ pub enum EngineEvent {
         action_type: ActionType,
         summary: String,
         details: serde_json::Value,
+        /// Subagent that ran this tool call; `None` for the main agent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+    },
+    /// A subagent (Claude Task worker, Codex child thread) began working under
+    /// the current turn. `parent_action_id` is the tool call that spawned it.
+    SubagentStarted {
+        agent_id: String,
+        agent_type: Option<String>,
+        description: String,
+        parent_action_id: Option<String>,
+        parent_agent_id: Option<String>,
+    },
+    SubagentProgress {
+        agent_id: String,
+        message: String,
+    },
+    SubagentCompleted {
+        agent_id: String,
+        status: TurnCompletionStatus,
+        summary: Option<String>,
+    },
+    SubagentTextDelta {
+        agent_id: String,
+        content: String,
+    },
+    SubagentThinkingDelta {
+        agent_id: String,
+        content: String,
     },
     ActionOutputDelta {
         action_id: String,

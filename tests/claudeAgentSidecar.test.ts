@@ -1563,6 +1563,239 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(errorEvent.message).toContain("No active Claude query for request query-nope");
   });
 
+  it("attributes subagent tool calls and text to the Task call that spawned them", async () => {
+    const taskInput = {
+      description: "Explore the repo",
+      prompt: "Find the entry point",
+      subagent_type: "Explore",
+      name: "scout",
+    };
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: { type: "system", subtype: "init", session_id: "session-subagents" },
+        },
+        {
+          type: "hook",
+          hook: "PreToolUse",
+          input: { tool_name: "Task", tool_input: taskInput, tool_use_id: "toolu_task_1" },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "task_started",
+            task_id: "agent-1",
+            tool_use_id: "toolu_task_1",
+            description: "Explore the repo",
+            subagent_type: "Explore",
+            task_type: "local_agent",
+            session_id: "session-subagents",
+          },
+        },
+        {
+          type: "hook",
+          hook: "SubagentStart",
+          input: { agent_id: "agent-1", agent_type: "Explore" },
+        },
+        {
+          type: "hook",
+          hook: "PreToolUse",
+          input: {
+            tool_name: "Read",
+            tool_input: { file_path: "src/main.rs" },
+            tool_use_id: "toolu_read_1",
+            agent_id: "agent-1",
+            agent_type: "Explore",
+          },
+        },
+        {
+          type: "hook",
+          hook: "PostToolUse",
+          input: {
+            tool_name: "Read",
+            tool_input: { file_path: "src/main.rs" },
+            tool_use_id: "toolu_read_1",
+            tool_response: "fn main() {}",
+            agent_id: "agent-1",
+            agent_type: "Explore",
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "task_progress",
+            task_id: "agent-1",
+            tool_use_id: "toolu_task_1",
+            description: "Explore the repo",
+            summary: "Reading src/main.rs",
+            usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 },
+            session_id: "session-subagents",
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "assistant",
+            parent_tool_use_id: "toolu_task_1",
+            message: {
+              id: "msg_sub_1",
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "Looking at main" },
+                { type: "text", text: "The entry point is src/main.rs" },
+              ],
+            },
+            session_id: "session-subagents",
+          },
+        },
+        {
+          type: "hook",
+          hook: "SubagentStop",
+          input: {
+            agent_id: "agent-1",
+            agent_type: "Explore",
+            last_assistant_message: "The entry point is src/main.rs",
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "task_updated",
+            task_id: "agent-1",
+            patch: { status: "completed" },
+            session_id: "session-subagents",
+          },
+        },
+        {
+          type: "hook",
+          hook: "PostToolUse",
+          input: {
+            tool_name: "Task",
+            tool_input: taskInput,
+            tool_use_id: "toolu_task_1",
+            tool_response: "The entry point is src/main.rs",
+          },
+        },
+      ],
+      emitObservationResult: true,
+      sessionId: "session-subagents",
+    });
+
+    harness.send({
+      id: "query-subagents",
+      method: "query",
+      params: { prompt: "explore", cwd: repoRoot },
+    });
+
+    const started = await harness.waitFor(
+      (event) => event.id === "query-subagents" && event.type === "subagent_started",
+    );
+
+    await harness.waitFor(
+      (event) => event.id === "query-subagents" && event.type === "turn_completed",
+    );
+
+    const events = harness.events.filter((event) => event.id === "query-subagents");
+    const taskAction = events.find(
+      (event) => event.type === "action_started" && event.toolName === "Task",
+    );
+    const readAction = events.find(
+      (event) => event.type === "action_started" && event.toolName === "Read",
+    );
+    expect(taskAction).toBeDefined();
+    expect(taskAction).not.toHaveProperty("agentId");
+    expect(taskAction?.summary).toBe("Task: Explore the repo");
+    expect(readAction).toMatchObject({ agentId: "toolu_task_1" });
+
+    expect(started).toMatchObject({
+      agentId: "toolu_task_1",
+      agentType: "Explore",
+      description: "Explore the repo",
+      parentActionId: taskAction?.actionId,
+      parentAgentId: null,
+    });
+    expect(
+      events.find((event) => event.type === "subagent_progress"),
+    ).toMatchObject({ agentId: "toolu_task_1", message: "Reading src/main.rs" });
+    expect(
+      events.find((event) => event.type === "subagent_thinking_delta"),
+    ).toMatchObject({ agentId: "toolu_task_1", content: "Looking at main" });
+    expect(
+      events.find((event) => event.type === "subagent_text_delta"),
+    ).toMatchObject({ agentId: "toolu_task_1", content: "The entry point is src/main.rs" });
+
+    const completions = events.filter((event) => event.type === "subagent_completed");
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({
+      agentId: "toolu_task_1",
+      status: "completed",
+      summary: "The entry point is src/main.rs",
+    });
+  });
+
+  it("closes out subagents that never report completion when the turn ends", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "yield",
+          message: { type: "system", subtype: "init", session_id: "session-open-subagent" },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "task_started",
+            task_id: "agent-2",
+            tool_use_id: "toolu_task_2",
+            description: "Review the diff",
+            subagent_type: "code-reviewer",
+            task_type: "local_agent",
+            session_id: "session-open-subagent",
+          },
+        },
+        {
+          type: "yield",
+          message: {
+            type: "system",
+            subtype: "task_started",
+            task_id: "bash-1",
+            tool_use_id: "toolu_bash_1",
+            description: "pnpm test",
+            task_type: "local_bash",
+            session_id: "session-open-subagent",
+          },
+        },
+        {
+          type: "yield",
+          message: makeSuccessResult({ session_id: "session-open-subagent" }),
+        },
+      ],
+    });
+
+    harness.send({
+      id: "query-open-subagent",
+      method: "query",
+      params: { prompt: "review", cwd: repoRoot },
+    });
+
+    const completed = await harness.waitFor(
+      (event) => event.id === "query-open-subagent" && event.type === "turn_completed",
+    );
+
+    const events = harness.events.filter((event) => event.id === "query-open-subagent");
+    const started = events.filter((event) => event.type === "subagent_started");
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({ agentId: "toolu_task_2", parentActionId: null });
+    const closed = events.filter((event) => event.type === "subagent_completed");
+    expect(closed).toEqual([
+      expect.objectContaining({ agentId: "toolu_task_2", status: "completed", summary: null }),
+    ]);
+    expect(events.indexOf(closed[0]!)).toBeLessThan(events.indexOf(completed));
+  });
 
   it("interrupts the running query on cancel and keeps the interrupted session", async () => {
     const harness = await spawnHarness({

@@ -1788,6 +1788,7 @@ impl OpenCodeEngine {
                         "metadata": part.metadata.clone()
                             .or_else(|| state.as_ref().and_then(|value| value.metadata.clone())),
                     }),
+                    agent_id: None,
                 })
                 .await
                 .ok();
@@ -1867,6 +1868,7 @@ impl OpenCodeEngine {
                         "sessionID": part.session_id.clone(),
                         "messageID": part.message_id.clone(),
                     }),
+                    agent_id: None,
                 })
                 .await
                 .ok();

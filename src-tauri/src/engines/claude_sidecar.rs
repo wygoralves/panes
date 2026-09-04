@@ -97,6 +97,11 @@ enum SidecarEvent {
         id: Option<String>,
         content: String,
     },
+    /// The model opened a new text content block, which is where one assistant
+    /// message ends and the next begins.
+    TextItemStarted {
+        id: Option<String>,
+    },
     ActionStarted {
         id: Option<String>,
         #[serde(rename = "actionId")]
@@ -105,6 +110,45 @@ enum SidecarEvent {
         action_type: String,
         summary: String,
         details: Option<serde_json::Value>,
+        #[serde(rename = "agentId")]
+        agent_id: Option<String>,
+    },
+    SubagentStarted {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        #[serde(rename = "agentType")]
+        agent_type: Option<String>,
+        description: String,
+        #[serde(rename = "parentActionId")]
+        parent_action_id: Option<String>,
+        #[serde(rename = "parentAgentId")]
+        parent_agent_id: Option<String>,
+    },
+    SubagentProgress {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        message: String,
+    },
+    SubagentCompleted {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        status: String,
+        summary: Option<String>,
+    },
+    SubagentTextDelta {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        content: String,
+    },
+    SubagentThinkingDelta {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        content: String,
     },
     SteerResult {
         id: Option<String>,
@@ -212,7 +256,13 @@ impl SidecarEvent {
             | SidecarEvent::TurnStarted { id, .. }
             | SidecarEvent::TextDelta { id, .. }
             | SidecarEvent::ThinkingDelta { id, .. }
+            | SidecarEvent::TextItemStarted { id, .. }
             | SidecarEvent::ActionStarted { id, .. }
+            | SidecarEvent::SubagentStarted { id, .. }
+            | SidecarEvent::SubagentProgress { id, .. }
+            | SidecarEvent::SubagentCompleted { id, .. }
+            | SidecarEvent::SubagentTextDelta { id, .. }
+            | SidecarEvent::SubagentThinkingDelta { id, .. }
             | SidecarEvent::SteerResult { id, .. }
             | SidecarEvent::CancelResult { id, .. }
             | SidecarEvent::ActionOutputDelta { id, .. }
@@ -832,6 +882,14 @@ impl ClaudeSidecarEngine {
         match s {
             "stderr" => OutputStream::Stderr,
             _ => OutputStream::Stdout,
+        }
+    }
+
+    fn parse_completion_status(s: &str) -> TurnCompletionStatus {
+        match s {
+            "completed" => TurnCompletionStatus::Completed,
+            "interrupted" => TurnCompletionStatus::Interrupted,
+            _ => TurnCompletionStatus::Failed,
         }
     }
 
@@ -2111,11 +2169,15 @@ impl Engine for ClaudeSidecarEngine {
                                         .await
                                         .ok();
                                 }
+                                SidecarEvent::TextItemStarted { .. } => {
+                                    event_tx.send(EngineEvent::TextItemStarted).await.ok();
+                                }
                                 SidecarEvent::ActionStarted {
                                     action_id,
                                     action_type,
                                     summary,
                                     details,
+                                    agent_id,
                                     ..
                                 } => {
                                     event_tx
@@ -2125,6 +2187,68 @@ impl Engine for ClaudeSidecarEngine {
                                             action_type: Self::parse_action_type(&action_type),
                                             summary,
                                             details: details.unwrap_or(serde_json::json!({})),
+                                            agent_id,
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentStarted {
+                                    agent_id,
+                                    agent_type,
+                                    description,
+                                    parent_action_id,
+                                    parent_agent_id,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentStarted {
+                                            agent_id,
+                                            agent_type,
+                                            description,
+                                            parent_action_id,
+                                            parent_agent_id,
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentProgress {
+                                    agent_id, message, ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentProgress { agent_id, message })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentCompleted {
+                                    agent_id,
+                                    status,
+                                    summary,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentCompleted {
+                                            agent_id,
+                                            status: Self::parse_completion_status(&status),
+                                            summary,
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentTextDelta {
+                                    agent_id, content, ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentTextDelta { agent_id, content })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentThinkingDelta {
+                                    agent_id, content, ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentThinkingDelta {
+                                            agent_id,
+                                            content,
                                         })
                                         .await
                                         .ok();
@@ -2236,11 +2360,8 @@ impl Engine for ClaudeSidecarEngine {
                                         }
                                     }
 
-                                    let completion_status = match status.as_str() {
-                                        "completed" => TurnCompletionStatus::Completed,
-                                        "interrupted" => TurnCompletionStatus::Interrupted,
-                                        _ => TurnCompletionStatus::Failed,
-                                    };
+                                    let completion_status =
+                                        Self::parse_completion_status(&status);
                                     // Emit non-trivial stop reason BEFORE TurnCompleted so it
                                     // lands in the current assistant message, not a new shell.
                                     // Skip "end_turn" — that is the normal completion case.
@@ -2677,6 +2798,135 @@ mod tests {
             }
             other => panic!("unexpected event variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn deserializes_action_started_agent_id() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "action_started",
+            "id": "request-1",
+            "actionId": "action-3",
+            "actionType": "file_read",
+            "summary": "Read: src/main.rs",
+            "details": { "file_path": "src/main.rs" },
+            "agentId": "toolu_task_1",
+        }))
+        .expect("action_started should deserialize");
+
+        match event {
+            SidecarEvent::ActionStarted {
+                action_id,
+                agent_id,
+                ..
+            } => {
+                assert_eq!(action_id, "action-3");
+                assert_eq!(agent_id.as_deref(), Some("toolu_task_1"));
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+
+        let without_agent: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "action_started",
+            "id": "request-1",
+            "actionId": "action-4",
+            "actionType": "command",
+            "summary": "Bash: ls",
+        }))
+        .expect("action_started without agentId should deserialize");
+        match without_agent {
+            SidecarEvent::ActionStarted { agent_id, .. } => assert!(agent_id.is_none()),
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserializes_subagent_lifecycle_events() {
+        let started: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_started",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "agentType": "Explore",
+            "description": "Explore the repo",
+            "parentActionId": "claude-action-2",
+            "parentAgentId": null,
+        }))
+        .expect("subagent_started should deserialize");
+        assert_eq!(started.request_id(), Some("request-1"));
+        match started {
+            SidecarEvent::SubagentStarted {
+                agent_id,
+                agent_type,
+                description,
+                parent_action_id,
+                parent_agent_id,
+                ..
+            } => {
+                assert_eq!(agent_id, "toolu_task_1");
+                assert_eq!(agent_type.as_deref(), Some("Explore"));
+                assert_eq!(description, "Explore the repo");
+                assert_eq!(parent_action_id.as_deref(), Some("claude-action-2"));
+                assert!(parent_agent_id.is_none());
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+
+        let progress: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_progress",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "message": "Reading files",
+        }))
+        .expect("subagent_progress should deserialize");
+        assert!(matches!(
+            progress,
+            SidecarEvent::SubagentProgress { ref agent_id, ref message, .. }
+                if agent_id == "toolu_task_1" && message == "Reading files"
+        ));
+
+        let completed: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_completed",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "status": "interrupted",
+            "summary": null,
+        }))
+        .expect("subagent_completed should deserialize");
+        match completed {
+            SidecarEvent::SubagentCompleted {
+                status, summary, ..
+            } => {
+                assert!(matches!(
+                    ClaudeSidecarEngine::parse_completion_status(&status),
+                    TurnCompletionStatus::Interrupted
+                ));
+                assert!(summary.is_none());
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+
+        let text: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_text_delta",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "content": "Found it",
+        }))
+        .expect("subagent_text_delta should deserialize");
+        assert!(matches!(
+            text,
+            SidecarEvent::SubagentTextDelta { ref content, .. } if content == "Found it"
+        ));
+
+        let thinking: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_thinking_delta",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "content": "hmm",
+        }))
+        .expect("subagent_thinking_delta should deserialize");
+        assert!(matches!(
+            thinking,
+            SidecarEvent::SubagentThinkingDelta { ref content, .. } if content == "hmm"
+        ));
     }
 
     #[test]

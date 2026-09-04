@@ -518,6 +518,24 @@
     }
   },
   "messageBlocks": {
+    "subagent": {
+      "label": "Subagente",
+      "started_one": "{{names}} começou a trabalhar",
+      "started_other": "{{names}} começaram a trabalhar",
+      "startedMore_one": "{{names}} e mais {{count}} começaram a trabalhar",
+      "startedMore_other": "{{names}} e mais {{count}} começaram a trabalhar",
+      "finished_one": "{{names}} terminou",
+      "finished_other": "{{names}} terminaram",
+      "finishedMore_one": "{{names}} e mais {{count}} terminaram",
+      "finishedMore_other": "{{names}} e mais {{count}} terminaram",
+      "open": "Abrir subagentes",
+      "status": {
+        "running": "Executando",
+        "done": "Concluído",
+        "error": "Falhou",
+        "interrupted": "Interrompido"
+      }
+    },
     "diffFallback": "diff ({{scope}})",
     "parsing": "Analisando...",
     "parsingDiff": "Analisando diff...",
@@ -638,6 +656,21 @@
       "progress": "{{completed}} de {{total}}",
       "blockedBy": "bloqueada por {{count}}"
     }
+  },
+  "subagentPanel": {
+    "worker": "Subagente",
+    "active": "Ativos",
+    "finished": "Concluídos",
+    "working": "Trabalhando",
+    "showAll": "Mostrar todos ({{count}})",
+    "showLess": "Mostrar menos",
+    "back": "Voltar para a lista",
+    "empty": "Nenhum subagente neste chat ainda.",
+    "otherThread": "Estes subagentes pertencem a outro chat.",
+    "openChat": "Abrir esse chat",
+    "missing": "Este subagente não está mais na transcrição.",
+    "waiting": "Aguardando o subagente começar",
+    "noOutput": "O subagente terminou sem saída."
   },
   "branchPicker": {
     "title": "Branch",

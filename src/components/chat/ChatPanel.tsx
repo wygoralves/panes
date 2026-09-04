@@ -71,6 +71,7 @@ import {
   resolveThreadFileRootPath,
 } from "../../lib/fileRootUtils";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useWorkspacePaneStore } from "../../stores/workspacePaneStore";
 import { engineSupportsSteering } from "../../lib/engineSteering";
 import {
   selectThreadQueue,
@@ -1181,6 +1182,7 @@ interface MessageRowProps {
   onLoadActionOutput: (messageId: string, actionId: string) => Promise<void>;
   onEditResend?: (text: string) => void;
   onOpenDiffFile?: (filePath: string) => void;
+  onOpenSubagent?: (agentId: string | null) => void;
 }
 
 function extractMessageCopyText(message: Message): string {
@@ -1240,6 +1242,7 @@ function MessageRowView({
   onLoadActionOutput,
   onEditResend,
   onOpenDiffFile,
+  onOpenSubagent,
 }: MessageRowProps) {
   const { t, i18n } = useTranslation("chat");
   const isUser = message.role === "user";
@@ -1386,6 +1389,7 @@ function MessageRowView({
               onApproval={onApproval}
               onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
               onOpenDiffFile={onOpenDiffFile}
+              onOpenSubagent={onOpenSubagent}
             />
           ) : (
             <WorkingIndicator
@@ -1411,7 +1415,8 @@ const MessageRow = memo(
     prev.onApproval === next.onApproval &&
     prev.onLoadActionOutput === next.onLoadActionOutput &&
     prev.onEditResend === next.onEditResend &&
-    prev.onOpenDiffFile === next.onOpenDiffFile,
+    prev.onOpenDiffFile === next.onOpenDiffFile &&
+    prev.onOpenSubagent === next.onOpenSubagent,
 );
 
 function getFileExtension(fileName: string): string {
@@ -4897,6 +4902,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     [respondApproval],
   );
 
+  const handleOpenSubagent = useCallback(
+    (agentId: string | null) => {
+      const currentThreadId = threadId ?? activeThread?.id ?? null;
+      if (!activeWorkspaceId || !currentThreadId) return;
+      useWorkspacePaneStore.getState().openSubagentPane(activeWorkspaceId, {
+        threadId: currentThreadId,
+        ...(agentId ? { agentId } : {}),
+        revision: Date.now(),
+      });
+    },
+    [activeThread?.id, activeWorkspaceId, threadId],
+  );
+
   const handleLoadActionOutput = useCallback(
     (messageId: string, actionId: string) => hydrateActionOutput(messageId, actionId),
     [hydrateActionOutput],
@@ -5516,6 +5534,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         onLoadActionOutput={handleLoadActionOutput}
                         onEditResend={handleEditResend}
                         onOpenDiffFile={handleOpenDiffFile}
+                        onOpenSubagent={handleOpenSubagent}
                       />
                     </MeasuredMessageRow>
                   );
@@ -5542,6 +5561,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   onLoadActionOutput={handleLoadActionOutput}
                   onEditResend={handleEditResend}
                   onOpenDiffFile={handleOpenDiffFile}
+                  onOpenSubagent={handleOpenSubagent}
                 />
               );
             })}

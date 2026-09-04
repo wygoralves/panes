@@ -250,6 +250,7 @@ fn ensure_runtime_columns(conn: &Connection) -> anyhow::Result<()> {
     ensure_column(conn, "threads", "engine_capabilities_json", "TEXT")?;
     ensure_column(conn, "messages", "stream_seq", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(conn, "actions", "truncated", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "actions", "agent_id", "TEXT")?;
     Ok(())
 }
 

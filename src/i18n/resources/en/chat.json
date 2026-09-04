@@ -518,6 +518,24 @@
     }
   },
   "messageBlocks": {
+    "subagent": {
+      "label": "Subagent",
+      "started_one": "{{names}} started working",
+      "started_other": "{{names}} started working",
+      "startedMore_one": "{{names}} and {{count}} more started working",
+      "startedMore_other": "{{names}} and {{count}} more started working",
+      "finished_one": "{{names}} finished working",
+      "finished_other": "{{names}} finished working",
+      "finishedMore_one": "{{names}} and {{count}} more finished working",
+      "finishedMore_other": "{{names}} and {{count}} more finished working",
+      "open": "Open subagents",
+      "status": {
+        "running": "Running",
+        "done": "Done",
+        "error": "Failed",
+        "interrupted": "Stopped"
+      }
+    },
     "diffFallback": "diff ({{scope}})",
     "parsing": "Parsing...",
     "parsingDiff": "Parsing diff...",
@@ -638,6 +656,21 @@
       "progress": "{{completed}} of {{total}}",
       "blockedBy": "blocked by {{count}}"
     }
+  },
+  "subagentPanel": {
+    "worker": "Subagent",
+    "active": "Active",
+    "finished": "Finished",
+    "working": "Working",
+    "showAll": "Show all ({{count}})",
+    "showLess": "Show less",
+    "back": "Back to the list",
+    "empty": "No subagents in this chat yet.",
+    "otherThread": "These subagents belong to another chat.",
+    "openChat": "Open that chat",
+    "missing": "This subagent is no longer in the transcript.",
+    "waiting": "Waiting for the subagent to start",
+    "noOutput": "The subagent finished without output."
   },
   "branchPicker": {
     "title": "Branch",

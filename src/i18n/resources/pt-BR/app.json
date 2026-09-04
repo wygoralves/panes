@@ -365,7 +365,8 @@
     "surfaces": {
       "chat": "Chat",
       "terminal": "Terminal",
-      "editor": "Editor"
+      "editor": "Editor",
+      "subagent": "Subagentes"
     }
   },
   "terminal": {

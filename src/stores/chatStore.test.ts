@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalResponse, ChatProviderUsage, StreamEvent } from "../types";
+import type {
+  ApprovalResponse,
+  ChatProviderUsage,
+  ContentBlock,
+  StreamEvent,
+  TextBlock,
+  ThinkingBlock,
+} from "../types";
 
 const mockIpc = vi.hoisted(() => ({
   cancelTurn: vi.fn(),
@@ -204,6 +211,284 @@ describe("chatStore send", () => {
         clientTurnId: optimisticAssistant?.clientTurnId,
       }),
     );
+
+    vi.useRealTimers();
+  });
+
+  it("closes a worker's thought when that worker moves on, not when another producer speaks", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    mockIpc.sendMessage.mockResolvedValueOnce("assistant-message-id");
+    await expect(
+      useChatStore.getState().send("hello", { engineId: "codex" }),
+    ).resolves.toBe(true);
+
+    expect(streamHandler).not.toBeNull();
+    const emitStreamEvent = streamHandler!;
+
+    function workerThought(): ThinkingBlock | null {
+      const assistant = useChatStore
+        .getState()
+        .messages.find((message) => message.role === "assistant");
+      return (
+        (assistant?.blocks ?? []).find(
+          (block): block is ThinkingBlock => block.type === "thinking" && block.agentId === "w1",
+        ) ?? null
+      );
+    }
+
+    emitStreamEvent({ type: "SubagentThinkingDelta", agent_id: "w1", content: "plan" });
+    emitStreamEvent({ type: "SubagentThinkingDelta", agent_id: "w1", content: " it" });
+    await vi.advanceTimersByTimeAsync(20);
+
+    // Its own second delta must not close the block it is still writing.
+    expect(workerThought()).toMatchObject({ content: "plan it", agentId: "w1" });
+    expect(workerThought()?.durationMs).toBeUndefined();
+
+    emitStreamEvent({ type: "TextDelta", content: "the main agent talks" });
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(workerThought()?.durationMs).toBeUndefined();
+
+    emitStreamEvent({ type: "SubagentTextDelta", agent_id: "w1", content: "here is what I found" });
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(workerThought()?.durationMs).toEqual(expect.any(Number));
+
+    vi.useRealTimers();
+  });
+
+  async function startStreamingTurn(): Promise<(event: StreamEvent) => void> {
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    mockIpc.sendMessage.mockResolvedValueOnce("assistant-message-id");
+    await expect(
+      useChatStore.getState().send("hello", { engineId: "codex" }),
+    ).resolves.toBe(true);
+
+    expect(streamHandler).not.toBeNull();
+    return streamHandler!;
+  }
+
+  function assistantBlocks(): ContentBlock[] {
+    const assistant = useChatStore
+      .getState()
+      .messages.find((message) => message.role === "assistant");
+    return assistant?.blocks ?? [];
+  }
+
+  it("keeps the main agent's sentence in one block when subagent output interleaves", async () => {
+    vi.useFakeTimers();
+
+    const emitStreamEvent = await startStreamingTurn();
+
+    emitStreamEvent({ type: "TextDelta", content: "Three new subagents " });
+    emitStreamEvent({
+      type: "SubagentStarted",
+      agent_id: "w1",
+      description: "frontend tests",
+    });
+    emitStreamEvent({ type: "SubagentTextDelta", agent_id: "w1", content: "reading files" });
+    emitStreamEvent({ type: "TextDelta", content: "are currently running." });
+    await vi.advanceTimersByTimeAsync(20);
+
+    const blocks = assistantBlocks();
+    const mainText = blocks.filter(
+      (block): block is TextBlock => block.type === "text" && !block.agentId,
+    );
+    expect(mainText).toHaveLength(1);
+    expect(mainText[0].content).toBe("Three new subagents are currently running.");
+
+    vi.useRealTimers();
+  });
+
+  it("keeps a worker's text in one block when another worker interleaves", async () => {
+    vi.useFakeTimers();
+
+    const emitStreamEvent = await startStreamingTurn();
+
+    emitStreamEvent({ type: "SubagentTextDelta", agent_id: "w1", content: "part one " });
+    emitStreamEvent({ type: "SubagentTextDelta", agent_id: "w2", content: "other worker" });
+    emitStreamEvent({ type: "SubagentTextDelta", agent_id: "w1", content: "part two" });
+    await vi.advanceTimersByTimeAsync(20);
+
+    const texts = assistantBlocks().filter((block): block is TextBlock => block.type === "text");
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toMatchObject({ agentId: "w1", content: "part one part two" });
+    expect(texts[1]).toMatchObject({ agentId: "w2", content: "other worker" });
+
+    vi.useRealTimers();
+  });
+
+  it("starts a new main text block once the engine opens the next message item", async () => {
+    vi.useFakeTimers();
+
+    const emitStreamEvent = await startStreamingTurn();
+
+    emitStreamEvent({ type: "TextDelta", content: "first message" });
+    emitStreamEvent({ type: "SubagentStarted", agent_id: "w1", description: "worker" });
+    emitStreamEvent({ type: "TextItemStarted" });
+    emitStreamEvent({ type: "TextDelta", content: "second message" });
+    await vi.advanceTimersByTimeAsync(20);
+
+    const texts = assistantBlocks().filter((block): block is TextBlock => block.type === "text");
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toMatchObject({ content: "first message", closed: true });
+    expect(texts[1]).toMatchObject({ content: "second message" });
+    expect(texts[1].closed).toBeUndefined();
+
+    vi.useRealTimers();
+  });
+
+  it("still splits the main text when the main agent's own action lands between deltas", async () => {
+    vi.useFakeTimers();
+
+    const emitStreamEvent = await startStreamingTurn();
+
+    emitStreamEvent({ type: "TextDelta", content: "before" });
+    emitStreamEvent({
+      type: "ActionStarted",
+      action_id: "action-1",
+      action_type: "command",
+      summary: "run tests",
+      details: {},
+    });
+    emitStreamEvent({ type: "TextDelta", content: "after" });
+    await vi.advanceTimersByTimeAsync(20);
+
+    const texts = assistantBlocks().filter((block): block is TextBlock => block.type === "text");
+    expect(texts.map((block) => block.content)).toEqual(["before", "after"]);
+
+    vi.useRealTimers();
+  });
+
+  it("never appends streamed text to a steer echo", async () => {
+    vi.useFakeTimers();
+
+    const emitStreamEvent = await startStreamingTurn();
+
+    useChatStore.setState((state) => ({
+      ...state,
+      messages: state.messages.map((message) =>
+        message.role === "assistant"
+          ? { ...message, blocks: [{ type: "text", content: "steer me", isSteer: true }] }
+          : message,
+      ),
+    }));
+
+    emitStreamEvent({ type: "TextDelta", content: "reply" });
+    await vi.advanceTimersByTimeAsync(20);
+
+    const texts = assistantBlocks().filter((block): block is TextBlock => block.type === "text");
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toMatchObject({ content: "steer me", isSteer: true });
+    expect(texts[1]).toMatchObject({ content: "reply" });
+    expect(texts[1].isSteer).toBeUndefined();
+
+    vi.useRealTimers();
+  });
+
+  it("rejoins a stored turn that was split one block per delta", async () => {
+    vi.useFakeTimers();
+
+    mockListenThreadEvents.mockImplementationOnce(async () => () => {});
+
+    // The blocks a real Codex turn left in the database while the main agent
+    // wrote a sentence and spawned workers at the same time.
+    const action = (agentId: string, actionId: string) => ({
+      type: "action" as const,
+      actionId,
+      actionType: "command" as const,
+      summary: "run",
+      details: {},
+      outputChunks: [],
+      status: "completed" as const,
+      agentId,
+    });
+    const worker = (agentId: string) => ({
+      type: "subagent" as const,
+      agentId,
+      description: agentId,
+      status: "done" as const,
+    });
+
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "assistant-stored",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "completed",
+          schemaVersion: 1,
+          blocks: [
+            { type: "text", content: "Testing the subagent status flow now." },
+            worker("w1"),
+            { type: "text", content: "I'm running", agentId: "w1" },
+            worker("w2"),
+            { type: "text", content: " the typecheck.", agentId: "w1" },
+            action("w1", "action-w1"),
+            { type: "text", content: "I'm checking", agentId: "w2" },
+            worker("w3"),
+            action("w2", "action-w2"),
+            { type: "text", content: "I'm running the Rust", agentId: "w3" },
+            { type: "text", content: "Test confirmed. Three new subagents" },
+            { type: "text", content: " compile check.", agentId: "w3" },
+            { type: "text", content: " are currently" },
+            { type: "text", content: " I'll report.", agentId: "w3" },
+            { type: "text", content: " running:\n\n-" },
+            { type: "text", content: " `" },
+            { type: "text", content: "frontend_tests`\n- `vitest_smoke`" },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      nextCursor: null,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+
+    const blocks = assistantBlocks();
+    const texts = blocks.filter((block): block is TextBlock => block.type === "text");
+
+    expect(texts).toHaveLength(6);
+    expect(texts.map((block) => block.agentId ?? null)).toEqual([
+      null,
+      "w1",
+      "w1",
+      "w2",
+      "w3",
+      null,
+    ]);
+    // The first sentence stays on its own: the worker announced right after it
+    // is the only message boundary this stored data carries.
+    expect(texts[0].content).toBe("Testing the subagent status flow now.");
+    // A subagent announcement between the worker's two deltas keeps them apart.
+    expect(texts[1].content).toBe("I'm running");
+    expect(texts[2].content).toBe(" the typecheck.");
+    expect(texts[3].content).toBe("I'm checking");
+    expect(texts[4].content).toBe("I'm running the Rust compile check. I'll report.");
+    // The main agent's message is whole again, so its markdown list parses.
+    expect(texts[5].content).toBe(
+      "Test confirmed. Three new subagents are currently running:\n\n- `frontend_tests`\n- `vitest_smoke`",
+    );
+    expect(blocks[blocks.length - 1]).toBe(texts[5]);
 
     vi.useRealTimers();
   });
@@ -522,6 +807,45 @@ describe("chatStore send", () => {
       windowFableWeeklyPercent: 55,
       windowFiveHourResetsAt: "2025-02-19T21:20:00.000Z",
     });
+  });
+
+  it("rejoins each producer's stored text without mixing producers", async () => {
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "assistant-workers",
+          threadId: "thread-1",
+          role: "assistant",
+          blocks: [
+            { type: "text", content: "Main " },
+            { type: "text", content: "one ", agentId: "w1" },
+            { type: "text", content: "two", agentId: "w1" },
+            { type: "thinking", content: "hmm", agentId: "w2" },
+            { type: "thinking", content: "more", agentId: "w1" },
+            { type: "text", content: "text" },
+          ],
+          schemaVersion: 1,
+          status: "completed",
+          tokenUsage: null,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      nextCursor: null,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    const message = useChatStore
+      .getState()
+      .messages.find((entry) => entry.id === "assistant-workers");
+    // The main agent's two text blocks rejoin across the workers' output; each
+    // worker keeps its own, and text never lands in another producer's block.
+    expect(message?.blocks).toEqual([
+      { type: "text", content: "Main text" },
+      { type: "text", content: "one two", agentId: "w1" },
+      { type: "thinking", content: "hmm", agentId: "w2" },
+      { type: "thinking", content: "more", agentId: "w1" },
+    ]);
   });
 
   it("preserves stdin action output chunks from streamed events", async () => {

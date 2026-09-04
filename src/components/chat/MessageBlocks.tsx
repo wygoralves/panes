@@ -42,6 +42,7 @@ import {
   Check,
   MessageSquare,
   ListTodo,
+  Bot,
 } from "lucide-react";
 import type {
   ActionBlock,
@@ -53,6 +54,7 @@ import type {
   MessageStatus,
   NoticeBlock,
   SteerBlock,
+  SubagentBlock,
   TaskListBlock,
   TaskStatus,
   ThinkingBlock,
@@ -85,6 +87,7 @@ import {
 } from "../../lib/parseDiff";
 import { getMessageBlockKey } from "./messageBlockKeys";
 import { isVisibleMessageBlock } from "./messageBlockVisibility";
+import { groupSubagentBlocks, subagentDisplayName, subagentTone } from "../../lib/subagentBlocks";
 import {
   VirtualizedDiffBody,
   useParsedDiff,
@@ -103,6 +106,11 @@ interface Props {
   onApproval: (approvalId: string, response: ApprovalResponse) => void;
   onLoadActionOutput?: (actionId: string) => Promise<void>;
   onOpenDiffFile?: (filePath: string) => void;
+  /** Opens a worker's transcript in its own pane. */
+  /** `null` opens the Subagents pane on its list. */
+  onOpenSubagent?: (agentId: string | null) => void;
+  /** Set when `blocks` are one subagent's transcript. */
+  ownerAgentId?: string;
 }
 
 function isBlockLike(value: unknown): value is { type: string } {
@@ -1217,6 +1225,66 @@ function ChangedFileStrip({
   );
 }
 
+function formatNameList(locale: string, names: string[]): string {
+  try {
+    return new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(names);
+  } catch {
+    return names.join(", ");
+  }
+}
+
+/**
+ * One line for a batch of spawned subagents, the way the transcript stays
+ * readable while sixteen workers run. The tracking lives in the pane.
+ */
+function SubagentAnnouncement({
+  blocks,
+  onOpenSubagent,
+}: {
+  blocks: SubagentBlock[];
+  onOpenSubagent?: (agentId: string | null) => void;
+}) {
+  const { t, i18n } = useTranslation("chat");
+  const running = blocks.some((block) => block.status === "running");
+  const names = blocks.map((block) => subagentDisplayName(block, t("messageBlocks.subagent.label")));
+  const shown = names.slice(0, 2);
+  const more = names.length - shown.length;
+  const text =
+    more > 0
+      ? t(running ? "messageBlocks.subagent.startedMore" : "messageBlocks.subagent.finishedMore", {
+          names: shown.join(", "),
+          count: more,
+        })
+      : t(running ? "messageBlocks.subagent.started" : "messageBlocks.subagent.finished", {
+          names: formatNameList(i18n.language, shown),
+          count: shown.length,
+        });
+  const target = blocks.length === 1 ? blocks[0].agentId : null;
+
+  return (
+    <button
+      type="button"
+      className={`msg-subagents${running ? " msg-subagents--running" : ""}`}
+      onClick={() => onOpenSubagent?.(target)}
+      disabled={!onOpenSubagent}
+      title={t("messageBlocks.subagent.open")}
+    >
+      <span className="msg-subagents-stack" aria-hidden="true">
+        {blocks.slice(0, 4).map((block) => (
+          <span
+            key={block.agentId}
+            className={`msg-subagents-tile msg-block-tile--${subagentTone(block.agentId)}`}
+          >
+            <Bot size={9} />
+          </span>
+        ))}
+      </span>
+      <span className="msg-subagents-text">{text}</span>
+      <ChevronRight size={11} className="msg-subagents-chevron" aria-hidden="true" />
+    </button>
+  );
+}
+
 function ActionGroupView({
   blocks,
   onLoadActionOutput,
@@ -1797,8 +1865,17 @@ function renderSingleBlock(
   onApproval: (approvalId: string, response: ApprovalResponse) => void,
   onLoadActionOutput: ((actionId: string) => Promise<void>) | undefined,
   onOpenDiffFile: ((filePath: string) => void) | undefined,
+  subagentRuns: Map<number, SubagentBlock[]>,
+  onOpenSubagent: ((agentId: string | null) => void) | undefined,
 ) {
   const blockKey = getMessageBlockKey(block, index, safeBlocks);
+
+  /* ── Subagents: consecutive spawns collapse into one announcement ── */
+  if (block.type === "subagent") {
+    const run = subagentRuns.get(index);
+    if (!run) return null;
+    return <SubagentAnnouncement key={blockKey} blocks={run} onOpenSubagent={onOpenSubagent} />;
+  }
 
   /* ── Text ── */
   if (block.type === "text") {
@@ -1961,13 +2038,46 @@ function renderSingleBlock(
   return null;
 }
 
-function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadActionOutput, onOpenDiffFile }: Props) {
-  const safeBlocks = useMemo(
-    () => dedupeDiffBlocksByScope(
-      (Array.isArray(blocks) ? blocks : []).filter(isBlockLike) as ContentBlock[],
-    ).filter(isVisibleMessageBlock),
-    [blocks],
+function MessageBlocksView({
+  blocks = [],
+  status,
+  engineId,
+  onApproval,
+  onLoadActionOutput,
+  onOpenDiffFile,
+  onOpenSubagent,
+  ownerAgentId,
+}: Props) {
+  // Worker output is stored flat next to the main agent's blocks; nest it
+  // under each worker before laying the transcript out.
+  const grouped = useMemo(
+    () =>
+      groupSubagentBlocks(
+        dedupeDiffBlocksByScope(
+          (Array.isArray(blocks) ? blocks : []).filter(isBlockLike) as ContentBlock[],
+        ).filter(isVisibleMessageBlock),
+        ownerAgentId,
+      ),
+    [blocks, ownerAgentId],
   );
+  const safeBlocks = grouped.main;
+  const subagentRuns = useMemo(() => {
+    const runs = new Map<number, SubagentBlock[]>();
+    let current: SubagentBlock[] | null = null;
+    safeBlocks.forEach((block, index) => {
+      if (block.type !== "subagent") {
+        current = null;
+        return;
+      }
+      if (current) {
+        current.push(block);
+      } else {
+        current = [block];
+        runs.set(index, current);
+      }
+    });
+    return runs;
+  }, [safeBlocks]);
 
   const isStreaming = status === "streaming";
   const blockSegments = useMemo(() => buildBlockSegments(safeBlocks, isStreaming), [safeBlocks, isStreaming]);
@@ -2058,6 +2168,8 @@ function MessageBlocksView({ blocks = [], status, engineId, onApproval, onLoadAc
           onApproval,
           onLoadActionOutput,
           onOpenDiffFile,
+          subagentRuns,
+          onOpenSubagent,
         );
       })}
     </div>
@@ -2072,5 +2184,7 @@ export const MessageBlocks = memo(
     prev.engineId === next.engineId &&
     prev.onApproval === next.onApproval &&
     prev.onLoadActionOutput === next.onLoadActionOutput &&
-    prev.onOpenDiffFile === next.onOpenDiffFile,
+    prev.onOpenDiffFile === next.onOpenDiffFile &&
+    prev.onOpenSubagent === next.onOpenSubagent &&
+    prev.ownerAgentId === next.ownerAgentId,
 );

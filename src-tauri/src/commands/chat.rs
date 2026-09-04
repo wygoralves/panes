@@ -71,6 +71,13 @@ enum ContentBlock {
         plan_mode: Option<bool>,
         #[serde(rename = "isSteer", skip_serializing_if = "Option::is_none")]
         is_steer: Option<bool>,
+        /// Subagent that produced this text; `None` for the main agent.
+        #[serde(rename = "agentId", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+        /// Set once the engine started a new message item, so later deltas
+        /// open a fresh block instead of extending this one.
+        #[serde(rename = "closed", skip_serializing_if = "Option::is_none")]
+        closed: Option<bool>,
     },
 
     #[serde(rename = "diff")]
@@ -91,6 +98,8 @@ enum ContentBlock {
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         result: Option<ActionBlockResult>,
+        #[serde(rename = "agentId", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
 
     #[serde(rename = "approval")]
@@ -113,6 +122,34 @@ enum ContentBlock {
         started_at: Option<f64>,
         #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
         duration_ms: Option<f64>,
+        #[serde(rename = "agentId", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+    },
+
+    /// A subagent spawned during the turn. Blocks stay flat: the transcript
+    /// the agent produced is the set of sibling blocks tagged with the same
+    /// `agentId`, and the frontend nests them at render time.
+    #[serde(rename = "subagent")]
+    Subagent {
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        #[serde(rename = "agentType", skip_serializing_if = "Option::is_none")]
+        agent_type: Option<String>,
+        description: String,
+        #[serde(rename = "parentActionId", skip_serializing_if = "Option::is_none")]
+        parent_action_id: Option<String>,
+        #[serde(rename = "parentAgentId", skip_serializing_if = "Option::is_none")]
+        parent_agent_id: Option<String>,
+        /// `running` | `done` | `error` | `interrupted`
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        #[serde(rename = "startedAt", skip_serializing_if = "Option::is_none")]
+        started_at: Option<u64>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        progress: Option<String>,
     },
 
     #[serde(rename = "taskList")]
@@ -1099,6 +1136,8 @@ fn build_user_blocks(
         content: final_text,
         plan_mode: if plan_mode { Some(true) } else { None },
         is_steer: if is_steer { Some(true) } else { None },
+        agent_id: None,
+        closed: None,
     });
 
     user_blocks
@@ -2714,6 +2753,8 @@ fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
         event,
         EngineEvent::TextDelta { .. }
             | EngineEvent::ThinkingDelta { .. }
+            | EngineEvent::SubagentTextDelta { .. }
+            | EngineEvent::SubagentThinkingDelta { .. }
             | EngineEvent::ActionOutputDelta { .. }
             | EngineEvent::ActionProgressUpdated { .. }
     )
@@ -2723,6 +2764,8 @@ fn coalesced_event_content_len(event: &EngineEvent) -> usize {
     match event {
         EngineEvent::TextDelta { content }
         | EngineEvent::ThinkingDelta { content }
+        | EngineEvent::SubagentTextDelta { content, .. }
+        | EngineEvent::SubagentThinkingDelta { content, .. }
         | EngineEvent::ActionOutputDelta { content, .. } => content.len(),
         EngineEvent::ActionProgressUpdated { message, .. } => message.len(),
         _ => 0,
@@ -2761,6 +2804,54 @@ fn try_coalesce_stream_events(
         ) => {
             content.push_str(&next_content);
             Ok(EngineEvent::ThinkingDelta { content })
+        }
+        // Subagent deltas only merge with the same agent's deltas; a plain
+        // TextDelta/ThinkingDelta from the main agent never merges with them.
+        (
+            EngineEvent::SubagentTextDelta {
+                agent_id,
+                mut content,
+            },
+            EngineEvent::SubagentTextDelta {
+                agent_id: next_agent_id,
+                content: next_content,
+            },
+        ) => {
+            if agent_id == next_agent_id {
+                content.push_str(&next_content);
+                Ok(EngineEvent::SubagentTextDelta { agent_id, content })
+            } else {
+                Err((
+                    EngineEvent::SubagentTextDelta { agent_id, content },
+                    EngineEvent::SubagentTextDelta {
+                        agent_id: next_agent_id,
+                        content: next_content,
+                    },
+                ))
+            }
+        }
+        (
+            EngineEvent::SubagentThinkingDelta {
+                agent_id,
+                mut content,
+            },
+            EngineEvent::SubagentThinkingDelta {
+                agent_id: next_agent_id,
+                content: next_content,
+            },
+        ) => {
+            if agent_id == next_agent_id {
+                content.push_str(&next_content);
+                Ok(EngineEvent::SubagentThinkingDelta { agent_id, content })
+            } else {
+                Err((
+                    EngineEvent::SubagentThinkingDelta { agent_id, content },
+                    EngineEvent::SubagentThinkingDelta {
+                        agent_id: next_agent_id,
+                        content: next_content,
+                    },
+                ))
+            }
         }
         (
             EngineEvent::ActionOutputDelta {
@@ -2883,6 +2974,7 @@ async fn process_stream_event(
             action_type,
             summary,
             details,
+            agent_id,
         } => {
             if let Err(error) = run_db(state.db.clone(), {
                 let action_id = action_id.clone();
@@ -2892,6 +2984,7 @@ async fn process_stream_event(
                 let action_type = action_type.clone();
                 let summary = summary.clone();
                 let details = details.clone();
+                let agent_id = agent_id.clone();
                 move |db| {
                     db::actions::insert_action_started(
                         db,
@@ -2902,6 +2995,7 @@ async fn process_stream_event(
                         &action_type,
                         &summary,
                         &details,
+                        agent_id.as_deref(),
                     )
                 }
             })
@@ -3252,12 +3346,24 @@ fn normalize_chat_notification_preview(raw: &str) -> Option<String> {
 }
 
 fn chat_notification_preview(blocks: &[ContentBlock]) -> Option<String> {
+    // The main agent's reply is the headline; subagent transcripts only stand
+    // in when the main agent produced nothing readable.
+    preview_from_blocks(blocks, false).or_else(|| preview_from_blocks(blocks, true))
+}
+
+fn preview_from_blocks(blocks: &[ContentBlock], include_subagents: bool) -> Option<String> {
     for block in blocks {
         match block {
             ContentBlock::Text {
                 is_steer: Some(true),
                 ..
             } => {}
+            ContentBlock::Text {
+                agent_id: Some(_), ..
+            }
+            | ContentBlock::Thinking {
+                agent_id: Some(_), ..
+            } if !include_subagents => {}
             ContentBlock::Text { content, .. }
             | ContentBlock::Thinking { content, .. }
             | ContentBlock::Error { message: content } => {
@@ -3371,6 +3477,9 @@ fn apply_event_to_blocks(
             status,
         } => {
             progress.force_persist = true;
+            // A subagent still running when the turn ends shares the turn's
+            // fate; nothing will complete it later.
+            progress.blocks_changed = finalize_running_subagent_blocks(blocks, status);
             match status {
                 TurnCompletionStatus::Completed => {
                     progress.message_status = Some(MessageStatusDto::Completed);
@@ -3390,10 +3499,13 @@ fn apply_event_to_blocks(
                 .map(|usage| (usage.input, usage.output));
         }
         EngineEvent::TextDelta { content } => {
-            progress.blocks_changed = append_text_delta(blocks, content);
+            progress.blocks_changed = append_text_delta(blocks, content, None);
         }
         EngineEvent::ThinkingDelta { content } => {
-            progress.blocks_changed = append_thinking_delta(blocks, content);
+            progress.blocks_changed = append_thinking_delta(blocks, content, None);
+        }
+        EngineEvent::TextItemStarted => {
+            progress.blocks_changed = close_open_text_block(blocks, None);
         }
         EngineEvent::TaskListUpdated {
             source,
@@ -3416,6 +3528,7 @@ fn apply_event_to_blocks(
             action_type,
             summary,
             details,
+            agent_id,
         } => {
             let block = ContentBlock::Action {
                 action_id: action_id.to_string(),
@@ -3426,6 +3539,7 @@ fn apply_event_to_blocks(
                 output_chunks: Vec::new(),
                 status: "running".to_string(),
                 result: None,
+                agent_id: agent_id.clone(),
             };
             progress.blocks_changed = upsert_action_block(blocks, action_index, action_id, block);
         }
@@ -3551,6 +3665,41 @@ fn apply_event_to_blocks(
             }
             progress.blocks_changed = true;
         }
+        EngineEvent::SubagentStarted {
+            agent_id,
+            agent_type,
+            description,
+            parent_action_id,
+            parent_agent_id,
+        } => {
+            progress.blocks_changed = upsert_subagent_started(
+                blocks,
+                agent_id,
+                agent_type.as_deref(),
+                description,
+                parent_action_id.as_deref(),
+                parent_agent_id.as_deref(),
+            );
+            progress.force_persist = true;
+        }
+        EngineEvent::SubagentProgress { agent_id, message } => {
+            progress.blocks_changed = set_subagent_progress(blocks, agent_id, message);
+        }
+        EngineEvent::SubagentCompleted {
+            agent_id,
+            status,
+            summary,
+        } => {
+            progress.blocks_changed =
+                complete_subagent_block(blocks, agent_id, status, summary.as_deref());
+            progress.force_persist = true;
+        }
+        EngineEvent::SubagentTextDelta { agent_id, content } => {
+            progress.blocks_changed = append_text_delta(blocks, content, Some(agent_id));
+        }
+        EngineEvent::SubagentThinkingDelta { agent_id, content } => {
+            progress.blocks_changed = append_thinking_delta(blocks, content, Some(agent_id));
+        }
         EngineEvent::ModelRerouted {
             from_model,
             to_model,
@@ -3627,46 +3776,331 @@ fn apply_event_to_blocks(
     progress
 }
 
-fn append_text_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool {
+/// Who wrote a block: a subagent id, or `None` for the main agent. A
+/// `subagent` block belongs to whoever spawned the worker, not to the worker.
+fn block_producer_id(block: &ContentBlock) -> Option<&str> {
+    match block {
+        ContentBlock::Subagent {
+            parent_agent_id, ..
+        } => parent_agent_id.as_deref(),
+        ContentBlock::Text { agent_id, .. }
+        | ContentBlock::Thinking { agent_id, .. }
+        | ContentBlock::Action { agent_id, .. } => agent_id.as_deref(),
+        _ => None,
+    }
+}
+
+/// Whether a delta from `producer` may reach past this block. Only subagent
+/// scaffolding is transparent: a `subagent` card, or another worker's tagged
+/// output. Untagged main-flow blocks are walls, so a worker's text never
+/// moves across the main agent's content and vice versa.
+fn is_subagent_scoped_block(block: &ContentBlock, producer: Option<&str>) -> bool {
+    if matches!(block, ContentBlock::Subagent { .. }) {
+        return true;
+    }
+    let block_producer = block_producer_id(block);
+    block_producer.is_some() && block_producer != producer
+}
+
+/// The last block `producer` could still be writing, looking past subagent
+/// output that landed in between. `None` when nothing of theirs is reachable.
+fn nearest_own_block_index(blocks: &[ContentBlock], producer: Option<&str>) -> Option<usize> {
+    let mut index = blocks.len();
+    while index > 0 {
+        index -= 1;
+        if !is_subagent_scoped_block(&blocks[index], producer) {
+            return Some(index);
+        }
+    }
+    None
+}
+
+/// Appends `content` to the text block this producer was last writing, even
+/// when a subagent card or another worker's output landed in between: a
+/// sentence split across those would render as separate paragraphs. A steer
+/// echo and a closed block are never extended, and a main-agent delta never
+/// lands inside a subagent's block (or vice versa).
+fn append_text_delta(
+    blocks: &mut Vec<ContentBlock>,
+    content: &str,
+    agent_id: Option<&str>,
+) -> bool {
     if content.is_empty() {
         return false;
     }
 
-    if let Some(ContentBlock::Text {
-        content: current, ..
-    }) = blocks.last_mut()
-    {
-        current.push_str(content);
-        return true;
+    if let Some(index) = nearest_own_block_index(blocks, agent_id) {
+        if let ContentBlock::Text {
+            content: current,
+            is_steer,
+            agent_id: block_agent_id,
+            closed,
+            ..
+        } = &mut blocks[index]
+        {
+            if *is_steer != Some(true)
+                && *closed != Some(true)
+                && block_agent_id.as_deref() == agent_id
+            {
+                current.push_str(content);
+                return true;
+            }
+        }
     }
 
     blocks.push(ContentBlock::Text {
         content: content.to_string(),
         plan_mode: None,
         is_steer: None,
+        agent_id: agent_id.map(ToOwned::to_owned),
+        closed: None,
     });
     true
 }
 
-fn append_thinking_delta(blocks: &mut Vec<ContentBlock>, content: &str) -> bool {
+fn append_thinking_delta(
+    blocks: &mut Vec<ContentBlock>,
+    content: &str,
+    agent_id: Option<&str>,
+) -> bool {
     if content.is_empty() {
         return false;
     }
 
-    if let Some(ContentBlock::Thinking {
-        content: current, ..
-    }) = blocks.last_mut()
-    {
-        current.push_str(content);
-        return true;
+    if let Some(index) = nearest_own_block_index(blocks, agent_id) {
+        if let ContentBlock::Thinking {
+            content: current,
+            agent_id: block_agent_id,
+            ..
+        } = &mut blocks[index]
+        {
+            if block_agent_id.as_deref() == agent_id {
+                current.push_str(content);
+                return true;
+            }
+        }
     }
 
     blocks.push(ContentBlock::Thinking {
         content: content.to_string(),
         started_at: None,
         duration_ms: None,
+        agent_id: agent_id.map(ToOwned::to_owned),
     });
     true
+}
+
+/// Marks the text block `producer` was writing as finished, so the next delta
+/// opens a new one. Without it two consecutive engine messages would merge
+/// into a single paragraph whenever subagent output separated them.
+fn close_open_text_block(blocks: &mut [ContentBlock], agent_id: Option<&str>) -> bool {
+    let Some(index) = nearest_own_block_index(blocks, agent_id) else {
+        return false;
+    };
+
+    if let ContentBlock::Text {
+        agent_id: block_agent_id,
+        closed,
+        ..
+    } = &mut blocks[index]
+    {
+        if block_agent_id.as_deref() == agent_id && *closed != Some(true) {
+            *closed = Some(true);
+            return true;
+        }
+    }
+
+    false
+}
+
+fn epoch_millis_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn subagent_status_for_turn(status: &TurnCompletionStatus) -> &'static str {
+    match status {
+        TurnCompletionStatus::Completed => "done",
+        TurnCompletionStatus::Interrupted => "interrupted",
+        TurnCompletionStatus::Failed => "error",
+    }
+}
+
+fn find_subagent_block_index(blocks: &[ContentBlock], agent_id: &str) -> Option<usize> {
+    blocks.iter().rposition(|block| {
+        matches!(
+            block,
+            ContentBlock::Subagent {
+                agent_id: existing, ..
+            } if existing == agent_id
+        )
+    })
+}
+
+fn upsert_subagent_started(
+    blocks: &mut Vec<ContentBlock>,
+    agent_id: &str,
+    agent_type: Option<&str>,
+    description: &str,
+    parent_action_id: Option<&str>,
+    parent_agent_id: Option<&str>,
+) -> bool {
+    let now = epoch_millis_now();
+
+    if let Some(index) = find_subagent_block_index(blocks, agent_id) {
+        if let Some(ContentBlock::Subagent {
+            agent_type: existing_type,
+            description: existing_description,
+            parent_action_id: existing_parent_action_id,
+            parent_agent_id: existing_parent_agent_id,
+            status,
+            summary,
+            started_at,
+            duration_ms,
+            ..
+        }) = blocks.get_mut(index)
+        {
+            if agent_type.is_some() {
+                *existing_type = agent_type.map(ToOwned::to_owned);
+            }
+            if !description.is_empty() {
+                *existing_description = description.to_string();
+            }
+            if parent_action_id.is_some() {
+                *existing_parent_action_id = parent_action_id.map(ToOwned::to_owned);
+            }
+            if parent_agent_id.is_some() {
+                *existing_parent_agent_id = parent_agent_id.map(ToOwned::to_owned);
+            }
+            *status = "running".to_string();
+            *summary = None;
+            *started_at = Some(now);
+            *duration_ms = None;
+            return true;
+        }
+    }
+
+    blocks.push(ContentBlock::Subagent {
+        agent_id: agent_id.to_string(),
+        agent_type: agent_type.map(ToOwned::to_owned),
+        description: description.to_string(),
+        parent_action_id: parent_action_id.map(ToOwned::to_owned),
+        parent_agent_id: parent_agent_id.map(ToOwned::to_owned),
+        status: "running".to_string(),
+        summary: None,
+        started_at: Some(now),
+        duration_ms: None,
+        progress: None,
+    });
+    true
+}
+
+fn set_subagent_progress(blocks: &mut Vec<ContentBlock>, agent_id: &str, message: &str) -> bool {
+    if let Some(index) = find_subagent_block_index(blocks, agent_id) {
+        if let Some(ContentBlock::Subagent { progress, .. }) = blocks.get_mut(index) {
+            if progress.as_deref() == Some(message) {
+                return false;
+            }
+            *progress = Some(message.to_string());
+            return true;
+        }
+    }
+
+    // Progress arrived before the start announcement: hold a placeholder so
+    // the message is not lost; the start event fills in the rest.
+    blocks.push(ContentBlock::Subagent {
+        agent_id: agent_id.to_string(),
+        agent_type: None,
+        description: message.to_string(),
+        parent_action_id: None,
+        parent_agent_id: None,
+        status: "running".to_string(),
+        summary: None,
+        started_at: Some(epoch_millis_now()),
+        duration_ms: None,
+        progress: Some(message.to_string()),
+    });
+    true
+}
+
+fn complete_subagent_block(
+    blocks: &mut Vec<ContentBlock>,
+    agent_id: &str,
+    status: &TurnCompletionStatus,
+    summary: Option<&str>,
+) -> bool {
+    let now = epoch_millis_now();
+    let next_status = subagent_status_for_turn(status);
+    let summary = summary
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if let Some(index) = find_subagent_block_index(blocks, agent_id) {
+        if let Some(ContentBlock::Subagent {
+            status,
+            summary: block_summary,
+            started_at,
+            duration_ms,
+            progress,
+            ..
+        }) = blocks.get_mut(index)
+        {
+            *status = next_status.to_string();
+            if summary.is_some() {
+                *block_summary = summary;
+            }
+            *duration_ms = started_at.map(|started| now.saturating_sub(started));
+            *progress = None;
+            return true;
+        }
+    }
+
+    blocks.push(ContentBlock::Subagent {
+        agent_id: agent_id.to_string(),
+        agent_type: None,
+        description: summary.clone().unwrap_or_default(),
+        parent_action_id: None,
+        parent_agent_id: None,
+        status: next_status.to_string(),
+        summary,
+        started_at: None,
+        duration_ms: None,
+        progress: None,
+    });
+    true
+}
+
+fn finalize_running_subagent_blocks(
+    blocks: &mut [ContentBlock],
+    turn_status: &TurnCompletionStatus,
+) -> bool {
+    let now = epoch_millis_now();
+    let next_status = subagent_status_for_turn(turn_status);
+    let mut changed = false;
+
+    for block in blocks.iter_mut() {
+        if let ContentBlock::Subagent {
+            status,
+            started_at,
+            duration_ms,
+            progress,
+            ..
+        } = block
+        {
+            if status != "running" {
+                continue;
+            }
+            *status = next_status.to_string();
+            *duration_ms = started_at.map(|started| now.saturating_sub(started));
+            *progress = None;
+            changed = true;
+        }
+    }
+
+    changed
 }
 
 fn update_action_progress(details: &mut Box<RawValue>, message: &str) -> bool {
@@ -4731,15 +5165,55 @@ mod tests {
                 content: "hidden steer".to_string(),
                 plan_mode: None,
                 is_steer: Some(true),
+                agent_id: None,
+                closed: None,
             },
             ContentBlock::Text {
                 content: "  First line\n\nSecond line  ".to_string(),
                 plan_mode: None,
                 is_steer: None,
+                agent_id: None,
+                closed: None,
             },
         ]);
 
         assert_eq!(preview.as_deref(), Some("First line Second line"));
+    }
+
+    #[test]
+    fn chat_notification_preview_prefers_main_agent_text_over_subagent_text() {
+        let blocks = vec![
+            ContentBlock::Text {
+                content: "worker findings".to_string(),
+                plan_mode: None,
+                is_steer: None,
+                agent_id: Some("agent-1".to_string()),
+                closed: None,
+            },
+            ContentBlock::Text {
+                content: "final answer".to_string(),
+                plan_mode: None,
+                is_steer: None,
+                agent_id: None,
+                closed: None,
+            },
+        ];
+        assert_eq!(
+            chat_notification_preview(&blocks).as_deref(),
+            Some("final answer")
+        );
+
+        let only_subagent = vec![ContentBlock::Text {
+            content: "worker findings".to_string(),
+            plan_mode: None,
+            is_steer: None,
+            agent_id: Some("agent-1".to_string()),
+            closed: None,
+        }];
+        assert_eq!(
+            chat_notification_preview(&only_subagent).as_deref(),
+            Some("worker findings")
+        );
     }
 
     #[test]
@@ -5032,6 +5506,670 @@ mod tests {
         }
     }
 
+    fn subagent_text(agent_id: &str, content: &str) -> EngineEvent {
+        EngineEvent::SubagentTextDelta {
+            agent_id: agent_id.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    fn subagent_thinking(agent_id: &str, content: &str) -> EngineEvent {
+        EngineEvent::SubagentThinkingDelta {
+            agent_id: agent_id.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn subagent_deltas_coalesce_only_within_the_same_agent() {
+        assert!(is_coalescable_stream_event(&subagent_text("a", "x")));
+        assert!(is_coalescable_stream_event(&subagent_thinking("a", "x")));
+        assert_eq!(coalesced_event_content_len(&subagent_text("a", "abc")), 3);
+
+        match try_coalesce_stream_events(subagent_text("a", "hel"), subagent_text("a", "lo")) {
+            Ok(EngineEvent::SubagentTextDelta { agent_id, content }) => {
+                assert_eq!(agent_id, "a");
+                assert_eq!(content, "hello");
+            }
+            other => panic!("expected merged subagent text, got {other:?}"),
+        }
+        match try_coalesce_stream_events(
+            subagent_thinking("a", "plan "),
+            subagent_thinking("a", "more"),
+        ) {
+            Ok(EngineEvent::SubagentThinkingDelta { agent_id, content }) => {
+                assert_eq!(agent_id, "a");
+                assert_eq!(content, "plan more");
+            }
+            other => panic!("expected merged subagent thinking, got {other:?}"),
+        }
+
+        assert!(
+            try_coalesce_stream_events(subagent_text("a", "x"), subagent_text("b", "y")).is_err()
+        );
+        assert!(try_coalesce_stream_events(
+            subagent_thinking("a", "x"),
+            subagent_thinking("b", "y")
+        )
+        .is_err());
+        assert!(try_coalesce_stream_events(
+            subagent_text("a", "x"),
+            EngineEvent::TextDelta {
+                content: "y".to_string()
+            }
+        )
+        .is_err());
+        assert!(try_coalesce_stream_events(
+            EngineEvent::TextDelta {
+                content: "x".to_string()
+            },
+            subagent_text("a", "y")
+        )
+        .is_err());
+        assert!(try_coalesce_stream_events(
+            EngineEvent::ThinkingDelta {
+                content: "x".to_string()
+            },
+            subagent_thinking("a", "y")
+        )
+        .is_err());
+        assert!(
+            try_coalesce_stream_events(subagent_text("a", "x"), subagent_thinking("a", "y"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn text_deltas_route_to_blocks_by_agent_id() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let mut apply = |event: EngineEvent| {
+            apply_event_to_blocks(
+                &mut blocks,
+                &mut action_index,
+                &mut approval_index,
+                &event,
+                1000,
+            )
+            .blocks_changed
+        };
+
+        assert!(apply(EngineEvent::TextDelta {
+            content: "main ".to_string()
+        }));
+        assert!(apply(subagent_text("agent-1", "worker ")));
+        assert!(apply(subagent_text("agent-1", "output")));
+        assert!(apply(subagent_text("agent-2", "other")));
+        assert!(apply(EngineEvent::TextDelta {
+            content: "answer".to_string()
+        }));
+        assert!(apply(EngineEvent::TextDelta {
+            content: " continued".to_string()
+        }));
+
+        // The main agent's sentence carries on through both workers' output
+        // instead of being cut into a paragraph per delta.
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Text { content, agent_id: None, .. }
+                if content == "main answer continued"
+        ));
+        assert!(matches!(
+            &blocks[1],
+            ContentBlock::Text { content, agent_id: Some(agent), .. }
+                if content == "worker output" && agent == "agent-1"
+        ));
+        assert!(matches!(
+            &blocks[2],
+            ContentBlock::Text { content, agent_id: Some(agent), .. }
+                if content == "other" && agent == "agent-2"
+        ));
+    }
+
+    #[test]
+    fn thinking_deltas_route_to_blocks_by_agent_id() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let mut apply = |event: EngineEvent| {
+            apply_event_to_blocks(
+                &mut blocks,
+                &mut action_index,
+                &mut approval_index,
+                &event,
+                1000,
+            )
+            .blocks_changed
+        };
+
+        assert!(apply(subagent_thinking("agent-1", "look ")));
+        assert!(apply(EngineEvent::ThinkingDelta {
+            content: "main plan".to_string()
+        }));
+        assert!(apply(subagent_thinking("agent-1", "again")));
+        assert!(apply(subagent_thinking("agent-1", " more")));
+        assert!(apply(subagent_text("agent-1", "reply")));
+
+        assert_eq!(blocks.len(), 4);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Thinking { content, agent_id: Some(agent), .. }
+                if content == "look " && agent == "agent-1"
+        ));
+        assert!(matches!(
+            &blocks[1],
+            ContentBlock::Thinking { content, agent_id: None, .. } if content == "main plan"
+        ));
+        assert!(matches!(
+            &blocks[2],
+            ContentBlock::Thinking { content, agent_id: Some(agent), .. }
+                if content == "again more" && agent == "agent-1"
+        ));
+        assert!(matches!(
+            &blocks[3],
+            ContentBlock::Text { content, agent_id: Some(agent), .. }
+                if content == "reply" && agent == "agent-1"
+        ));
+    }
+
+    fn subagent_started(agent_id: &str, parent_agent_id: Option<&str>) -> EngineEvent {
+        EngineEvent::SubagentStarted {
+            agent_id: agent_id.to_string(),
+            agent_type: None,
+            description: format!("work for {agent_id}"),
+            parent_action_id: None,
+            parent_agent_id: parent_agent_id.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn main_text_continues_across_a_spawned_subagent() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let mut apply = |event: EngineEvent| {
+            apply_event_to_blocks(
+                &mut blocks,
+                &mut action_index,
+                &mut approval_index,
+                &event,
+                1000,
+            )
+            .blocks_changed
+        };
+
+        apply(EngineEvent::TextDelta {
+            content: "Three new subagents ".to_string(),
+        });
+        apply(subagent_started("agent-1", None));
+        apply(EngineEvent::TextDelta {
+            content: "are running.".to_string(),
+        });
+
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Text { content, agent_id: None, .. }
+                if content == "Three new subagents are running."
+        ));
+        assert!(matches!(&blocks[1], ContentBlock::Subagent { .. }));
+    }
+
+    #[test]
+    fn worker_text_continues_across_another_workers_output() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let mut apply = |event: EngineEvent| {
+            apply_event_to_blocks(
+                &mut blocks,
+                &mut action_index,
+                &mut approval_index,
+                &event,
+                1000,
+            )
+            .blocks_changed
+        };
+
+        apply(subagent_text("agent-1", "part one "));
+        apply(subagent_started("agent-2", None));
+        apply(subagent_text("agent-2", "other worker"));
+        apply(subagent_text("agent-1", "part two"));
+
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Text { content, agent_id: Some(agent), .. }
+                if content == "part one part two" && agent == "agent-1"
+        ));
+        assert!(matches!(&blocks[1], ContentBlock::Subagent { .. }));
+        assert!(matches!(
+            &blocks[2],
+            ContentBlock::Text { content, agent_id: Some(agent), .. }
+                if content == "other worker" && agent == "agent-2"
+        ));
+    }
+
+    #[test]
+    fn text_item_started_ends_the_open_main_text_block() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let mut apply = |event: EngineEvent| {
+            apply_event_to_blocks(
+                &mut blocks,
+                &mut action_index,
+                &mut approval_index,
+                &event,
+                1000,
+            )
+            .blocks_changed
+        };
+
+        apply(EngineEvent::TextDelta {
+            content: "first message".to_string(),
+        });
+        apply(subagent_started("agent-1", None));
+        assert!(apply(EngineEvent::TextItemStarted));
+        apply(EngineEvent::TextDelta {
+            content: "second message".to_string(),
+        });
+
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Text { content, closed: Some(true), .. } if content == "first message"
+        ));
+        assert!(matches!(&blocks[1], ContentBlock::Subagent { .. }));
+        assert!(matches!(
+            &blocks[2],
+            ContentBlock::Text { content, agent_id: None, closed: None, .. }
+                if content == "second message"
+        ));
+    }
+
+    #[test]
+    fn a_main_action_between_main_deltas_still_splits_the_text() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        let mut apply = |event: EngineEvent| {
+            apply_event_to_blocks(
+                &mut blocks,
+                &mut action_index,
+                &mut approval_index,
+                &event,
+                1000,
+            )
+            .blocks_changed
+        };
+
+        apply(EngineEvent::TextDelta {
+            content: "before".to_string(),
+        });
+        apply(EngineEvent::ActionStarted {
+            action_id: "action-1".to_string(),
+            engine_action_id: None,
+            action_type: crate::engines::events::ActionType::Command,
+            summary: "run tests".to_string(),
+            details: serde_json::json!({}),
+            agent_id: None,
+        });
+        apply(EngineEvent::TextDelta {
+            content: "after".to_string(),
+        });
+
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Text { content, .. } if content == "before"
+        ));
+        assert!(matches!(&blocks[1], ContentBlock::Action { .. }));
+        assert!(matches!(
+            &blocks[2],
+            ContentBlock::Text { content, .. } if content == "after"
+        ));
+    }
+
+    #[test]
+    fn a_steer_echo_never_receives_streamed_text() {
+        let mut blocks = vec![ContentBlock::Text {
+            content: "steer me".to_string(),
+            plan_mode: None,
+            is_steer: Some(true),
+            agent_id: None,
+            closed: None,
+        }];
+
+        assert!(append_text_delta(&mut blocks, "reply", None));
+
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Text { content, is_steer: Some(true), .. } if content == "steer me"
+        ));
+        assert!(matches!(
+            &blocks[1],
+            ContentBlock::Text { content, is_steer: None, .. } if content == "reply"
+        ));
+    }
+
+    #[test]
+    fn subagent_block_lifecycle_tracks_start_progress_and_completion() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+
+        let started = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::SubagentStarted {
+                agent_id: "agent-1".to_string(),
+                agent_type: Some("explorer".to_string()),
+                description: "Find the config loader".to_string(),
+                parent_action_id: Some("action-spawn".to_string()),
+                parent_agent_id: None,
+            },
+            1000,
+        );
+        assert!(started.blocks_changed);
+        assert!(started.force_persist);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Subagent {
+                agent_id,
+                agent_type: Some(agent_type),
+                description,
+                parent_action_id: Some(parent_action_id),
+                parent_agent_id: None,
+                status,
+                summary: None,
+                started_at: Some(_),
+                duration_ms: None,
+                progress: None,
+            } if agent_id == "agent-1"
+                && agent_type == "explorer"
+                && description == "Find the config loader"
+                && parent_action_id == "action-spawn"
+                && status == "running"
+        ));
+
+        let progressed = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::SubagentProgress {
+                agent_id: "agent-1".to_string(),
+                message: "Reading config.rs".to_string(),
+            },
+            1000,
+        );
+        assert!(progressed.blocks_changed);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Subagent { progress: Some(progress), .. } if progress == "Reading config.rs"
+        ));
+
+        let action = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::ActionStarted {
+                action_id: "action-child".to_string(),
+                engine_action_id: None,
+                action_type: crate::engines::events::ActionType::FileRead,
+                summary: "Read config.rs".to_string(),
+                details: serde_json::json!({}),
+                agent_id: Some("agent-1".to_string()),
+            },
+            1000,
+        );
+        assert!(action.blocks_changed);
+        assert!(matches!(
+            &blocks[1],
+            ContentBlock::Action { action_id, agent_id: Some(agent), .. }
+                if action_id == "action-child" && agent == "agent-1"
+        ));
+
+        let completed = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::SubagentCompleted {
+                agent_id: "agent-1".to_string(),
+                status: TurnCompletionStatus::Completed,
+                summary: Some("Loader lives in config/app_config.rs".to_string()),
+            },
+            1000,
+        );
+        assert!(completed.blocks_changed);
+        assert!(completed.force_persist);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Subagent {
+                status,
+                summary: Some(summary),
+                duration_ms: Some(_),
+                progress: None,
+                ..
+            } if status == "done" && summary == "Loader lives in config/app_config.rs"
+        ));
+
+        let failed = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::SubagentCompleted {
+                agent_id: "agent-1".to_string(),
+                status: TurnCompletionStatus::Failed,
+                summary: None,
+            },
+            1000,
+        );
+        assert!(failed.blocks_changed);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Subagent { status, summary: Some(summary), .. }
+                if status == "error" && summary == "Loader lives in config/app_config.rs"
+        ));
+    }
+
+    #[test]
+    fn subagent_progress_before_start_holds_a_placeholder_the_start_fills_in() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+
+        let progressed = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::SubagentProgress {
+                agent_id: "child".to_string(),
+                message: "started".to_string(),
+            },
+            1000,
+        );
+        assert!(progressed.blocks_changed);
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Subagent { agent_id, status, progress: Some(progress), .. }
+                if agent_id == "child" && status == "running" && progress == "started"
+        ));
+
+        apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::SubagentStarted {
+                agent_id: "child".to_string(),
+                agent_type: None,
+                description: "explorer".to_string(),
+                parent_action_id: None,
+                parent_agent_id: Some("parent-agent".to_string()),
+            },
+            1000,
+        );
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Subagent {
+                description,
+                parent_agent_id: Some(parent),
+                status,
+                ..
+            } if description == "explorer" && parent == "parent-agent" && status == "running"
+        ));
+    }
+
+    #[test]
+    fn turn_completion_finalizes_subagents_still_running() {
+        let mut blocks = Vec::new();
+        let mut action_index = HashMap::new();
+        let mut approval_index = HashMap::new();
+        for agent_id in ["agent-1", "agent-2"] {
+            apply_event_to_blocks(
+                &mut blocks,
+                &mut action_index,
+                &mut approval_index,
+                &EngineEvent::SubagentStarted {
+                    agent_id: agent_id.to_string(),
+                    agent_type: None,
+                    description: agent_id.to_string(),
+                    parent_action_id: None,
+                    parent_agent_id: None,
+                },
+                1000,
+            );
+        }
+        apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::SubagentCompleted {
+                agent_id: "agent-1".to_string(),
+                status: TurnCompletionStatus::Completed,
+                summary: None,
+            },
+            1000,
+        );
+
+        let finished = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::TurnCompleted {
+                token_usage: None,
+                status: TurnCompletionStatus::Interrupted,
+            },
+            1000,
+        );
+        assert!(finished.blocks_changed);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Subagent { status, .. } if status == "done"
+        ));
+        assert!(matches!(
+            &blocks[1],
+            ContentBlock::Subagent { status, duration_ms: Some(_), .. } if status == "interrupted"
+        ));
+
+        let unchanged = apply_event_to_blocks(
+            &mut blocks,
+            &mut action_index,
+            &mut approval_index,
+            &EngineEvent::TurnCompleted {
+                token_usage: None,
+                status: TurnCompletionStatus::Completed,
+            },
+            1000,
+        );
+        assert!(!unchanged.blocks_changed);
+    }
+
+    #[test]
+    fn subagent_and_agent_tagged_blocks_serialize_with_camel_case_keys() {
+        let blocks = vec![
+            ContentBlock::Subagent {
+                agent_id: "agent-1".to_string(),
+                agent_type: Some("explorer".to_string()),
+                description: "Find the loader".to_string(),
+                parent_action_id: Some("action-spawn".to_string()),
+                parent_agent_id: None,
+                status: "done".to_string(),
+                summary: Some("Found it".to_string()),
+                started_at: Some(1_700_000_000_000),
+                duration_ms: Some(1234),
+                progress: None,
+            },
+            ContentBlock::Text {
+                content: "worker reply".to_string(),
+                plan_mode: None,
+                is_steer: None,
+                agent_id: Some("agent-1".to_string()),
+                closed: None,
+            },
+            ContentBlock::Thinking {
+                content: "worker plan".to_string(),
+                started_at: None,
+                duration_ms: None,
+                agent_id: Some("agent-1".to_string()),
+            },
+            ContentBlock::Text {
+                content: "main reply".to_string(),
+                plan_mode: None,
+                is_steer: None,
+                agent_id: None,
+                closed: None,
+            },
+        ];
+
+        let value = serde_json::to_value(&blocks).expect("blocks should serialize");
+        assert_eq!(
+            value,
+            serde_json::json!([
+                {
+                    "type": "subagent",
+                    "agentId": "agent-1",
+                    "agentType": "explorer",
+                    "description": "Find the loader",
+                    "parentActionId": "action-spawn",
+                    "status": "done",
+                    "summary": "Found it",
+                    "startedAt": 1_700_000_000_000u64,
+                    "durationMs": 1234
+                },
+                { "type": "text", "content": "worker reply", "agentId": "agent-1" },
+                { "type": "thinking", "content": "worker plan", "agentId": "agent-1" },
+                { "type": "text", "content": "main reply" }
+            ])
+        );
+
+        let round_trip: Vec<ContentBlock> =
+            serde_json::from_value(value).expect("blocks should deserialize");
+        assert!(matches!(
+            &round_trip[0],
+            ContentBlock::Subagent { agent_id, status, .. } if agent_id == "agent-1" && status == "done"
+        ));
+        let legacy: Vec<ContentBlock> = serde_json::from_value(serde_json::json!([
+            { "type": "text", "content": "old reply" },
+            { "type": "thinking", "content": "old plan" }
+        ]))
+        .expect("legacy blocks without agentId should deserialize");
+        assert!(matches!(
+            &legacy[0],
+            ContentBlock::Text { agent_id: None, .. }
+        ));
+        assert!(matches!(
+            &legacy[1],
+            ContentBlock::Thinking { agent_id: None, .. }
+        ));
+    }
+
     #[test]
     fn debug_event_log_trims_action_output_payload() {
         let content = "x".repeat(ENGINE_EVENT_LOG_ACTION_OUTPUT_MAX_CHARS + 128);
@@ -5079,6 +6217,7 @@ mod tests {
                 action_type: crate::engines::events::ActionType::Other,
                 summary: "search_docs".to_string(),
                 details: serde_json::json!({}),
+                agent_id: None,
             },
             1000,
         );
@@ -5151,6 +6290,8 @@ mod tests {
                 content: "kept".to_string(),
                 plan_mode: None,
                 is_steer: None,
+                agent_id: None,
+                closed: None,
             },
             ContentBlock::Diff {
                 diff: "old diff 2".to_string(),

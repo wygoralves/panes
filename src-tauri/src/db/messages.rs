@@ -323,8 +323,7 @@ fn extract_searchable_text_from_blocks(blocks_json: &str) -> Option<String> {
     let parts: Vec<&str> = blocks
         .as_array()?
         .iter()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|block| block.get("content").and_then(Value::as_str))
+        .flat_map(searchable_block_parts)
         .map(str::trim)
         .filter(|content| !content.is_empty())
         .collect();
@@ -333,6 +332,23 @@ fn extract_searchable_text_from_blocks(blocks_json: &str) -> Option<String> {
         None
     } else {
         Some(parts.join("\n\n"))
+    }
+}
+
+/// Text blocks carry the reply whether the main agent or a subagent wrote
+/// them; a subagent block contributes the task it was given and its summary.
+fn searchable_block_parts(block: &Value) -> Vec<&str> {
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => block
+            .get("content")
+            .and_then(Value::as_str)
+            .into_iter()
+            .collect(),
+        Some("subagent") => ["description", "summary"]
+            .iter()
+            .filter_map(|key| block.get(*key).and_then(Value::as_str))
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -1133,6 +1149,30 @@ mod tests {
     };
 
     use serde_json::json;
+
+    #[test]
+    fn searchable_text_includes_agent_tagged_text_and_subagent_blocks() {
+        let blocks = json!([
+            { "type": "thinking", "content": "not indexed" },
+            { "type": "text", "content": "main reply" },
+            {
+                "type": "subagent",
+                "agentId": "agent-1",
+                "description": "Find the config loader",
+                "status": "done",
+                "summary": "It lives in app_config.rs"
+            },
+            { "type": "text", "content": "worker reply", "agentId": "agent-1" },
+            { "type": "subagent", "agentId": "agent-2", "description": "  ", "status": "running" }
+        ]);
+
+        let text = extract_searchable_text_from_blocks(&blocks.to_string())
+            .expect("blocks should yield searchable text");
+        assert_eq!(
+            text,
+            "main reply\n\nFind the config loader\n\nIt lives in app_config.rs\n\nworker reply"
+        );
+    }
 
     use crate::{
         db::{actions, threads, workspaces, ConnectionPool, SQLITE_POOL_MAX_IDLE},

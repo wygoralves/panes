@@ -443,8 +443,17 @@ function summarizeTool(toolName, toolInput) {
   if (toolInput.file_path) return `${toolName}: ${toolInput.file_path}`;
   if (toolInput.pattern) return `${toolName}: ${toolInput.pattern}`;
   if (toolInput.url) return `${toolName}: ${toolInput.url}`;
+  if (typeof toolInput.description === "string" && toolInput.description.trim()) {
+    return `${toolName}: ${toolInput.description.trim().slice(0, 120)}`;
+  }
   if (toolInput.prompt) return `${toolName}: ${toolInput.prompt.slice(0, 80)}`;
   return toolName;
+}
+
+const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
+
+function isSubagentSpawnTool(toolName) {
+  return SUBAGENT_TOOL_NAMES.has(toolName);
 }
 
 function normalizePath(cwd, value) {
@@ -554,6 +563,13 @@ function createQueryContext(id, sessionIdHint = null) {
     taskCounter: 0,
     tokenUsage: null,
     stopReason: null,
+    // Subagent bookkeeping. The public agentId is the Task tool's tool_use_id.
+    subagents: new Map(),
+    // hook agent_id, task_id or a late tool_use_id -> public agentId
+    subagentAliases: new Map(),
+    subagentSpawnInputsByToolUseId: new Map(),
+    // tool_use_id -> public agentId of the subagent that issued the call
+    subagentIdsByToolUseId: new Map(),
   };
   // Resolves once the query has stopped for good, so the next turn on the same
   // session can wait for it instead of overlapping it.
@@ -561,6 +577,316 @@ function createQueryContext(id, sessionIdHint = null) {
     context.markFinished = resolve;
   });
   return context;
+}
+
+// ── Subagent correlation ──────────────────────────────────────────────
+//
+// The CLI identifies one subagent three different ways:
+//   - the Task tool call that spawned it (`tool_use_id`), which is also the
+//     `parent_tool_use_id` on every message the subagent produces,
+//   - the task registry id (`task_id` on system/task_* messages), and
+//   - the hook `agent_id` on hooks that fire inside the subagent.
+// Panes uses the Task tool_use_id as the public agentId. `task_started`
+// carries both the tool_use_id and the task_id, and the CLI registers the
+// task under the agent id, so hooks normally resolve through
+// `task_id == agent_id`. When that lookup misses (older runtimes), the hook is
+// paired with the oldest unbound subagent of the same agent_type: SubagentStart
+// fires right after task_started, so spawn order matches.
+
+function subagentTitle(record) {
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  if (name) {
+    return name;
+  }
+  const description =
+    typeof record.description === "string" ? record.description.trim() : "";
+  if (description) {
+    return description;
+  }
+  return record.agentType || record.agentId;
+}
+
+function registerSubagent(context, agentId, fields) {
+  if (context.subagents.has(agentId)) {
+    return context.subagents.get(agentId);
+  }
+  const spawnInput = context.subagentSpawnInputsByToolUseId.get(agentId) || {};
+  const record = {
+    agentId,
+    taskId: fields.taskId ?? null,
+    hookAgentId: fields.hookAgentId ?? null,
+    agentType: fields.agentType ?? spawnInput.subagentType ?? null,
+    description: fields.description || spawnInput.description || "",
+    name: spawnInput.name ?? null,
+    parentActionId: context.actionIdsByToolUseId.get(agentId) ?? null,
+    parentAgentId: context.subagentIdsByToolUseId.get(agentId) ?? null,
+    completed: false,
+    streamedMessageIds: new Set(),
+  };
+  context.subagents.set(agentId, record);
+  if (record.taskId) {
+    context.subagentAliases.set(record.taskId, agentId);
+  }
+  if (record.hookAgentId) {
+    context.subagentAliases.set(record.hookAgentId, agentId);
+  }
+  emit({
+    id: context.id,
+    type: "subagent_started",
+    agentId,
+    agentType: record.agentType,
+    description: record.description || subagentTitle(record),
+    parentActionId: record.parentActionId,
+    parentAgentId: record.parentAgentId,
+  });
+  return record;
+}
+
+function resolveSubagentIdForHook(context, hookInput) {
+  const hookAgentId = hookInput?.agent_id;
+  if (typeof hookAgentId !== "string" || hookAgentId.length === 0) {
+    return null;
+  }
+  const known = context.subagentAliases.get(hookAgentId);
+  if (known) {
+    const record = context.subagents.get(known);
+    if (record && !record.hookAgentId) {
+      record.hookAgentId = hookAgentId;
+    }
+    return known;
+  }
+  const hookAgentType =
+    typeof hookInput?.agent_type === "string" ? hookInput.agent_type : null;
+  for (const record of context.subagents.values()) {
+    if (record.completed || record.hookAgentId) {
+      continue;
+    }
+    if (hookAgentType && record.agentType && record.agentType !== hookAgentType) {
+      continue;
+    }
+    record.hookAgentId = hookAgentId;
+    context.subagentAliases.set(hookAgentId, record.agentId);
+    return record.agentId;
+  }
+  return null;
+}
+
+function resolveSubagentId(context, candidate) {
+  if (typeof candidate !== "string" || candidate.length === 0) {
+    return null;
+  }
+  if (context.subagents.has(candidate)) {
+    return candidate;
+  }
+  return context.subagentAliases.get(candidate) ?? null;
+}
+
+function resolveSubagentIdForTask(context, message) {
+  return (
+    resolveSubagentId(context, message?.tool_use_id) ??
+    resolveSubagentId(context, message?.task_id)
+  );
+}
+
+function isSubagentTaskMessage(message) {
+  if (typeof message?.tool_use_id !== "string" || message.tool_use_id.length === 0) {
+    return false;
+  }
+  if (message.skip_transcript === true) {
+    return false;
+  }
+  if (typeof message.task_type === "string") {
+    return message.task_type === "local_agent";
+  }
+  return true;
+}
+
+function normalizeSubagentStatus(status) {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "killed":
+    case "stopped":
+    case "interrupted":
+      return "interrupted";
+    default:
+      return null;
+  }
+}
+
+function completeSubagent(context, agentId, status, summary) {
+  const record = context.subagents.get(agentId);
+  if (!record || record.completed) {
+    return;
+  }
+  record.completed = true;
+  emit({
+    id: context.id,
+    type: "subagent_completed",
+    agentId,
+    status,
+    summary: typeof summary === "string" && summary.trim() ? summary.trim() : null,
+  });
+}
+
+function closeOutSubagents(context, status) {
+  for (const record of context.subagents.values()) {
+    if (!record.completed) {
+      completeSubagent(context, record.agentId, status, null);
+    }
+  }
+}
+
+function emitSubagentProgress(context, agentId, message) {
+  const record = context.subagents.get(agentId);
+  if (!record || record.completed) {
+    return;
+  }
+  if (typeof message !== "string" || !message.trim()) {
+    return;
+  }
+  emit({
+    id: context.id,
+    type: "subagent_progress",
+    agentId,
+    message: message.trim(),
+  });
+}
+
+function handleSubagentTaskMessage(context, message) {
+  if (message.subtype === "task_started") {
+    if (!isSubagentTaskMessage(message)) {
+      return;
+    }
+    const agentId = message.tool_use_id;
+    if (context.subagents.has(agentId)) {
+      return;
+    }
+    const existingId = resolveSubagentId(context, message.task_id);
+    if (existingId) {
+      // SubagentStart already registered this worker under its hook agent
+      // id; alias the tool_use_id so parented messages still resolve.
+      const existing = context.subagents.get(existingId);
+      context.subagentAliases.set(agentId, existingId);
+      if (existing) {
+        existing.taskId = existing.taskId ?? message.task_id;
+        if (typeof message.description === "string" && message.description.trim()) {
+          existing.description = message.description;
+        }
+        if (!existing.agentType && typeof message.subagent_type === "string") {
+          existing.agentType = message.subagent_type;
+        }
+      }
+      return;
+    }
+    registerSubagent(context, agentId, {
+      taskId: typeof message.task_id === "string" ? message.task_id : null,
+      agentType: typeof message.subagent_type === "string" ? message.subagent_type : null,
+      description: typeof message.description === "string" ? message.description : "",
+    });
+    return;
+  }
+
+  const agentId = resolveSubagentIdForTask(context, message);
+  if (!agentId) {
+    return;
+  }
+
+  if (message.subtype === "task_progress") {
+    const summary =
+      typeof message.summary === "string" && message.summary.trim()
+        ? message.summary
+        : typeof message.last_tool_name === "string" && message.last_tool_name
+          ? `Running ${message.last_tool_name}`
+          : null;
+    emitSubagentProgress(context, agentId, summary);
+    return;
+  }
+
+  if (message.subtype === "task_updated") {
+    const patch = message.patch && typeof message.patch === "object" ? message.patch : {};
+    const record = context.subagents.get(agentId);
+    if (record && typeof patch.description === "string" && patch.description.trim()) {
+      record.description = patch.description;
+    }
+    const status = normalizeSubagentStatus(patch.status);
+    if (status) {
+      completeSubagent(context, agentId, status, patch.error ?? null);
+    }
+    return;
+  }
+
+  if (message.subtype === "task_notification") {
+    const status = normalizeSubagentStatus(message.status);
+    if (status) {
+      completeSubagent(context, agentId, status, message.summary ?? null);
+    }
+  }
+}
+
+function emitSubagentContentBlocks(context, parentToolUseId, message) {
+  const agentId = resolveSubagentId(context, parentToolUseId);
+  const record = agentId ? context.subagents.get(agentId) : null;
+  if (!record) {
+    return;
+  }
+  const messageId = message?.message?.id;
+  if (typeof messageId === "string" && record.streamedMessageIds.has(messageId)) {
+    // Partial deltas already covered this message.
+    return;
+  }
+  const blocks = Array.isArray(message?.message?.content) ? message.message.content : [];
+  for (const block of blocks) {
+    if (block?.type === "text" && typeof block.text === "string" && block.text.length > 0) {
+      emit({ id: context.id, type: "subagent_text_delta", agentId, content: block.text });
+    } else if (
+      block?.type === "thinking" &&
+      typeof block.thinking === "string" &&
+      block.thinking.length > 0
+    ) {
+      emit({
+        id: context.id,
+        type: "subagent_thinking_delta",
+        agentId,
+        content: block.thinking,
+      });
+    }
+  }
+}
+
+function handleSubagentStreamEvent(context, parentToolUseId, streamEvent) {
+  const agentId = resolveSubagentId(context, parentToolUseId);
+  const record = agentId ? context.subagents.get(agentId) : null;
+  if (!record) {
+    return;
+  }
+  if (streamEvent?.type === "message_start") {
+    const messageId = streamEvent.message?.id;
+    if (typeof messageId === "string") {
+      record.streamedMessageIds.add(messageId);
+    }
+    return;
+  }
+  if (streamEvent?.type !== "content_block_delta") {
+    return;
+  }
+  const delta = streamEvent.delta;
+  if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text.length > 0) {
+    emit({ id: context.id, type: "subagent_text_delta", agentId, content: delta.text });
+  } else if (
+    delta?.type === "thinking_delta" &&
+    typeof delta.thinking === "string" &&
+    delta.thinking.length > 0
+  ) {
+    emit({
+      id: context.id,
+      type: "subagent_thinking_delta",
+      agentId,
+      content: delta.thinking,
+    });
+  }
 }
 
 function setContextSessionId(context, sessionId) {
@@ -1889,6 +2215,10 @@ async function handleQuery(req) {
         },
       },
       includePartialMessages: true,
+      // Subagent text and thinking arrive as complete assistant messages
+      // carrying parent_tool_use_id; without this flag only tool blocks are
+      // forwarded.
+      forwardSubagentText: true,
       hooks: {
       PreToolUse: [
         {
@@ -1919,8 +2249,27 @@ async function handleQuery(req) {
                 return {};
               }
               const actionId = `claude-action-${++context.actionCounter}`;
+              // Hooks inside a subagent carry agent_id; map it to the public
+              // agentId so the action lands in that worker's transcript.
+              const agentId = resolveSubagentIdForHook(context, hookInput);
               if (typeof toolUseId === "string" && toolUseId.length > 0) {
                 context.actionIdsByToolUseId.set(toolUseId, actionId);
+                if (agentId) {
+                  context.subagentIdsByToolUseId.set(toolUseId, agentId);
+                }
+                if (isSubagentSpawnTool(toolName)) {
+                  context.subagentSpawnInputsByToolUseId.set(toolUseId, {
+                    name: typeof toolInput.name === "string" ? toolInput.name : null,
+                    description:
+                      typeof toolInput.description === "string"
+                        ? toolInput.description
+                        : null,
+                    subagentType:
+                      typeof toolInput.subagent_type === "string"
+                        ? toolInput.subagent_type
+                        : null,
+                  });
+                }
               }
 
               emit({
@@ -1931,6 +2280,7 @@ async function handleQuery(req) {
                 toolName,
                 summary: summarizeTool(toolName, toolInput),
                 details: toolInput,
+                ...(agentId ? { agentId } : {}),
               });
 
               return {};
@@ -2026,6 +2376,52 @@ async function handleQuery(req) {
           ],
         },
       ],
+      SubagentStart: [
+        {
+          hooks: [
+            async (hookInput) => {
+              const hookAgentId = hookInput?.agent_id;
+              if (typeof hookAgentId !== "string" || hookAgentId.length === 0) {
+                return {};
+              }
+              if (!resolveSubagentIdForHook(context, hookInput)) {
+                // No task_started announced this worker (for example a
+                // runtime that does not emit task messages). Register it
+                // under the hook id so its tool calls still get a home.
+                registerSubagent(context, hookAgentId, {
+                  hookAgentId,
+                  agentType:
+                    typeof hookInput?.agent_type === "string"
+                      ? hookInput.agent_type
+                      : null,
+                  description: "",
+                });
+              }
+              return {};
+            },
+          ],
+        },
+      ],
+      SubagentStop: [
+        {
+          hooks: [
+            async (hookInput) => {
+              const agentId = resolveSubagentIdForHook(context, hookInput);
+              if (agentId) {
+                completeSubagent(
+                  context,
+                  agentId,
+                  "completed",
+                  typeof hookInput?.last_assistant_message === "string"
+                    ? hookInput.last_assistant_message
+                    : null,
+                );
+              }
+              return {};
+            },
+          ],
+        },
+      ],
       },
     });
 
@@ -2106,6 +2502,14 @@ async function handleQuery(req) {
         actualSessionId = message.session_id;
         setContextSessionId(context, actualSessionId);
         emit({ id, type: "session_init", sessionId: actualSessionId });
+      } else if (
+        message.type === "system" &&
+        (message.subtype === "task_started" ||
+          message.subtype === "task_progress" ||
+          message.subtype === "task_updated" ||
+          message.subtype === "task_notification")
+      ) {
+        handleSubagentTaskMessage(context, message);
       } else if (message.type === "assistant" && typeof message.error === "string") {
         const assistantError = formatAssistantMessageError(message);
         terminalStatus = "failed";
@@ -2117,6 +2521,12 @@ async function handleQuery(req) {
           errorType: assistantError.errorType,
           isAuthError: assistantError.isAuthError,
         });
+      } else if (
+        message.type === "assistant" &&
+        typeof message.parent_tool_use_id === "string" &&
+        message.parent_tool_use_id.length > 0
+      ) {
+        emitSubagentContentBlocks(context, message.parent_tool_use_id, message);
       } else if (message.type === "rate_limit_event") {
         const usage = buildRateLimitUsageSnapshot(message);
         if (usage) {
@@ -2178,6 +2588,12 @@ async function handleQuery(req) {
         // The turn is over: closing the input stream lets the SDK end the
         // CLI stdin so the process exits the way a single-shot query does.
         input.end();
+      } else if (
+        message.type === "stream_event" &&
+        typeof message.parent_tool_use_id === "string" &&
+        message.parent_tool_use_id.length > 0
+      ) {
+        handleSubagentStreamEvent(context, message.parent_tool_use_id, message.event);
       } else if (message.type === "stream_event") {
         const streamEvent = message.event;
         updateTokenUsageFromStreamEvent(context, streamEvent);
@@ -2192,6 +2608,12 @@ async function handleQuery(req) {
 
         if (streamEvent?.type === "content_block_start") {
           const block = streamEvent.content_block;
+          if (block?.type === "text") {
+            // Boundary between two assistant messages. Panes keeps a sentence
+            // together across interleaved subagent output, so it needs to be
+            // told where one message genuinely ends.
+            emit({ id, type: "text_item_started" });
+          }
           if (block?.type === "tool_use") {
             const toolUseId = block.id || block.tool_use_id;
             if (
@@ -2247,7 +2669,9 @@ async function handleQuery(req) {
     }
 
     setContextSessionId(context, actualSessionId);
-    emitTurnCompleted(context, context.cancelled ? "interrupted" : terminalStatus);
+    const finalStatus = context.cancelled ? "interrupted" : terminalStatus;
+    closeOutSubagents(context, finalStatus);
+    emitTurnCompleted(context, finalStatus);
   } catch (err) {
     emit({
       id,
@@ -2256,6 +2680,7 @@ async function handleQuery(req) {
       recoverable: false,
     });
     setContextSessionId(context, actualSessionId);
+    closeOutSubagents(context, "failed");
     emitTurnCompleted(context, "failed");
   } finally {
     if (context.cancelTimer) {
@@ -2522,6 +2947,7 @@ function handleShutdown(signal) {
     );
     context.input?.end();
     context.query?.close?.();
+    closeOutSubagents(context, "interrupted");
     emitTurnCompleted(context, "interrupted");
   }
 
