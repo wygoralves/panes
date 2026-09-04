@@ -6,7 +6,7 @@ describe("resolveEngineCapabilities", () => {
   it("falls back to Claude defaults when capabilities are unavailable", () => {
     expect(resolveEngineCapabilities("claude", null)).toEqual({
       permissionModes: ["restricted", "standard", "trusted"],
-      sandboxModes: ["read-only", "workspace-write"],
+      sandboxModes: ["read-only", "workspace-write", "danger-full-access"],
       approvalDecisions: ["accept", "decline", "accept_for_session"],
     });
   });

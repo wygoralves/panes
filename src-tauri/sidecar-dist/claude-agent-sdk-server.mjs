@@ -1072,7 +1072,11 @@ function buildPermissionHandler({
   cwd,
   writableRoots,
   sandboxMode,
+  // The network policy the caller asked for. The default approval policy reads
+  // it as a trust signal, so it stays exactly what was requested.
   allowNetwork,
+  // The network policy actually in force, which full access widens.
+  networkEnabled = allowNetwork,
   approvalPolicy,
   allowedTools = [],
 }) {
@@ -1092,7 +1096,7 @@ function buildPermissionHandler({
       return permission;
     }
 
-    if (!allowNetwork && toolName === "WebFetch") {
+    if (!networkEnabled && toolName === "WebFetch") {
       const permission = {
         behavior: "deny",
         message: "Network access is disabled for this repository.",
@@ -1120,23 +1124,27 @@ function buildPermissionHandler({
         return permission;
       }
 
-      const candidatePaths = collectCandidatePaths(toolName, toolInput, cwd);
-      if (candidatePaths.length === 0) {
-        const permission = {
-          behavior: "deny",
-          message: "Unable to verify the target path for this write operation.",
-        };
-        emitDeniedToolCompletion(context, toolUseId, permission.message);
-        return permission;
-      }
+      // Full access lifts the writable-root fence entirely; the approval
+      // policy below still applies.
+      if (sandboxMode !== "danger-full-access") {
+        const candidatePaths = collectCandidatePaths(toolName, toolInput, cwd);
+        if (candidatePaths.length === 0) {
+          const permission = {
+            behavior: "deny",
+            message: "Unable to verify the target path for this write operation.",
+          };
+          emitDeniedToolCompletion(context, toolUseId, permission.message);
+          return permission;
+        }
 
-      if (!candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
-        const permission = {
-          behavior: "deny",
-          message: "This file path is outside the approved writable roots for the thread.",
-        };
-        emitDeniedToolCompletion(context, toolUseId, permission.message);
-        return permission;
+        if (!candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
+          const permission = {
+            behavior: "deny",
+            message: "This file path is outside the approved writable roots for the thread.",
+          };
+          emitDeniedToolCompletion(context, toolUseId, permission.message);
+          return permission;
+        }
       }
     }
 
@@ -1644,14 +1652,23 @@ function normalizeSandboxMode(value) {
     return "workspace-write";
   }
   if (compact === "dangerfullaccess") {
-    throw new Error(
-      "Claude does not support sandboxMode=danger-full-access. Use read-only or workspace-write.",
-    );
+    return "danger-full-access";
   }
 
   throw new Error(
-    "Unsupported Claude sandboxMode. Expected one of: read-only, workspace-write.",
+    "Unsupported Claude sandboxMode. Expected one of: read-only, workspace-write, danger-full-access.",
   );
+}
+
+// Full access runs the CLI without the OS sandbox, so Bash can reach the
+// network whatever the thread's flag says. Denying WebFetch on top of that
+// would hide the reach rather than remove it, so full access reports and
+// applies network access as enabled.
+function effectiveAllowNetwork(sandboxMode, allowNetwork) {
+  if (sandboxMode === "danger-full-access") {
+    return true;
+  }
+  return Boolean(allowNetwork);
 }
 
 function normalizeWritableRoots(cwd, writableRoots) {
@@ -1669,7 +1686,7 @@ function normalizeWritableRoots(cwd, writableRoots) {
 }
 
 function additionalDirectoriesForSandbox(cwd, sandboxMode, writableRoots) {
-  if (sandboxMode !== "workspace-write") {
+  if (sandboxMode !== "workspace-write" && sandboxMode !== "danger-full-access") {
     return [];
   }
 
@@ -1682,6 +1699,34 @@ function allowWriteRootsForSandbox(sandboxMode, writableRoots) {
   }
 
   return writableRoots;
+}
+
+function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
+  if (sandboxMode === "danger-full-access") {
+    // Full access runs the CLI without the OS sandbox: unrestricted
+    // filesystem writes, and network follows the thread's allowNetwork flag
+    // through the WebFetch gate in canUseTool.
+    return { enabled: false };
+  }
+
+  return {
+    enabled: true,
+    failIfUnavailable: false,
+    autoAllowBashIfSandboxed: true,
+    allowUnsandboxedCommands: false,
+    filesystem: {
+      allowWrite: allowWriteRootsForSandbox(sandboxMode, writableRoots),
+    },
+    ...(allowNetwork
+      ? {}
+      : {
+          network: {
+            allowedDomains: [],
+            allowLocalBinding: false,
+            allowUnixSockets: [],
+          },
+        }),
+  };
 }
 
 function applyClaudeRuntime(options) {
@@ -1766,29 +1811,42 @@ async function handleQuery(req) {
   // query is still winding down still finds this turn.
   activeQueries.set(id, context);
 
-  // Task tools belong to the default tool set only. A caller that supplied an
-  // explicit allowlist gets exactly that list, so Panes never widens a thread
-  // past what the policy asked for.
-  const toolList = Array.isArray(allowedTools)
-    ? [...new Set(allowedTools)]
-    : [
-        ...new Set([
-          "Read",
-          "Write",
-          "Edit",
-          "Bash",
-          "Glob",
-          "Grep",
-          ...(allowNetwork ? ["WebFetch"] : []),
-          ...TASK_TOOL_NAMES,
-        ]),
-      ];
-
   const sessionCwd = cwd || process.cwd();
   let actualSessionId = null;
   try {
     const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
     const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
+    const networkEnabled = effectiveAllowNetwork(normalizedSandboxMode, allowNetwork);
+
+    // Task tools belong to the default tool set only. A caller that supplied an
+    // explicit allowlist gets exactly that list, so Panes never widens a thread
+    // past what the policy asked for.
+    const toolList = Array.isArray(allowedTools)
+      ? [...new Set(allowedTools)]
+      : [
+          ...new Set([
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Glob",
+            "Grep",
+            ...(networkEnabled ? ["WebFetch"] : []),
+            ...TASK_TOOL_NAMES,
+          ]),
+        ];
+
+    if (networkEnabled && !allowNetwork) {
+      emit({
+        id,
+        type: "notice",
+        kind: "claude_network_policy",
+        level: "warning",
+        title: "Network stays enabled under full access",
+        message:
+          "Full access runs Claude without the OS sandbox, so commands can still reach the network. This thread runs with network access enabled.",
+      });
+    }
 
     const options = applyClaudeRuntime({
       cwd: sessionCwd,
@@ -1813,32 +1871,17 @@ async function handleQuery(req) {
         writableRoots: normalizedWritableRoots,
         sandboxMode: normalizedSandboxMode,
         allowNetwork: Boolean(allowNetwork),
+        networkEnabled,
         approvalPolicy,
         allowedTools: toolList,
       }),
       // settingSources is intentionally omitted so user, project and local
       // settings all load, matching the Claude Code CLI default.
-      sandbox: {
-        enabled: true,
-        failIfUnavailable: false,
-        autoAllowBashIfSandboxed: true,
-        allowUnsandboxedCommands: false,
-        filesystem: {
-          allowWrite: allowWriteRootsForSandbox(
-            normalizedSandboxMode,
-            normalizedWritableRoots,
-          ),
-        },
-        ...(allowNetwork
-          ? {}
-          : {
-              network: {
-                allowedDomains: [],
-                allowLocalBinding: false,
-                allowUnixSockets: [],
-              },
-            }),
-      },
+      sandbox: buildSandboxOptions(
+        normalizedSandboxMode,
+        normalizedWritableRoots,
+        networkEnabled,
+      ),
       settings: {
         permissions: {
           defaultMode: planMode ? "plan" : "default",
@@ -2001,7 +2044,12 @@ async function handleQuery(req) {
     if (maxTurns) options.maxTurns = maxTurns;
     if (reasoningEffort) options.effort = reasoningEffort;
 
-    emit({ id, type: "turn_started" });
+    emit({
+      id,
+      type: "turn_started",
+      sandboxMode: normalizedSandboxMode,
+      allowNetwork: networkEnabled,
+    });
 
     let sawTextDelta = false;
     let terminalStatus = "completed";

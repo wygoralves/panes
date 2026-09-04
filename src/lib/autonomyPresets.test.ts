@@ -24,7 +24,7 @@ describe("autonomyPresetPatch", () => {
     });
     expect(autonomyPresetPatch("full", "claude")).toEqual({
       approvalPolicy: "trusted",
-      sandboxMode: "workspace-write",
+      sandboxMode: "danger-full-access",
       networkPolicy: "enabled",
     });
     expect(autonomyPresetPatch("full", "opencode")).toEqual({
@@ -40,10 +40,10 @@ describe("autonomyPresetPatch", () => {
     }
   });
 
-  it("never requests a full-access sandbox for claude", () => {
+  it("requests the full-access sandbox for claude only on the full rung", () => {
     for (const preset of availableAutonomyPresets("claude")) {
-      expect(autonomyPresetPatch(preset, "claude").sandboxMode).not.toBe(
-        "danger-full-access",
+      expect(autonomyPresetPatch(preset, "claude").sandboxMode === "danger-full-access").toBe(
+        preset === "full",
       );
     }
   });
@@ -127,7 +127,7 @@ describe("detectAutonomyPreset", () => {
     ).toBe("full");
   });
 
-  it("distinguishes claude auto from full by the network override", () => {
+  it("distinguishes claude auto from full by sandbox and network", () => {
     expect(
       detectAutonomyPreset("claude", {
         approvalPolicy: "trusted",
@@ -138,7 +138,7 @@ describe("detectAutonomyPreset", () => {
     expect(
       detectAutonomyPreset("claude", {
         approvalPolicy: "trusted",
-        sandboxMode: "workspace-write",
+        sandboxMode: "danger-full-access",
         networkPolicy: "enabled",
       }),
     ).toBe("full");

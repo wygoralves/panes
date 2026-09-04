@@ -128,7 +128,7 @@ const CODEX_CAPABILITIES: EngineCapabilities = EngineCapabilities {
 
 const CLAUDE_CAPABILITIES: EngineCapabilities = EngineCapabilities {
     permission_modes: &["restricted", "standard", "trusted"],
-    sandbox_modes: &["read-only", "workspace-write"],
+    sandbox_modes: &["read-only", "workspace-write", "danger-full-access"],
     approval_decisions: &["accept", "decline", "accept_for_session"],
 };
 
@@ -1338,7 +1338,7 @@ mod tests {
         );
         assert_eq!(
             capabilities.sandbox_modes,
-            &["read-only", "workspace-write"]
+            &["read-only", "workspace-write", "danger-full-access"]
         );
         assert_eq!(
             capabilities.approval_decisions,
@@ -1361,9 +1361,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_engine_sandbox_mode_rejects_unsupported_claude_full_access() {
-        assert!(validate_engine_sandbox_mode("claude", Some("danger-full-access")).is_err());
+    fn validate_engine_sandbox_mode_accepts_every_claude_mode() {
+        assert!(validate_engine_sandbox_mode("claude", Some("read-only")).is_ok());
         assert!(validate_engine_sandbox_mode("claude", Some("workspace-write")).is_ok());
+        assert!(validate_engine_sandbox_mode("claude", Some("danger-full-access")).is_ok());
+        assert!(validate_engine_sandbox_mode("claude", Some("unrestricted")).is_err());
     }
 
     #[test]

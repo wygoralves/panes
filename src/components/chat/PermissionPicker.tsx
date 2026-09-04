@@ -2,12 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom";
 import {
   Check,
+  CheckCheck,
   ChevronDown,
   ChevronLeft,
   Eye,
-  FolderOpen,
   Monitor,
   Shield,
+  ShieldQuestion,
   SquareTerminal,
   Zap,
   type LucideIcon,
@@ -15,8 +16,8 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   autonomyPresetDescriptionKey,
-  availableAutonomyPresets,
   isDefaultAutonomyPreset,
+  visibleAutonomyPresets,
 } from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
 import type { ChatEngineId, TrustLevel } from "../../types";
@@ -72,8 +73,8 @@ interface PermissionPickerProps {
 const PRESET_ICON_COMPONENTS: Record<AutonomyPresetId, LucideIcon> = {
   inherit: Shield,
   "read-only": Eye,
-  ask: Shield,
-  auto: FolderOpen,
+  ask: ShieldQuestion,
+  auto: CheckCheck,
   full: Zap,
 };
 
@@ -355,7 +356,7 @@ export function PermissionPicker({
       </div>
       <div className="pp-panel-content">
         <div className="pp-options">
-          {availableAutonomyPresets(engineId).map((preset) => {
+          {visibleAutonomyPresets(engineId, presetValue).map((preset) => {
             const selected = preset === presetValue;
             return (
               <button

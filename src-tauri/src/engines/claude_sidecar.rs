@@ -1952,7 +1952,7 @@ impl Engine for ClaudeSidecarEngine {
         let config = ThreadConfig {
             scope,
             model_id: model.to_string(),
-            sandbox,
+            sandbox: normalize_claude_sandbox_policy(sandbox),
             agent_session_id: existing_session,
             active_request_id: None,
         };
@@ -2516,6 +2516,21 @@ impl Engine for ClaudeSidecarEngine {
     }
 }
 
+/// Full access disables the OS sandbox, so a command can reach the network
+/// whatever the flag says. The launch config reports network access as enabled
+/// instead of claiming a restriction Panes cannot enforce.
+fn normalize_claude_sandbox_policy(mut sandbox: SandboxPolicy) -> SandboxPolicy {
+    let full_access = sandbox
+        .sandbox_mode
+        .as_deref()
+        .map(|mode| mode.eq_ignore_ascii_case("danger-full-access"))
+        .unwrap_or(false);
+    if full_access {
+        sandbox.allow_network = true;
+    }
+    sandbox
+}
+
 /// Waits for the sidecar to confirm that a cancelled query stopped. Returns
 /// false when the acknowledgement never arrives so the caller can carry on
 /// instead of hanging.
@@ -2555,6 +2570,41 @@ async fn wait_for_cancel_ack(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sandbox_policy(sandbox_mode: &str, allow_network: bool) -> SandboxPolicy {
+        SandboxPolicy {
+            writable_roots: vec!["/repo".to_string()],
+            allow_network,
+            approval_policy: None,
+            permission_profile: None,
+            approvals_reviewer: None,
+            reasoning_effort: None,
+            sandbox_mode: Some(sandbox_mode.to_string()),
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            opencode_agent: None,
+        }
+    }
+
+    #[test]
+    fn full_access_reports_network_access_as_enabled() {
+        assert!(
+            normalize_claude_sandbox_policy(sandbox_policy("danger-full-access", false))
+                .allow_network
+        );
+        assert!(
+            normalize_claude_sandbox_policy(sandbox_policy("Danger-Full-Access", false))
+                .allow_network
+        );
+        assert!(
+            !normalize_claude_sandbox_policy(sandbox_policy("workspace-write", false))
+                .allow_network
+        );
+        assert!(
+            normalize_claude_sandbox_policy(sandbox_policy("workspace-write", true)).allow_network
+        );
+    }
 
     #[test]
     fn deserializes_cancel_result_events() {

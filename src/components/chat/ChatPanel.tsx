@@ -4643,14 +4643,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
 
     if (
-      engineKind(currentThread.engineId) === "claude" &&
-      patch.sandboxMode === "danger-full-access"
-    ) {
-      toast.error(t("panel.toasts.claudeSandboxUnsupported"));
-      return;
-    }
-
-    if (
       engineKind(currentThread.engineId) !== "codex" &&
       engineKind(currentThread.engineId) !== "claude" &&
       patch.sandboxMode !== undefined
@@ -6373,11 +6365,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : undefined
                     }
                     networkDisabled={
-                      engineKind(activeThread?.engineId) === "codex" &&
+                      (engineKind(activeThread?.engineId) === "codex" ||
+                        engineKind(activeThread?.engineId) === "claude") &&
                       activeThreadSandboxMode === "danger-full-access"
                     }
                     networkNotice={
-                      engineKind(activeThread?.engineId) === "codex" &&
+                      (engineKind(activeThread?.engineId) === "codex" ||
+                        engineKind(activeThread?.engineId) === "claude") &&
                       activeThreadSandboxMode === "danger-full-access"
                         ? t("policy.fullAccessNotice")
                         : null

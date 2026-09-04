@@ -330,7 +330,7 @@
     "custom": "Personalizado",
     "presets": {
       "inherit": {
-        "label": "Automático",
+        "label": "Padrão do repo",
         "description": "Segue a política de confiança do repo."
       },
       "read-only": {
@@ -338,15 +338,15 @@
         "description": "Inspeciona e responde. Leituras seguras rodam; nada muda sem a sua aprovação."
       },
       "ask": {
-        "label": "Pedir para agir",
-        "description": "Leituras são livres. Edições e comandos pedem antes."
+        "label": "Pedir aprovação",
+        "description": "Leituras rodam livres. Edições e comandos aguardam sua aprovação."
       },
       "auto": {
-        "label": "Autônomo no workspace",
-        "description": "Trabalha livre dentro do sandbox do workspace. Só pede para sair dele."
+        "label": "Aprovar por mim",
+        "description": "Trabalha dentro do workspace sem perguntar. Só pede para sair dele."
       },
       "full": {
-        "label": "Autonomia total",
+        "label": "Acesso total",
         "description": "Nunca pergunta. Acesso total a disco e rede."
       }
     },
@@ -363,7 +363,7 @@
         "read-only": "Usa aprovações restritas com arquivos somente leitura e sem rede.",
         "ask": "Usa aprovações padrão com escrita no workspace e sem rede.",
         "auto": "Usa aprovações confiáveis e escrita no workspace. A rede segue a confiança do repo.",
-        "full": "Usa aprovações confiáveis com escrita no workspace e rede habilitada."
+        "full": "Usa aprovações confiáveis com acesso total a disco e rede."
       },
       "codexExternal": {
         "read-only": "Usa aprovações não confiáveis e bloqueia a rede. O sandbox externo controla o acesso aos arquivos.",
@@ -495,7 +495,6 @@
       "on": "ligado",
       "off": "desligado",
       "personalityUpdated": "Personalidade -> {{value}}",
-      "claudeSandboxUnsupported": "Claude suporta apenas os modos de sandbox somente leitura e escrita no workspace.",
       "fullAccessNetworkWarning": "O modo acesso total habilita temporariamente o acesso à rede.",
       "updateExecutionPolicyFailed": "Falha ao atualizar a política de execução da thread: {{error}}",
       "approvalBatchFailed": "Uma ou mais aprovações não puderam ser aceitas. A política da thread não foi alterada.",

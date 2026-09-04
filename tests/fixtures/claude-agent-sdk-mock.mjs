@@ -105,6 +105,8 @@ export function query({ prompt, options }) {
           settingSources: options?.settingSources,
           systemPrompt: options?.systemPrompt,
           todoToolsEnabled: options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS,
+          sandbox: options?.sandbox,
+          additionalDirectories: options?.additionalDirectories,
         }),
       });
     }

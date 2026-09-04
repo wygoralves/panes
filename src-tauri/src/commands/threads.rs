@@ -740,7 +740,7 @@ fn autonomy_policy_for_preset(
             },
             "full" => AutonomyPresetPolicy {
                 approval_policy: json!("trusted"),
-                sandbox_mode: Some("workspace-write"),
+                sandbox_mode: Some("danger-full-access"),
                 allow_network: Some(true),
             },
             _ => return Err(format!("unknown autonomy preset: {preset}")),
@@ -1728,6 +1728,20 @@ async fn set_thread_execution_policy_inner(
                     object.remove("approvalsReviewer");
                 }
             }
+        }
+
+        // Full access always launches with the network on, so a persisted
+        // `sandboxAllowNetwork: false` would advertise a restriction no run
+        // path enforces. Keep the stored value in step with the launch paths.
+        let resulting_full_access = object
+            .get("sandboxMode")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|value| value.eq_ignore_ascii_case("danger-full-access"));
+        if resulting_full_access
+            && object.get("sandboxAllowNetwork").and_then(Value::as_bool) == Some(false)
+        {
+            object.insert("sandboxAllowNetwork".to_string(), json!(true));
         }
     }
 
@@ -3924,7 +3938,7 @@ mod tests {
             autonomy_policy_for_preset("claude", "full", false).unwrap(),
             AutonomyPresetPolicy {
                 approval_policy: json!("trusted"),
-                sandbox_mode: Some("workspace-write"),
+                sandbox_mode: Some("danger-full-access"),
                 allow_network: Some(true),
             }
         );
@@ -4071,11 +4085,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_thread_execution_policy_rejects_claude_danger_full_access() {
+    async fn set_thread_execution_policy_allows_claude_danger_full_access() {
         let state = test_app_state();
         let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
 
-        let error = set_thread_execution_policy_inner(
+        let updated = set_thread_execution_policy_inner(
             &state,
             thread.id.clone(),
             false,
@@ -4090,9 +4104,95 @@ mod tests {
             None,
         )
         .await
-        .expect_err("expected danger-full-access to be rejected");
+        .expect("expected danger-full-access to be accepted for Claude");
 
-        assert!(error.contains("Claude sandbox mode `danger-full-access` is not supported"));
+        assert_eq!(
+            updated
+                .engine_metadata
+                .as_ref()
+                .and_then(|value| value.get("sandboxMode"))
+                .and_then(serde_json::Value::as_str),
+            Some("danger-full-access")
+        );
+    }
+
+    #[tokio::test]
+    async fn set_thread_execution_policy_keeps_network_on_for_full_access() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+
+        // Denying the network in the same update that selects full access must
+        // not persist a restriction the launch paths ignore.
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("danger-full-access".to_string()),
+            true,
+            Some(false),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("expected full access update to succeed");
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(
+            metadata.get("sandboxMode"),
+            Some(&json!("danger-full-access"))
+        );
+        assert_eq!(metadata.get("sandboxAllowNetwork"), Some(&json!(true)));
+        assert_eq!(thread_allow_network_override(Some(&metadata)), Some(true));
+
+        // Denying it later, while the thread is still on full access, is
+        // corrected the same way.
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            false,
+            None,
+            true,
+            Some(false),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("expected network update to succeed");
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(thread_allow_network_override(Some(&metadata)), Some(true));
+
+        // A narrower sandbox still records the denial.
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("workspace-write".to_string()),
+            true,
+            Some(false),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("expected workspace-write update to succeed");
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(thread_allow_network_override(Some(&metadata)), Some(false));
     }
 
     #[tokio::test]

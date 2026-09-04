@@ -330,7 +330,7 @@
     "custom": "Custom",
     "presets": {
       "inherit": {
-        "label": "Auto",
+        "label": "Repo default",
         "description": "Follow the repo trust policy."
       },
       "read-only": {
@@ -338,15 +338,15 @@
         "description": "Inspect and answer. Safe reads run; nothing changes without your approval."
       },
       "ask": {
-        "label": "Ask to act",
-        "description": "Reads are free. Edits and commands ask first."
+        "label": "Ask for approval",
+        "description": "Reads run freely. Edits and commands wait for your approval."
       },
       "auto": {
-        "label": "Auto in workspace",
-        "description": "Works freely inside the workspace sandbox. Asks only to leave it."
+        "label": "Approve for me",
+        "description": "Works inside the workspace without asking. Asks only to leave it."
       },
       "full": {
-        "label": "Full autonomy",
+        "label": "Full access",
         "description": "Never asks. Full disk and network access."
       }
     },
@@ -363,7 +363,7 @@
         "read-only": "Use restricted approvals with read-only files and no network.",
         "ask": "Use standard approvals with workspace writes and no network.",
         "auto": "Use trusted approvals and workspace writes. Network follows repo trust.",
-        "full": "Use trusted approvals with workspace writes and network enabled."
+        "full": "Use trusted approvals with full disk and network access."
       },
       "codexExternal": {
         "read-only": "Use untrusted approvals and block network. The external sandbox controls filesystem access.",
@@ -495,7 +495,6 @@
       "on": "on",
       "off": "off",
       "personalityUpdated": "Personality -> {{value}}",
-      "claudeSandboxUnsupported": "Claude supports only read-only and workspace-write sandbox modes.",
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",
       "approvalBatchFailed": "One or more approvals could not be accepted. The thread policy was not changed.",

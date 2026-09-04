@@ -469,28 +469,78 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations[0]?.result.tools).toEqual(["Read", "Grep"]);
   });
 
-  it("rejects danger-full-access explicitly for Claude", async () => {
-    const harness = await spawnHarness({ steps: [] });
+  it("runs danger-full-access without the OS sandbox and without a writable-root fence", async () => {
+    const outsidePath = path.join(path.dirname(repoRoot), "outside-full-access.txt");
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "Write",
+          input: { file_path: outsidePath },
+          toolUseID: "write-full-access",
+        },
+      ],
+      emitObservationResult: true,
+      emitQueryOptions: true,
+      sessionId: "session-full-access",
+    });
 
     harness.send({
       id: "query-full-access",
       method: "query",
       params: {
-        prompt: "invalid sandbox",
+        prompt: "write anywhere",
         cwd: repoRoot,
+        approvalPolicy: "trusted",
+        allowNetwork: true,
         sandboxMode: "danger-full-access",
+        writableRoots: [repoRoot],
       },
     });
 
-    const errorEvent = await harness.waitFor(
-      (event) => event.id === "query-full-access" && event.type === "error",
-    );
     const completed = await harness.waitFor(
       (event) => event.id === "query-full-access" && event.type === "turn_completed",
     );
+    expect(completed.status).toBe("completed");
 
-    expect(errorEvent.message).toContain("does not support sandboxMode=danger-full-access");
-    expect(completed.status).toBe("failed");
+    const observations = parseObservationResults(harness, "query-full-access");
+    expect(observations).toHaveLength(2);
+    expect(observations[0]?.type).toBe("query_options");
+    expect(observations[0]?.result.sandbox).toEqual({ enabled: false });
+    expect(observations[0]?.result.forwardSubagentText).toBe(true);
+    expect(observations[1]?.type).toBe("permission_result");
+    expect(observations[1]?.result).toEqual({ behavior: "allow" });
+  });
+
+  it("still denies writes in read-only mode when full access is not requested", async () => {
+    const harness = await spawnHarness({
+      steps: [],
+      emitObservationResult: true,
+      emitQueryOptions: true,
+      sessionId: "session-sandboxed",
+    });
+
+    harness.send({
+      id: "query-sandboxed",
+      method: "query",
+      params: {
+        prompt: "inspect sandbox",
+        cwd: repoRoot,
+        sandboxMode: "workspace-write",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    await harness.waitFor(
+      (event) => event.id === "query-sandboxed" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-sandboxed");
+    expect(observations[0]?.result.sandbox).toMatchObject({
+      enabled: true,
+      filesystem: { allowWrite: [repoRoot] },
+      network: { allowedDomains: [] },
+    });
   });
 
   it("marks terminal SDK errors as failed turns", async () => {
@@ -1813,6 +1863,96 @@ describe("claude-agent-sdk-server sidecar", () => {
     );
   });
 
+  it("keeps network access on under danger-full-access and denies WebFetch otherwise", async () => {
+    const harness = await spawnHarness({
+      steps: [
+        {
+          type: "permission",
+          toolName: "WebFetch",
+          input: { url: "https://example.com" },
+          toolUseID: "fetch-network",
+        },
+      ],
+      emitObservationResult: true,
+      emitQueryOptions: true,
+      sessionId: "session-network",
+    });
+
+    harness.send({
+      id: "query-full-access-network",
+      method: "query",
+      params: {
+        prompt: "fetch a page",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        allowNetwork: false,
+        sandboxMode: "danger-full-access",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    const started = await harness.waitFor(
+      (event) => event.id === "query-full-access-network" && event.type === "turn_started",
+    );
+    expect(started).toMatchObject({
+      sandboxMode: "danger-full-access",
+      allowNetwork: true,
+    });
+
+    const notice = await harness.waitFor(
+      (event) =>
+        event.id === "query-full-access-network" &&
+        event.type === "notice" &&
+        event.kind === "claude_network_policy",
+    );
+    expect(String(notice.message)).toContain("network");
+
+    await harness.waitFor(
+      (event) =>
+        event.id === "query-full-access-network" && event.type === "turn_completed",
+    );
+
+    const fullAccess = parseObservationResults(harness, "query-full-access-network");
+    // Full access has no OS sandbox, so WebFetch is not denied on its own.
+    expect(fullAccess[1]?.type).toBe("permission_result");
+    expect(fullAccess[1]?.result).toEqual({ behavior: "allow" });
+
+    harness.send({
+      id: "query-sandboxed-network",
+      method: "query",
+      params: {
+        prompt: "fetch a page",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        allowNetwork: false,
+        sandboxMode: "workspace-write",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    const sandboxedStarted = await harness.waitFor(
+      (event) => event.id === "query-sandboxed-network" && event.type === "turn_started",
+    );
+    expect(sandboxedStarted).toMatchObject({ allowNetwork: false });
+
+    await harness.waitFor(
+      (event) => event.id === "query-sandboxed-network" && event.type === "turn_completed",
+    );
+
+    const sandboxed = parseObservationResults(harness, "query-sandboxed-network");
+    expect(sandboxed[1]?.result).toMatchObject({
+      behavior: "deny",
+      message: "Network access is disabled for this repository.",
+    });
+    expect(
+      harness.events.some(
+        (event) =>
+          event.id === "query-sandboxed-network" &&
+          event.type === "notice" &&
+          event.kind === "claude_network_policy",
+      ),
+    ).toBe(false);
+  });
 
   it("falls back to closing the query when the runtime cannot interrupt", async () => {
     const harness = await spawnHarness({
