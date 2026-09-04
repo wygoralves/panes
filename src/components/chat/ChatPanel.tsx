@@ -6378,9 +6378,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     type="button"
                     className="chat-stop-btn"
                     onClick={() => void cancel()}
+                    title={t("panel.stop")}
+                    aria-label={t("panel.stop")}
                   >
-                    <Square size={11} fill="currentColor" />
-                    {t("panel.stop")}
+                    <Square size={11} fill="currentColor" aria-hidden="true" />
                   </button>
                 )}
 

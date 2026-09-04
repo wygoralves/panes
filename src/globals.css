@@ -9041,16 +9041,15 @@ button, input, textarea, select {
 /* ── Composer send / stop (classed variants of the pill system) ── */
 
 .chat-stop-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
+  justify-content: center;
   border: 1px solid var(--danger-border);
   background: var(--danger-surface);
   color: var(--danger);
-  font-size: 12px;
-  font-weight: 600;
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out);
 }
