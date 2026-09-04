@@ -1,0 +1,31 @@
+{
+  "version": "0.66.0",
+  "notes": "## [](https://github.com/wygoralves/panes/compare/v0.65.1...vnull) (2026-09-04)\n\n### Features\n\n* **chat:** collapse the permission picker to ask, approve, full access ([330976a](https://github.com/wygoralves/panes/commit/330976a4971f6e95881035693b9d3f8e8bb5957b))\n* **chat:** move plan limits into a usage popover behind a miniature meter ([2ef4929](https://github.com/wygoralves/panes/commit/2ef49295b1d8cbb1739b41d84d47f74ff4fa5de8))\n* **chat:** queue follow-up messages and steer any engine that supports it ([ddbfc2c](https://github.com/wygoralves/panes/commit/ddbfc2c47be6ae37a3823d67e1c2cc8740acf5f6))\n* **chat:** replace the branch chip with a branch picker bound to worktrees ([a16fc01](https://github.com/wygoralves/panes/commit/a16fc0186a5c24467fa084e3fde677802eecc5c9))\n* **chat:** track subagents and keep each producer's text in one block ([2798af9](https://github.com/wygoralves/panes/commit/2798af9595728ec226537bbf16d1679f017a0dd8))\n* **git:** give threads an owned worktree with a verified lifecycle ([803acb6](https://github.com/wygoralves/panes/commit/803acb670e8209e58ef728eeb7ef33d6e320ea80))\n* **power:** make the lid-close password prompt an opt-in ([78daefb](https://github.com/wygoralves/panes/commit/78daefb14a3c875f07ff557390ed763d91483997))\n\n### Bug Fixes\n\n* **chat:** bind unscoped threads to the repo when picking a branch ([b9c8d25](https://github.com/wygoralves/panes/commit/b9c8d251a2ae15a5b00d51ab10cbe59f4ba6830a))\n* **chat:** reserve the turn before resolving its worktree ([0fc33fa](https://github.com/wygoralves/panes/commit/0fc33fafddb4e29707ee660b916930e640cba820))\n* **chat:** stop no longer leaves a thread stuck as running ([5de2ace](https://github.com/wygoralves/panes/commit/5de2ace40b65eed8ad241bd6c611fc8f3c2e106c))\n* **chat:** warn at half the budget and go red at a quarter ([e04a383](https://github.com/wygoralves/panes/commit/e04a383238e4fcae1d4d9e197a2a04e80eeb6593))\n* **git:** detach threads only after the worktree removal succeeds ([e717df4](https://github.com/wygoralves/panes/commit/e717df44219119f0b2068995b612818157a1e923))",
+  "pub_date": "2026-09-04T04:11:06Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWtvMS9RNGZRVElKeTBsZTEzM1lOUS81OWpnVnJMa2t5YmQ4TjFRdjdzTGRxWUQ0S2ZJUXl6akVuaVNTSTNYalNidFUxb3ppa1d6N0JRZnNhUEEwTHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDk2Mzk4CWZpbGU6UGFuZXMuYXBwLnRhci5nego3WWpuQTFQSUFSckhZUHowcEdJL1Z0bTBCdlRoZVVDdnZUSDlEOFJvT0FDRS80R1l1QVY0ZnFqekRVV0o0NEpWckVBM1paRzJUZFV1K0tXNUJBQkREUT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.66.0/Panes.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWtvMS9RNGZRVElKeTBsZTEzM1lOUS81OWpnVnJMa2t5YmQ4TjFRdjdzTGRxWUQ0S2ZJUXl6akVuaVNTSTNYalNidFUxb3ppa1d6N0JRZnNhUEEwTHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDk2Mzk4CWZpbGU6UGFuZXMuYXBwLnRhci5nego3WWpuQTFQSUFSckhZUHowcEdJL1Z0bTBCdlRoZVVDdnZUSDlEOFJvT0FDRS80R1l1QVY0ZnFqekRVV0o0NEpWckVBM1paRzJUZFV1K0tXNUJBQkREUT09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.66.0/Panes.app.tar.gz"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWhXaEc0WmYxb1VFYUUzbFhoRWM3eHFrSlU1T0ZrazlldGdMeXA0RnJlelhpSElkYnZiWE9hYnVzVGRIakNBYjhiYzZpTnRiTjNYMnJZdWJHZmVsaEEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDk1ODE1CWZpbGU6UGFuZXNfMC42Ni4wX2FtZDY0LkFwcEltYWdlClNVM1plL1M1ZHJFb1NUMGp1UzJvbm13cUE5cFN0M2F1Q0dXVlRBR1ZocmlCRmZneEZ3ZGVCdkEwdTIzVTJscWZvYlQyY1FqbS95V2tYenp1SkJnM0FBPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.66.0/Panes_0.66.0_amd64.AppImage"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWhXaEc0WmYxb1VFYUUzbFhoRWM3eHFrSlU1T0ZrazlldGdMeXA0RnJlelhpSElkYnZiWE9hYnVzVGRIakNBYjhiYzZpTnRiTjNYMnJZdWJHZmVsaEEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDk1ODE1CWZpbGU6UGFuZXNfMC42Ni4wX2FtZDY0LkFwcEltYWdlClNVM1plL1M1ZHJFb1NUMGp1UzJvbm13cUE5cFN0M2F1Q0dXVlRBR1ZocmlCRmZneEZ3ZGVCdkEwdTIzVTJscWZvYlQyY1FqbS95V2tYenp1SkJnM0FBPT0K",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.66.0/Panes_0.66.0_amd64.AppImage"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWhkaU1rVzIra1BkVGd0MFRDUjNxZGxzamJZYWhkWHBGdWptam1FVWZ0VWV0NE5sczI2aDNVZVNqVXVsdVF3VENaYmlsU1FwdmhKbWd4Y0JXZ29KVFFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDk1ODE1CWZpbGU6UGFuZXNfMC42Ni4wX2FtZDY0LmRlYgo3ekVMamtoY2Q1QitTSElHOVd0aFlaK0dMTUYxYWdKRWc1RmJUUitBemE0UkkwSFpQdnhIT3cwWHB6TEhocDU2UTRQZURxaXZFVVUwMGIvZFlYSHlCZz09Cg==",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.66.0/Panes_0.66.0_amd64.deb"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb2FpYW94bWV1cWtXOHBtaTlvNzdsN25iMTFwbkFUdW5PZ2U4dWMvT2JPL2svWjg2ZFFUclpXbXVhbkJjQjJOa3JxYzA3eGF1dmJuSE5zb2pHaE04MllpVEdaR0d2dndjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NDk2MTU1CWZpbGU6UGFuZXNfMC42Ni4wX3g2NC1zZXR1cC5leGUKU1B0Q29XdEMwdlpTT3BSTHN3em1JaXo4UWdiTFozblVaUGY4TE1vYUZnTkpvMldiUmdSanBLc05NMktwQksrWjArRWI0aFVmYWRoWWR3bitJei93Q1E9PQo=",
+      "url": "https://github.com/wygoralves/panes/releases/download/v0.66.0/Panes_0.66.0_x64-setup.exe"
+    }
+  }
+}
