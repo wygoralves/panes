@@ -8,6 +8,7 @@ import { toast } from "../../stores/toastStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { ToggleOptionCard } from "../shared/ToggleOptionCard";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard, readTextFromClipboard } from "../../lib/clipboard";
 import {
@@ -2936,41 +2937,23 @@ function NewTabDropdown({
                 </div>
 
                 <div className="tnd-options">
-                  <button
-                    type="button"
-                    className={`tnd-option-card${withBroadcast ? " tnd-option-card-active" : ""}`}
-                    onClick={() => setWithBroadcast(!withBroadcast)}
-                  >
-                    <div className="tnd-option-icon">
-                      <Radio size={13} />
-                    </div>
-                    <div className="tnd-option-text">
-                      <span className="tnd-option-title">{t("terminal.broadcastInput")}</span>
-                      <span className="tnd-option-desc">{t("terminal.broadcastInputDescription")}</span>
-                    </div>
-                    <div className={`tnd-option-toggle${withBroadcast ? " tnd-option-toggle-on" : ""}`}>
-                      <div className="tnd-option-toggle-dot" />
-                    </div>
-                  </button>
+                  <ToggleOptionCard
+                    icon={<Radio size={13} />}
+                    title={t("terminal.broadcastInput")}
+                    description={t("terminal.broadcastInputDescription")}
+                    checked={withBroadcast}
+                    onChange={setWithBroadcast}
+                  />
 
                   {repos.length > 0 && (
                     <div>
-                      <button
-                        type="button"
-                        className={`tnd-option-card${useWorktrees ? " tnd-option-card-active" : ""}`}
-                        onClick={() => setUseWorktrees(!useWorktrees)}
-                      >
-                        <div className="tnd-option-icon">
-                          <GitBranchIcon size={13} />
-                        </div>
-                        <div className="tnd-option-text">
-                          <span className="tnd-option-title">{t("terminal.gitWorktrees")}</span>
-                          <span className="tnd-option-desc">{t("terminal.gitWorktreesDescription")}</span>
-                        </div>
-                        <div className={`tnd-option-toggle${useWorktrees ? " tnd-option-toggle-on" : ""}`}>
-                          <div className="tnd-option-toggle-dot" />
-                        </div>
-                      </button>
+                      <ToggleOptionCard
+                        icon={<GitBranchIcon size={13} />}
+                        title={t("terminal.gitWorktrees")}
+                        description={t("terminal.gitWorktreesDescription")}
+                        checked={useWorktrees}
+                        onChange={setUseWorktrees}
+                      />
                       {useWorktrees && repos.length > 1 && (
                         <select
                           className="tnd-worktree-repo-select"

@@ -315,6 +315,16 @@ export const ipc = {
       updateApprovalsReviewer: Object.prototype.hasOwnProperty.call(patch, "approvalsReviewer"),
       approvalsReviewer: patch.approvalsReviewer ?? null,
     }),
+  setThreadWorktree: (
+    threadId: string,
+    repoId: string | null,
+    worktreePath: string | null,
+  ) =>
+    invoke<Thread>("set_thread_worktree", {
+      threadId,
+      repoId,
+      worktreePath,
+    }),
   setThreadCodexConfig: (
     threadId: string,
     patch: {

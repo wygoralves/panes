@@ -1,0 +1,2 @@
+# Build outputs written by build.rs; the dev watcher must not restart on them.
+helper/build/

@@ -365,7 +365,8 @@
     "surfaces": {
       "chat": "Chat",
       "terminal": "Terminal",
-      "editor": "Editor"
+      "editor": "Editor",
+      "subagent": "Subagentes"
     }
   },
   "terminal": {
@@ -905,6 +906,8 @@
     "helperInstallButton": "Instalar auxiliar",
     "helperInstallingButton": "Instalando...",
     "helperApprovalNote": "Abra Configurações do Sistema → Geral → Itens de Login para aprovar.",
-    "helperPasswordFallback": "Uma solicitação de senha aparecerá ao ativar a prevenção de suspensão ao fechar a tampa."
+    "helperPasswordFallback": "Sem o auxiliar, a prevenção ao fechar a tampa fica desligada, a menos que você permita a solicitação de senha abaixo.",
+    "passwordPromptFallback": "Permitir solicitação de senha no lugar",
+    "passwordPromptFallbackDescription": "O macOS pede sua senha toda vez que o manter acordado é ativado com a tampa fechada."
   }
 }

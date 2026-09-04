@@ -316,6 +316,7 @@ pub fn run() {
             commands::threads::confirm_workspace_thread,
             commands::threads::set_thread_reasoning_effort,
             commands::threads::set_thread_execution_policy,
+            commands::threads::set_thread_worktree,
             commands::threads::set_thread_codex_config,
             commands::threads::set_thread_opencode_config,
             commands::threads::archive_thread,

@@ -133,6 +133,9 @@
       "created": "Created worktree: {{branchName}}",
       "pruned": "Pruned stale worktrees",
       "removed": "Worktree removed"
+    },
+    "errors": {
+      "threadRunning": "This worktree is still running a chat ({{threads}}). Stop the turn, then remove the worktree."
     }
   },
   "changes": {

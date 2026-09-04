@@ -33,6 +33,10 @@ export interface PowerSettings {
   batteryThreshold: number | null;
   sessionDurationSecs: number | null;
   preventClosedDisplaySleep: boolean;
+  /** Let lid-close prevention use `pmset` behind a macOS password dialog when
+   * the privileged helper is missing. Off by default: the dialog reappears on
+   * every activation. */
+  allowPasswordPromptFallback: boolean;
 }
 
 export interface PowerSettingsInput {
@@ -43,6 +47,7 @@ export interface PowerSettingsInput {
   batteryThreshold: number | null;
   sessionDurationSecs: number | null;
   preventClosedDisplaySleep: boolean;
+  allowPasswordPromptFallback: boolean;
 }
 
 export interface HelperStatus {
@@ -264,6 +269,13 @@ export interface TextBlock {
   content: string;
   planMode?: boolean;
   isSteer?: boolean;
+  /** Subagent that produced this text; absent for the main agent. */
+  agentId?: string;
+  /**
+   * The engine has moved on to a new message item, so later deltas open a
+   * fresh block instead of extending this one.
+   */
+  closed?: boolean;
 }
 
 export interface CodeBlock {
@@ -311,6 +323,8 @@ export interface ActionBlock {
   actionId: string;
   engineActionId?: string;
   actionType: ActionType;
+  /** Subagent that ran this tool call; absent for the main agent. */
+  agentId?: string;
   summary: string;
   details: Record<string, unknown>;
   outputChunks: Array<{ stream: "stdout" | "stderr" | "stdin"; content: string }>;
@@ -422,6 +436,26 @@ export interface ThinkingBlock {
   content: string;
   startedAt?: number;
   durationMs?: number;
+  agentId?: string;
+}
+
+export type SubagentStatus = "running" | "done" | "error" | "interrupted";
+
+/** A worker spawned inside a turn: a Claude Task agent or a Codex child
+ * thread. Its own blocks stay flat in the message and carry the same
+ * `agentId`; the transcript nests them under this block at render time. */
+export interface SubagentBlock {
+  type: "subagent";
+  agentId: string;
+  agentType?: string;
+  description: string;
+  parentActionId?: string;
+  parentAgentId?: string;
+  status: SubagentStatus;
+  summary?: string;
+  startedAt?: number;
+  durationMs?: number;
+  progress?: string;
 }
 
 export interface ErrorBlock {
@@ -472,7 +506,8 @@ export type ContentBlock =
   | AttachmentBlock
   | SkillBlock
   | MentionBlock
-  | SteerBlock;
+  | SteerBlock
+  | SubagentBlock;
 
 export interface EngineInfo {
   id: string;
@@ -1206,6 +1241,15 @@ export interface ThinkingDeltaEvent {
   content: string;
 }
 
+/**
+ * The engine started a new main-agent message item. Text deltas merge across
+ * interleaved subagent output, so this is the only signal that says where one
+ * message ends and the next begins.
+ */
+export interface TextItemStartedEvent {
+  type: "TextItemStarted";
+}
+
 export interface ActionStartedEvent {
   type: "ActionStarted";
   action_id: string;
@@ -1213,6 +1257,41 @@ export interface ActionStartedEvent {
   action_type: ActionType;
   summary: string;
   details: Record<string, unknown>;
+  agent_id?: string | null;
+}
+
+export interface SubagentStartedEvent {
+  type: "SubagentStarted";
+  agent_id: string;
+  agent_type?: string | null;
+  description: string;
+  parent_action_id?: string | null;
+  parent_agent_id?: string | null;
+}
+
+export interface SubagentProgressEvent {
+  type: "SubagentProgress";
+  agent_id: string;
+  message: string;
+}
+
+export interface SubagentCompletedEvent {
+  type: "SubagentCompleted";
+  agent_id: string;
+  status?: TurnCompletionStatus;
+  summary?: string | null;
+}
+
+export interface SubagentTextDeltaEvent {
+  type: "SubagentTextDelta";
+  agent_id: string;
+  content: string;
+}
+
+export interface SubagentThinkingDeltaEvent {
+  type: "SubagentThinkingDelta";
+  agent_id: string;
+  content: string;
 }
 
 export interface ActionOutputDeltaEvent {
@@ -1311,6 +1390,7 @@ export type StreamEvent =
   | TurnCompletedEvent
   | TextDeltaEvent
   | ThinkingDeltaEvent
+  | TextItemStartedEvent
   | ActionStartedEvent
   | ActionOutputDeltaEvent
   | ActionProgressUpdatedEvent
@@ -1322,7 +1402,12 @@ export type StreamEvent =
   | NoticeEvent
   | TaskListUpdatedEvent
   | ErrorEvent
-  | UsageLimitsUpdatedEvent;
+  | UsageLimitsUpdatedEvent
+  | SubagentStartedEvent
+  | SubagentProgressEvent
+  | SubagentCompletedEvent
+  | SubagentTextDeltaEvent
+  | SubagentThinkingDeltaEvent;
 
 // ── Attachments ─────────────────────────────────────────────────────
 

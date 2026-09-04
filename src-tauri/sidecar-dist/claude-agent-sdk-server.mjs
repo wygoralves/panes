@@ -4,7 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -303,43 +303,118 @@ async function buildAttachmentContentBlock(attachment, cwd) {
   };
 }
 
-function buildPromptInput(prompt, attachments, cwd, sessionIdHint) {
-  if (!Array.isArray(attachments) || attachments.length === 0) {
-    return prompt;
-  }
-
-  if (attachments.length > MAX_ATTACHMENTS_PER_TURN) {
+async function buildUserMessageContent(prompt, attachments, cwd) {
+  const attachmentList = Array.isArray(attachments) ? attachments : [];
+  if (attachmentList.length > MAX_ATTACHMENTS_PER_TURN) {
     throw new Error(
       `You can attach at most ${MAX_ATTACHMENTS_PER_TURN} files per Claude turn.`,
     );
   }
 
-  return (async function* promptWithAttachments() {
-    const content = [];
-    if (typeof prompt === "string" && prompt.length > 0) {
-      content.push({ type: "text", text: prompt });
-    }
+  const content = [];
+  if (typeof prompt === "string" && prompt.length > 0) {
+    content.push({ type: "text", text: prompt });
+  }
 
-    for (const attachment of attachments) {
-      content.push(await buildAttachmentContentBlock(attachment, cwd));
-    }
+  for (const attachment of attachmentList) {
+    content.push(await buildAttachmentContentBlock(attachment, cwd));
+  }
 
-    if (content.length === 0) {
-      throw new Error(
-        "Claude turn must include either a prompt or at least one supported attachment.",
-      );
-    }
+  if (content.length === 0) {
+    throw new Error(
+      "Claude turn must include either a prompt or at least one supported attachment.",
+    );
+  }
 
-    yield {
-      type: "user",
-      message: {
-        role: "user",
-        content,
-      },
-      parent_tool_use_id: null,
-      session_id: sessionIdHint || "",
-    };
-  })();
+  return content;
+}
+
+// Shape follows SDKUserMessage in sdk.d.ts. The SDK writes a string prompt as
+// a single text block, so the initial message mirrors that exactly.
+async function buildUserMessage(prompt, attachments, cwd, sessionIdHint, extra = {}) {
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content: await buildUserMessageContent(prompt, attachments, cwd),
+    },
+    parent_tool_use_id: null,
+    session_id: sessionIdHint || "",
+    ...extra,
+  };
+}
+
+// The query prompt is a pushable async iterable so more user messages can be
+// written to the running CLI while a turn is in flight (mid-turn steering).
+// The SDK forwards each pushed message to the CLI stdin as it arrives and
+// closes stdin once the iterable ends.
+function createInputStream() {
+  // Entries are { message, requestId }: requestId names the steer request that
+  // queued the message, so a dropped message can be answered.
+  const queue = [];
+  const waiters = [];
+  let ended = false;
+
+  const settleWaiters = () => {
+    while (waiters.length > 0 && (queue.length > 0 || ended)) {
+      const waiter = waiters.shift();
+      if (queue.length > 0) {
+        waiter({ value: queue.shift().message, done: false });
+      } else {
+        waiter({ value: undefined, done: true });
+      }
+    }
+  };
+
+  return {
+    get ended() {
+      return ended;
+    },
+    push(message, requestId = null) {
+      if (ended) {
+        return false;
+      }
+      queue.push({ message, requestId });
+      settleWaiters();
+      return true;
+    },
+    // Discards every message the query has not read yet and reports the steer
+    // requests that were still waiting in the queue.
+    dropQueued() {
+      const dropped = queue.splice(0);
+      settleWaiters();
+      return dropped
+        .map((entry) => entry.requestId)
+        .filter((requestId) => typeof requestId === "string" && requestId.length > 0);
+    },
+    end() {
+      if (ended) {
+        return;
+      }
+      ended = true;
+      settleWaiters();
+    },
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => {
+          if (queue.length > 0) {
+            return Promise.resolve({ value: queue.shift().message, done: false });
+          }
+          if (ended) {
+            return Promise.resolve({ value: undefined, done: true });
+          }
+          return new Promise((resolve) => {
+            waiters.push(resolve);
+          });
+        },
+        return: () => {
+          ended = true;
+          settleWaiters();
+          return Promise.resolve({ value: undefined, done: true });
+        },
+      };
+    },
+  };
 }
 
 function mapToolNameToActionType(toolName) {
@@ -368,8 +443,17 @@ function summarizeTool(toolName, toolInput) {
   if (toolInput.file_path) return `${toolName}: ${toolInput.file_path}`;
   if (toolInput.pattern) return `${toolName}: ${toolInput.pattern}`;
   if (toolInput.url) return `${toolName}: ${toolInput.url}`;
+  if (typeof toolInput.description === "string" && toolInput.description.trim()) {
+    return `${toolName}: ${toolInput.description.trim().slice(0, 120)}`;
+  }
   if (toolInput.prompt) return `${toolName}: ${toolInput.prompt.slice(0, 80)}`;
   return toolName;
+}
+
+const SUBAGENT_TOOL_NAMES = new Set(["Task", "Agent"]);
+
+function isSubagentSpawnTool(toolName) {
+  return SUBAGENT_TOOL_NAMES.has(toolName);
 }
 
 function normalizePath(cwd, value) {
@@ -455,22 +539,354 @@ function createQueryContext(id, sessionIdHint = null) {
     typeof sessionIdHint === "string"
       ? taskSnapshotsBySessionId.get(sessionIdHint)
       : null;
-  return {
+  const context = {
     id,
     query: null,
+    input: null,
+    cwd: null,
+    cancelTimer: null,
     actionCounter: 0,
     actionIdsByToolUseId: new Map(),
     streamToolUseIdsByIndex: new Map(),
     suppressedToolUseIds: new Set(),
     pendingApprovalIds: new Set(),
     cancelled: false,
+    // Cancel requests waiting for this query to stop, answered once it has.
+    cancelAckIds: [],
+    cancelSettled: false,
     turnCompleted: false,
     sessionId: sessionIdHint,
+    // The session this query was started for, kept even after the CLI reports
+    // its own session id, so a follow-up turn can find a query still stopping.
+    sessionKeyHint: sessionIdHint,
     tasks: new Map(cachedTasks || []),
     taskCounter: 0,
     tokenUsage: null,
     stopReason: null,
+    // Subagent bookkeeping. The public agentId is the Task tool's tool_use_id.
+    subagents: new Map(),
+    // hook agent_id, task_id or a late tool_use_id -> public agentId
+    subagentAliases: new Map(),
+    subagentSpawnInputsByToolUseId: new Map(),
+    // tool_use_id -> public agentId of the subagent that issued the call
+    subagentIdsByToolUseId: new Map(),
   };
+  // Resolves once the query has stopped for good, so the next turn on the same
+  // session can wait for it instead of overlapping it.
+  context.finished = new Promise((resolve) => {
+    context.markFinished = resolve;
+  });
+  return context;
+}
+
+// ── Subagent correlation ──────────────────────────────────────────────
+//
+// The CLI identifies one subagent three different ways:
+//   - the Task tool call that spawned it (`tool_use_id`), which is also the
+//     `parent_tool_use_id` on every message the subagent produces,
+//   - the task registry id (`task_id` on system/task_* messages), and
+//   - the hook `agent_id` on hooks that fire inside the subagent.
+// Panes uses the Task tool_use_id as the public agentId. `task_started`
+// carries both the tool_use_id and the task_id, and the CLI registers the
+// task under the agent id, so hooks normally resolve through
+// `task_id == agent_id`. When that lookup misses (older runtimes), the hook is
+// paired with the oldest unbound subagent of the same agent_type: SubagentStart
+// fires right after task_started, so spawn order matches.
+
+function subagentTitle(record) {
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  if (name) {
+    return name;
+  }
+  const description =
+    typeof record.description === "string" ? record.description.trim() : "";
+  if (description) {
+    return description;
+  }
+  return record.agentType || record.agentId;
+}
+
+function registerSubagent(context, agentId, fields) {
+  if (context.subagents.has(agentId)) {
+    return context.subagents.get(agentId);
+  }
+  const spawnInput = context.subagentSpawnInputsByToolUseId.get(agentId) || {};
+  const record = {
+    agentId,
+    taskId: fields.taskId ?? null,
+    hookAgentId: fields.hookAgentId ?? null,
+    agentType: fields.agentType ?? spawnInput.subagentType ?? null,
+    description: fields.description || spawnInput.description || "",
+    name: spawnInput.name ?? null,
+    parentActionId: context.actionIdsByToolUseId.get(agentId) ?? null,
+    parentAgentId: context.subagentIdsByToolUseId.get(agentId) ?? null,
+    completed: false,
+    streamedMessageIds: new Set(),
+  };
+  context.subagents.set(agentId, record);
+  if (record.taskId) {
+    context.subagentAliases.set(record.taskId, agentId);
+  }
+  if (record.hookAgentId) {
+    context.subagentAliases.set(record.hookAgentId, agentId);
+  }
+  emit({
+    id: context.id,
+    type: "subagent_started",
+    agentId,
+    agentType: record.agentType,
+    description: record.description || subagentTitle(record),
+    parentActionId: record.parentActionId,
+    parentAgentId: record.parentAgentId,
+  });
+  return record;
+}
+
+function resolveSubagentIdForHook(context, hookInput) {
+  const hookAgentId = hookInput?.agent_id;
+  if (typeof hookAgentId !== "string" || hookAgentId.length === 0) {
+    return null;
+  }
+  const known = context.subagentAliases.get(hookAgentId);
+  if (known) {
+    const record = context.subagents.get(known);
+    if (record && !record.hookAgentId) {
+      record.hookAgentId = hookAgentId;
+    }
+    return known;
+  }
+  const hookAgentType =
+    typeof hookInput?.agent_type === "string" ? hookInput.agent_type : null;
+  for (const record of context.subagents.values()) {
+    if (record.completed || record.hookAgentId) {
+      continue;
+    }
+    if (hookAgentType && record.agentType && record.agentType !== hookAgentType) {
+      continue;
+    }
+    record.hookAgentId = hookAgentId;
+    context.subagentAliases.set(hookAgentId, record.agentId);
+    return record.agentId;
+  }
+  return null;
+}
+
+function resolveSubagentId(context, candidate) {
+  if (typeof candidate !== "string" || candidate.length === 0) {
+    return null;
+  }
+  if (context.subagents.has(candidate)) {
+    return candidate;
+  }
+  return context.subagentAliases.get(candidate) ?? null;
+}
+
+function resolveSubagentIdForTask(context, message) {
+  return (
+    resolveSubagentId(context, message?.tool_use_id) ??
+    resolveSubagentId(context, message?.task_id)
+  );
+}
+
+function isSubagentTaskMessage(message) {
+  if (typeof message?.tool_use_id !== "string" || message.tool_use_id.length === 0) {
+    return false;
+  }
+  if (message.skip_transcript === true) {
+    return false;
+  }
+  if (typeof message.task_type === "string") {
+    return message.task_type === "local_agent";
+  }
+  return true;
+}
+
+function normalizeSubagentStatus(status) {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "killed":
+    case "stopped":
+    case "interrupted":
+      return "interrupted";
+    default:
+      return null;
+  }
+}
+
+function completeSubagent(context, agentId, status, summary) {
+  const record = context.subagents.get(agentId);
+  if (!record || record.completed) {
+    return;
+  }
+  record.completed = true;
+  emit({
+    id: context.id,
+    type: "subagent_completed",
+    agentId,
+    status,
+    summary: typeof summary === "string" && summary.trim() ? summary.trim() : null,
+  });
+}
+
+function closeOutSubagents(context, status) {
+  for (const record of context.subagents.values()) {
+    if (!record.completed) {
+      completeSubagent(context, record.agentId, status, null);
+    }
+  }
+}
+
+function emitSubagentProgress(context, agentId, message) {
+  const record = context.subagents.get(agentId);
+  if (!record || record.completed) {
+    return;
+  }
+  if (typeof message !== "string" || !message.trim()) {
+    return;
+  }
+  emit({
+    id: context.id,
+    type: "subagent_progress",
+    agentId,
+    message: message.trim(),
+  });
+}
+
+function handleSubagentTaskMessage(context, message) {
+  if (message.subtype === "task_started") {
+    if (!isSubagentTaskMessage(message)) {
+      return;
+    }
+    const agentId = message.tool_use_id;
+    if (context.subagents.has(agentId)) {
+      return;
+    }
+    const existingId = resolveSubagentId(context, message.task_id);
+    if (existingId) {
+      // SubagentStart already registered this worker under its hook agent
+      // id; alias the tool_use_id so parented messages still resolve.
+      const existing = context.subagents.get(existingId);
+      context.subagentAliases.set(agentId, existingId);
+      if (existing) {
+        existing.taskId = existing.taskId ?? message.task_id;
+        if (typeof message.description === "string" && message.description.trim()) {
+          existing.description = message.description;
+        }
+        if (!existing.agentType && typeof message.subagent_type === "string") {
+          existing.agentType = message.subagent_type;
+        }
+      }
+      return;
+    }
+    registerSubagent(context, agentId, {
+      taskId: typeof message.task_id === "string" ? message.task_id : null,
+      agentType: typeof message.subagent_type === "string" ? message.subagent_type : null,
+      description: typeof message.description === "string" ? message.description : "",
+    });
+    return;
+  }
+
+  const agentId = resolveSubagentIdForTask(context, message);
+  if (!agentId) {
+    return;
+  }
+
+  if (message.subtype === "task_progress") {
+    const summary =
+      typeof message.summary === "string" && message.summary.trim()
+        ? message.summary
+        : typeof message.last_tool_name === "string" && message.last_tool_name
+          ? `Running ${message.last_tool_name}`
+          : null;
+    emitSubagentProgress(context, agentId, summary);
+    return;
+  }
+
+  if (message.subtype === "task_updated") {
+    const patch = message.patch && typeof message.patch === "object" ? message.patch : {};
+    const record = context.subagents.get(agentId);
+    if (record && typeof patch.description === "string" && patch.description.trim()) {
+      record.description = patch.description;
+    }
+    const status = normalizeSubagentStatus(patch.status);
+    if (status) {
+      completeSubagent(context, agentId, status, patch.error ?? null);
+    }
+    return;
+  }
+
+  if (message.subtype === "task_notification") {
+    const status = normalizeSubagentStatus(message.status);
+    if (status) {
+      completeSubagent(context, agentId, status, message.summary ?? null);
+    }
+  }
+}
+
+function emitSubagentContentBlocks(context, parentToolUseId, message) {
+  const agentId = resolveSubagentId(context, parentToolUseId);
+  const record = agentId ? context.subagents.get(agentId) : null;
+  if (!record) {
+    return;
+  }
+  const messageId = message?.message?.id;
+  if (typeof messageId === "string" && record.streamedMessageIds.has(messageId)) {
+    // Partial deltas already covered this message.
+    return;
+  }
+  const blocks = Array.isArray(message?.message?.content) ? message.message.content : [];
+  for (const block of blocks) {
+    if (block?.type === "text" && typeof block.text === "string" && block.text.length > 0) {
+      emit({ id: context.id, type: "subagent_text_delta", agentId, content: block.text });
+    } else if (
+      block?.type === "thinking" &&
+      typeof block.thinking === "string" &&
+      block.thinking.length > 0
+    ) {
+      emit({
+        id: context.id,
+        type: "subagent_thinking_delta",
+        agentId,
+        content: block.thinking,
+      });
+    }
+  }
+}
+
+function handleSubagentStreamEvent(context, parentToolUseId, streamEvent) {
+  const agentId = resolveSubagentId(context, parentToolUseId);
+  const record = agentId ? context.subagents.get(agentId) : null;
+  if (!record) {
+    return;
+  }
+  if (streamEvent?.type === "message_start") {
+    const messageId = streamEvent.message?.id;
+    if (typeof messageId === "string") {
+      record.streamedMessageIds.add(messageId);
+    }
+    return;
+  }
+  if (streamEvent?.type !== "content_block_delta") {
+    return;
+  }
+  const delta = streamEvent.delta;
+  if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text.length > 0) {
+    emit({ id: context.id, type: "subagent_text_delta", agentId, content: delta.text });
+  } else if (
+    delta?.type === "thinking_delta" &&
+    typeof delta.thinking === "string" &&
+    delta.thinking.length > 0
+  ) {
+    emit({
+      id: context.id,
+      type: "subagent_thinking_delta",
+      agentId,
+      content: delta.thinking,
+    });
+  }
 }
 
 function setContextSessionId(context, sessionId) {
@@ -982,7 +1398,11 @@ function buildPermissionHandler({
   cwd,
   writableRoots,
   sandboxMode,
+  // The network policy the caller asked for. The default approval policy reads
+  // it as a trust signal, so it stays exactly what was requested.
   allowNetwork,
+  // The network policy actually in force, which full access widens.
+  networkEnabled = allowNetwork,
   approvalPolicy,
   allowedTools = [],
 }) {
@@ -1002,7 +1422,7 @@ function buildPermissionHandler({
       return permission;
     }
 
-    if (!allowNetwork && toolName === "WebFetch") {
+    if (!networkEnabled && toolName === "WebFetch") {
       const permission = {
         behavior: "deny",
         message: "Network access is disabled for this repository.",
@@ -1030,23 +1450,27 @@ function buildPermissionHandler({
         return permission;
       }
 
-      const candidatePaths = collectCandidatePaths(toolName, toolInput, cwd);
-      if (candidatePaths.length === 0) {
-        const permission = {
-          behavior: "deny",
-          message: "Unable to verify the target path for this write operation.",
-        };
-        emitDeniedToolCompletion(context, toolUseId, permission.message);
-        return permission;
-      }
+      // Full access lifts the writable-root fence entirely; the approval
+      // policy below still applies.
+      if (sandboxMode !== "danger-full-access") {
+        const candidatePaths = collectCandidatePaths(toolName, toolInput, cwd);
+        if (candidatePaths.length === 0) {
+          const permission = {
+            behavior: "deny",
+            message: "Unable to verify the target path for this write operation.",
+          };
+          emitDeniedToolCompletion(context, toolUseId, permission.message);
+          return permission;
+        }
 
-      if (!candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
-        const permission = {
-          behavior: "deny",
-          message: "This file path is outside the approved writable roots for the thread.",
-        };
-        emitDeniedToolCompletion(context, toolUseId, permission.message);
-        return permission;
+        if (!candidatePaths.every((candidate) => isWithinAnyRoot(normalizedRoots, candidate))) {
+          const permission = {
+            behavior: "deny",
+            message: "This file path is outside the approved writable roots for the thread.",
+          };
+          emitDeniedToolCompletion(context, toolUseId, permission.message);
+          return permission;
+        }
       }
     }
 
@@ -1399,8 +1823,8 @@ function buildContextUsageSnapshot(streamEvent, model) {
   );
 
   return {
-    currentTokens: null,
-    maxContextTokens: null,
+    currentTokens,
+    maxContextTokens,
     contextWindowPercent: remainingPercent,
     fiveHourPercent: null,
     weeklyPercent: null,
@@ -1554,14 +1978,23 @@ function normalizeSandboxMode(value) {
     return "workspace-write";
   }
   if (compact === "dangerfullaccess") {
-    throw new Error(
-      "Claude does not support sandboxMode=danger-full-access. Use read-only or workspace-write.",
-    );
+    return "danger-full-access";
   }
 
   throw new Error(
-    "Unsupported Claude sandboxMode. Expected one of: read-only, workspace-write.",
+    "Unsupported Claude sandboxMode. Expected one of: read-only, workspace-write, danger-full-access.",
   );
+}
+
+// Full access runs the CLI without the OS sandbox, so Bash can reach the
+// network whatever the thread's flag says. Denying WebFetch on top of that
+// would hide the reach rather than remove it, so full access reports and
+// applies network access as enabled.
+function effectiveAllowNetwork(sandboxMode, allowNetwork) {
+  if (sandboxMode === "danger-full-access") {
+    return true;
+  }
+  return Boolean(allowNetwork);
 }
 
 function normalizeWritableRoots(cwd, writableRoots) {
@@ -1579,7 +2012,7 @@ function normalizeWritableRoots(cwd, writableRoots) {
 }
 
 function additionalDirectoriesForSandbox(cwd, sandboxMode, writableRoots) {
-  if (sandboxMode !== "workspace-write") {
+  if (sandboxMode !== "workspace-write" && sandboxMode !== "danger-full-access") {
     return [];
   }
 
@@ -1592,6 +2025,34 @@ function allowWriteRootsForSandbox(sandboxMode, writableRoots) {
   }
 
   return writableRoots;
+}
+
+function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
+  if (sandboxMode === "danger-full-access") {
+    // Full access runs the CLI without the OS sandbox: unrestricted
+    // filesystem writes, and network follows the thread's allowNetwork flag
+    // through the WebFetch gate in canUseTool.
+    return { enabled: false };
+  }
+
+  return {
+    enabled: true,
+    failIfUnavailable: false,
+    autoAllowBashIfSandboxed: true,
+    allowUnsandboxedCommands: false,
+    filesystem: {
+      allowWrite: allowWriteRootsForSandbox(sandboxMode, writableRoots),
+    },
+    ...(allowNetwork
+      ? {}
+      : {
+          network: {
+            allowedDomains: [],
+            allowLocalBinding: false,
+            allowUnixSockets: [],
+          },
+        }),
+  };
 }
 
 function applyClaudeRuntime(options) {
@@ -1670,32 +2131,48 @@ async function handleQuery(req) {
     reasoningEffort,
   } = params;
 
-  const context = createQueryContext(id, sessionId || resume || null);
+  const sessionKey = sessionId || resume || null;
+  const context = createQueryContext(id, sessionKey);
+  // Registered before the wait below so a stop that lands while the previous
+  // query is still winding down still finds this turn.
   activeQueries.set(id, context);
-
-  // Task tools belong to the default tool set only. A caller that supplied an
-  // explicit allowlist gets exactly that list, so Panes never widens a thread
-  // past what the policy asked for.
-  const toolList = Array.isArray(allowedTools)
-    ? [...new Set(allowedTools)]
-    : [
-        ...new Set([
-          "Read",
-          "Write",
-          "Edit",
-          "Bash",
-          "Glob",
-          "Grep",
-          ...(allowNetwork ? ["WebFetch"] : []),
-          ...TASK_TOOL_NAMES,
-        ]),
-      ];
 
   const sessionCwd = cwd || process.cwd();
   let actualSessionId = null;
   try {
     const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
     const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
+    const networkEnabled = effectiveAllowNetwork(normalizedSandboxMode, allowNetwork);
+
+    // Task tools belong to the default tool set only. A caller that supplied an
+    // explicit allowlist gets exactly that list, so Panes never widens a thread
+    // past what the policy asked for.
+    const toolList = Array.isArray(allowedTools)
+      ? [...new Set(allowedTools)]
+      : [
+          ...new Set([
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Glob",
+            "Grep",
+            ...(networkEnabled ? ["WebFetch"] : []),
+            ...TASK_TOOL_NAMES,
+          ]),
+        ];
+
+    if (networkEnabled && !allowNetwork) {
+      emit({
+        id,
+        type: "notice",
+        kind: "claude_network_policy",
+        level: "warning",
+        title: "Network stays enabled under full access",
+        message:
+          "Full access runs Claude without the OS sandbox, so commands can still reach the network. This thread runs with network access enabled.",
+      });
+    }
 
     const options = applyClaudeRuntime({
       cwd: sessionCwd,
@@ -1720,32 +2197,17 @@ async function handleQuery(req) {
         writableRoots: normalizedWritableRoots,
         sandboxMode: normalizedSandboxMode,
         allowNetwork: Boolean(allowNetwork),
+        networkEnabled,
         approvalPolicy,
         allowedTools: toolList,
       }),
       // settingSources is intentionally omitted so user, project and local
       // settings all load, matching the Claude Code CLI default.
-      sandbox: {
-        enabled: true,
-        failIfUnavailable: false,
-        autoAllowBashIfSandboxed: true,
-        allowUnsandboxedCommands: false,
-        filesystem: {
-          allowWrite: allowWriteRootsForSandbox(
-            normalizedSandboxMode,
-            normalizedWritableRoots,
-          ),
-        },
-        ...(allowNetwork
-          ? {}
-          : {
-              network: {
-                allowedDomains: [],
-                allowLocalBinding: false,
-                allowUnixSockets: [],
-              },
-            }),
-      },
+      sandbox: buildSandboxOptions(
+        normalizedSandboxMode,
+        normalizedWritableRoots,
+        networkEnabled,
+      ),
       settings: {
         permissions: {
           defaultMode: planMode ? "plan" : "default",
@@ -1753,6 +2215,10 @@ async function handleQuery(req) {
         },
       },
       includePartialMessages: true,
+      // Subagent text and thinking arrive as complete assistant messages
+      // carrying parent_tool_use_id; without this flag only tool blocks are
+      // forwarded.
+      forwardSubagentText: true,
       hooks: {
       PreToolUse: [
         {
@@ -1783,8 +2249,27 @@ async function handleQuery(req) {
                 return {};
               }
               const actionId = `claude-action-${++context.actionCounter}`;
+              // Hooks inside a subagent carry agent_id; map it to the public
+              // agentId so the action lands in that worker's transcript.
+              const agentId = resolveSubagentIdForHook(context, hookInput);
               if (typeof toolUseId === "string" && toolUseId.length > 0) {
                 context.actionIdsByToolUseId.set(toolUseId, actionId);
+                if (agentId) {
+                  context.subagentIdsByToolUseId.set(toolUseId, agentId);
+                }
+                if (isSubagentSpawnTool(toolName)) {
+                  context.subagentSpawnInputsByToolUseId.set(toolUseId, {
+                    name: typeof toolInput.name === "string" ? toolInput.name : null,
+                    description:
+                      typeof toolInput.description === "string"
+                        ? toolInput.description
+                        : null,
+                    subagentType:
+                      typeof toolInput.subagent_type === "string"
+                        ? toolInput.subagent_type
+                        : null,
+                  });
+                }
               }
 
               emit({
@@ -1795,6 +2280,7 @@ async function handleQuery(req) {
                 toolName,
                 summary: summarizeTool(toolName, toolInput),
                 details: toolInput,
+                ...(agentId ? { agentId } : {}),
               });
 
               return {};
@@ -1890,6 +2376,52 @@ async function handleQuery(req) {
           ],
         },
       ],
+      SubagentStart: [
+        {
+          hooks: [
+            async (hookInput) => {
+              const hookAgentId = hookInput?.agent_id;
+              if (typeof hookAgentId !== "string" || hookAgentId.length === 0) {
+                return {};
+              }
+              if (!resolveSubagentIdForHook(context, hookInput)) {
+                // No task_started announced this worker (for example a
+                // runtime that does not emit task messages). Register it
+                // under the hook id so its tool calls still get a home.
+                registerSubagent(context, hookAgentId, {
+                  hookAgentId,
+                  agentType:
+                    typeof hookInput?.agent_type === "string"
+                      ? hookInput.agent_type
+                      : null,
+                  description: "",
+                });
+              }
+              return {};
+            },
+          ],
+        },
+      ],
+      SubagentStop: [
+        {
+          hooks: [
+            async (hookInput) => {
+              const agentId = resolveSubagentIdForHook(context, hookInput);
+              if (agentId) {
+                completeSubagent(
+                  context,
+                  agentId,
+                  "completed",
+                  typeof hookInput?.last_assistant_message === "string"
+                    ? hookInput.last_assistant_message
+                    : null,
+                );
+              }
+              return {};
+            },
+          ],
+        },
+      ],
       },
     });
 
@@ -1908,18 +2440,40 @@ async function handleQuery(req) {
     if (maxTurns) options.maxTurns = maxTurns;
     if (reasoningEffort) options.effort = reasoningEffort;
 
-    emit({ id, type: "turn_started" });
+    emit({
+      id,
+      type: "turn_started",
+      sandboxMode: normalizedSandboxMode,
+      allowNetwork: networkEnabled,
+    });
 
     let sawTextDelta = false;
     let terminalStatus = "completed";
-    const promptInput = buildPromptInput(
-      prompt,
-      attachments,
-      sessionCwd,
-      sessionId || resume || "",
+    context.cwd = sessionCwd;
+    const input = createInputStream();
+    context.input = input;
+    input.push(
+      await buildUserMessage(prompt, attachments, sessionCwd, sessionId || resume || ""),
     );
-    const query = queryFn({ prompt: promptInput, options });
+
+    // A stop on the previous turn can still be winding down, and the old CLI
+    // owns the session until it does, so this turn waits before starting.
+    // Anything steered meanwhile queues on the input above.
+    await waitForStoppingQueries(sessionKey);
+    if (context.cancelled) {
+      // Stop landed before this turn reached the CLI, so nothing runs.
+      input.end();
+      emitTurnCompleted(context, "interrupted");
+      return;
+    }
+
+    const query = queryFn({ prompt: input, options });
     context.query = query;
+    if (context.cancelled) {
+      // Cancel landed while the first message was still being assembled.
+      input.end();
+      void interruptQuery(context);
+    }
     void fetchClaudeUsageSnapshot().then((usage) => {
       if (usage && activeQueries.has(id)) {
         emit({ id, type: "usage_limits_updated", usage });
@@ -1928,13 +2482,34 @@ async function handleQuery(req) {
 
     for await (const message of query) {
       if (context.cancelled) {
-        break;
+        // After an interrupt the CLI still delivers the aborted turn's result;
+        // keep its session id and usage, drop everything else. A hard close
+        // ends the stream instead, and the cancel timer covers a CLI that
+        // never answers the interrupt.
+        if (message.type === "result") {
+          actualSessionId = message.session_id || actualSessionId;
+          setContextSessionId(context, actualSessionId);
+          updateContextTokenUsage(context, {
+            input: message.usage?.input_tokens,
+            output: message.usage?.output_tokens,
+          });
+          break;
+        }
+        continue;
       }
 
       if (message.type === "system" && message.subtype === "init") {
         actualSessionId = message.session_id;
         setContextSessionId(context, actualSessionId);
         emit({ id, type: "session_init", sessionId: actualSessionId });
+      } else if (
+        message.type === "system" &&
+        (message.subtype === "task_started" ||
+          message.subtype === "task_progress" ||
+          message.subtype === "task_updated" ||
+          message.subtype === "task_notification")
+      ) {
+        handleSubagentTaskMessage(context, message);
       } else if (message.type === "assistant" && typeof message.error === "string") {
         const assistantError = formatAssistantMessageError(message);
         terminalStatus = "failed";
@@ -1946,6 +2521,12 @@ async function handleQuery(req) {
           errorType: assistantError.errorType,
           isAuthError: assistantError.isAuthError,
         });
+      } else if (
+        message.type === "assistant" &&
+        typeof message.parent_tool_use_id === "string" &&
+        message.parent_tool_use_id.length > 0
+      ) {
+        emitSubagentContentBlocks(context, message.parent_tool_use_id, message);
       } else if (message.type === "rate_limit_event") {
         const usage = buildRateLimitUsageSnapshot(message);
         if (usage) {
@@ -2004,6 +2585,15 @@ async function handleQuery(req) {
             recoverable: false,
           });
         }
+        // The turn is over: closing the input stream lets the SDK end the
+        // CLI stdin so the process exits the way a single-shot query does.
+        input.end();
+      } else if (
+        message.type === "stream_event" &&
+        typeof message.parent_tool_use_id === "string" &&
+        message.parent_tool_use_id.length > 0
+      ) {
+        handleSubagentStreamEvent(context, message.parent_tool_use_id, message.event);
       } else if (message.type === "stream_event") {
         const streamEvent = message.event;
         updateTokenUsageFromStreamEvent(context, streamEvent);
@@ -2018,6 +2608,12 @@ async function handleQuery(req) {
 
         if (streamEvent?.type === "content_block_start") {
           const block = streamEvent.content_block;
+          if (block?.type === "text") {
+            // Boundary between two assistant messages. Panes keeps a sentence
+            // together across interleaved subagent output, so it needs to be
+            // told where one message genuinely ends.
+            emit({ id, type: "text_item_started" });
+          }
           if (block?.type === "tool_use") {
             const toolUseId = block.id || block.tool_use_id;
             if (
@@ -2073,7 +2669,9 @@ async function handleQuery(req) {
     }
 
     setContextSessionId(context, actualSessionId);
-    emitTurnCompleted(context, context.cancelled ? "interrupted" : terminalStatus);
+    const finalStatus = context.cancelled ? "interrupted" : terminalStatus;
+    closeOutSubagents(context, finalStatus);
+    emitTurnCompleted(context, finalStatus);
   } catch (err) {
     emit({
       id,
@@ -2082,14 +2680,106 @@ async function handleQuery(req) {
       recoverable: false,
     });
     setContextSessionId(context, actualSessionId);
+    closeOutSubagents(context, "failed");
     emitTurnCompleted(context, "failed");
   } finally {
+    if (context.cancelTimer) {
+      clearTimeout(context.cancelTimer);
+      context.cancelTimer = null;
+    }
+    context.input?.end();
     cleanupPendingApprovalsForQuery(id, "Claude query was canceled.");
     activeQueries.delete(id);
+    // Idempotent on a query that already finished; on a cancelled one it
+    // terminates the CLI so nothing queued behind the interrupt runs.
+    try {
+      context.query?.close?.();
+    } catch {
+      // The query is gone either way.
+    }
+    // The query yielded its last message, so the request is over: answer the
+    // cancel that was waiting on it and release the next turn.
+    settleCancelledQuery(context, false);
   }
 }
 
-function handleCancel(params = {}) {
+const DEFAULT_CANCEL_CLOSE_GRACE_MS = 5_000;
+
+function cancelCloseGraceMs() {
+  const raw = Number.parseInt(process.env.PANES_CLAUDE_CANCEL_GRACE_MS ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CANCEL_CLOSE_GRACE_MS;
+}
+
+// Answers every cancel request waiting on this query and releases the turns
+// queued behind it. `closed` reports that the grace period expired and the
+// query was closed instead of ending on its own final result.
+function settleCancelledQuery(context, closed) {
+  if (context.cancelSettled) {
+    context.markFinished?.();
+    return;
+  }
+  context.cancelSettled = true;
+  for (const ackId of context.cancelAckIds.splice(0)) {
+    emit({
+      ...(ackId ? { id: ackId } : {}),
+      type: "cancel_result",
+      requestId: context.id,
+      ok: true,
+      closed,
+    });
+  }
+  context.markFinished?.();
+}
+
+function queryMatchesSession(context, sessionKey) {
+  if (!sessionKey) {
+    return false;
+  }
+  return context.sessionId === sessionKey || context.sessionKeyHint === sessionKey;
+}
+
+// A turn started right after a stop must not overlap the query it replaces:
+// the old CLI still owns the session until it yields its final result.
+async function waitForStoppingQueries(sessionKey) {
+  const stopping = [...activeQueries.values()].filter(
+    (context) => context.cancelled && queryMatchesSession(context, sessionKey),
+  );
+  if (stopping.length === 0) {
+    return;
+  }
+  const graceMs = cancelCloseGraceMs() * 2;
+  await Promise.race([
+    Promise.all(stopping.map((context) => context.finished)),
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, graceMs);
+      timer.unref?.();
+    }),
+  ]);
+}
+
+async function interruptQuery(context) {
+  const query = context.query;
+  if (!query) {
+    return;
+  }
+  if (typeof query.interrupt === "function") {
+    try {
+      // Interrupt lets the CLI finish the turn cleanly (transcript persisted,
+      // result emitted) instead of killing the process outright.
+      await query.interrupt();
+      return;
+    } catch {
+      // Fall through to a hard close.
+    }
+  }
+  try {
+    query.close?.();
+  } catch {
+    // Nothing else to release.
+  }
+}
+
+function handleCancel(params = {}, envelopeId = null) {
   const requestId =
     params.requestId || params.request_id || params.id || null;
   if (!requestId) {
@@ -2098,15 +2788,97 @@ function handleCancel(params = {}) {
 
   const context = activeQueries.get(requestId);
   if (!context) {
+    // Nothing left to stop, so the caller is free to start the next turn.
+    emit({
+      ...(envelopeId ? { id: envelopeId } : {}),
+      type: "cancel_result",
+      requestId,
+      ok: true,
+      closed: false,
+    });
     return;
   }
 
   context.cancelled = true;
+  context.cancelAckIds.push(envelopeId);
   cleanupPendingApprovalsForQuery(
     requestId,
     "Claude query was canceled before approval was answered.",
   );
-  context.query?.close();
+  // Steer messages the query never read must not run after a stop, and the
+  // requests that queued them are told so instead of being dropped in silence.
+  const droppedSteerIds = context.input?.dropQueued() ?? [];
+  for (const steerId of droppedSteerIds) {
+    emit({
+      id: steerId,
+      type: "error",
+      message: `Claude query ${requestId} was canceled before this message was delivered.`,
+      recoverable: true,
+    });
+  }
+  context.input?.end();
+  if (!context.cancelTimer) {
+    context.cancelTimer = setTimeout(() => {
+      context.cancelTimer = null;
+      if (activeQueries.get(requestId) === context) {
+        try {
+          context.query?.close?.();
+        } catch {
+          // The process is already gone.
+        }
+        // The query outlived its grace period, so the request is over as far as
+        // this sidecar is concerned.
+        activeQueries.delete(requestId);
+      }
+      settleCancelledQuery(context, true);
+    }, cancelCloseGraceMs());
+    context.cancelTimer.unref?.();
+  }
+  void interruptQuery(context);
+}
+
+function findSteerableQuery(requestId) {
+  if (!requestId) {
+    throw new Error("Claude steer requests require a requestId.");
+  }
+  const context = activeQueries.get(requestId);
+  if (!context || context.cancelled || context.turnCompleted || !context.input) {
+    throw new Error(`No active Claude query for request ${requestId}.`);
+  }
+  if (context.input.ended) {
+    throw new Error(`Claude query ${requestId} is no longer accepting input.`);
+  }
+  return context;
+}
+
+// Pushes a user message into the running turn. `priority: "next"` makes the
+// CLI fold it into the current turn at the next tool round (a queued command)
+// instead of starting a new turn after this one ("later") or aborting the
+// running turn first ("now").
+async function pushSteerMessage(context, prompt, attachments, steerRequestId = null) {
+  const message = await buildUserMessage(
+    prompt,
+    attachments,
+    context.cwd || process.cwd(),
+    context.sessionId || "",
+    { priority: "next", uuid: randomUUID() },
+  );
+  if (!context.input.push(message, steerRequestId)) {
+    throw new Error(`Claude query ${context.id} is no longer accepting input.`);
+  }
+}
+
+async function handleSteer(req) {
+  const { id, params = {} } = req;
+  try {
+    const context = findSteerableQuery(
+      params.requestId || params.request_id || null,
+    );
+    await pushSteerMessage(context, params.prompt, params.attachments, id);
+    emit({ id, type: "steer_result", ok: true });
+  } catch (error) {
+    emit({ id, type: "error", message: error.message || String(error) });
+  }
 }
 
 function assertClaudeApprovalResponseShape(response) {
@@ -2173,7 +2945,9 @@ function handleShutdown(signal) {
       context.id,
       `Claude query was interrupted by ${signal}.`,
     );
+    context.input?.end();
     context.query?.close?.();
+    closeOutSubagents(context, "interrupted");
     emitTurnCompleted(context, "interrupted");
   }
 
@@ -2195,7 +2969,7 @@ rl.on("line", (line) => {
   }
 
   if (req.method === "cancel") {
-    handleCancel(req.params || {});
+    handleCancel(req.params || {}, typeof req.id === "string" ? req.id : null);
     return;
   }
 
@@ -2204,11 +2978,16 @@ rl.on("line", (line) => {
     return;
   }
 
+  if (req.method === "steer") {
+    void handleSteer(req);
+    return;
+  }
+
   if (req.method === "version") {
     emit({
       id: req.id,
       type: "version",
-      version: "1.0.0",
+      version: "1.1.0",
       runtimeSource: claudeCodeExecutable ? "system" : "bundled",
       runtimeExecutable: claudeCodeExecutable || undefined,
       sdkVersion: sdkVersion || undefined,

@@ -11,6 +11,7 @@ import type { Thread } from "../types";
 import { useChatComposerStore } from "./chatComposerStore";
 import { useEngineStore } from "./engineStore";
 import { useOnboardingStore } from "./onboardingStore";
+import { useChatQueueStore } from "./chatQueueStore";
 import { useComposerDraftStore } from "./composerDraftStore";
 import { useThreadReadStore } from "./threadReadStore";
 
@@ -81,6 +82,13 @@ interface ThreadState {
   markThreadAwaitingApproval: (threadId: string) => void;
   setThreadReasoningEffortLocal: (threadId: string, reasoningEffort: string | null) => void;
   setThreadLastModelLocal: (threadId: string, modelId: string | null) => void;
+  /** Run the thread inside a git worktree of `repoId`, or detach it with a
+   * null path so turns go back to the repo checkout. */
+  setThreadWorktree: (
+    threadId: string,
+    repoId: string | null,
+    worktreePath: string | null,
+  ) => Promise<Thread | null>;
 }
 
 const DEFAULT_ENGINE = NEW_THREAD_FALLBACK_RUNTIME.engineId;
@@ -501,6 +509,8 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
       await ipc.deleteThread(threadId);
       useThreadReadStore.getState().forgetThread(threadId);
       useComposerDraftStore.getState().clearPrompt(threadId);
+      // Nothing can deliver a queued message to a thread that no longer exists.
+      useChatQueueStore.getState().clear(threadId);
       set((state) => {
         const threadsByWorkspace = Object.fromEntries(
           Object.entries(state.threadsByWorkspace).map(([workspaceId, threads]) => [
@@ -775,6 +785,16 @@ export const useThreadStore = create<ThreadState>((set, get) => ({
     });
 
     return applied;
+  },
+  setThreadWorktree: async (threadId, repoId, worktreePath) => {
+    try {
+      const updated = await ipc.setThreadWorktree(threadId, repoId, worktreePath);
+      get().applyThreadUpdateLocal(updated);
+      return updated;
+    } catch (error) {
+      set({ error: String(error) });
+      return null;
+    }
   },
   markThreadAwaitingApproval: (threadId) =>
     set((state) => {

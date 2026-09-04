@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the generated Info.plist by the Tauri bundler. Without these
+       strings macOS either kills the process or shows a blank consent dialog
+       when a terminal or agent touches a protected folder. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Panes uses an administrator prompt only when you enable lid-close sleep prevention without the background helper.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Panes opens repositories and terminals in the folders you choose, including ones on your Desktop.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Panes opens repositories and terminals in the folders you choose, including ones in Documents.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Panes opens repositories and terminals in the folders you choose, including ones in Downloads.</string>
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>Panes opens repositories and terminals on external drives when you choose a folder there.</string>
+  <key>NSNetworkVolumesUsageDescription</key>
+  <string>Panes opens repositories and terminals on network volumes when you choose a folder there.</string>
+</dict>
+</plist>

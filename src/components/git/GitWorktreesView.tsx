@@ -13,9 +13,13 @@ import {
   Scissors,
 } from "lucide-react";
 import { closeGitFlyoutIfFocusLeft, GitFlyoutContext } from "../../lib/gitFlyoutRegion";
+import { defaultWorktreePath } from "../../lib/gitWorktreePaths";
+import { readBusyWorktreeThreads } from "../../lib/threadWorktree";
 import { getActionMenuPosition } from "./actionMenuPosition";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
+import { useThreadStore } from "../../stores/threadStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { Repo, GitWorktree } from "../../types";
 
 interface Props {
@@ -151,9 +155,7 @@ export function GitWorktreesView({ repo, onError }: Props) {
     );
   }, [worktrees, filterQuery]);
 
-  const autoWorktreePath = createBranch.trim()
-    ? `${repo.path}/.panes/worktrees/${createBranch.trim().replace(/[/\\]/g, "-")}/`
-    : "";
+  const autoWorktreePath = defaultWorktreePath(repo.path, createBranch);
 
   function openActionMenu(worktree: GitWorktree, e: React.MouseEvent<HTMLButtonElement>) {
     if (worktree.isMain) {
@@ -241,9 +243,18 @@ export function GitWorktreesView({ repo, onError }: Props) {
       setConfirmingRemoveWithBranch(null);
       closeMenu();
       await removeWorktree(repo.path, wtPath, false, branch, deleteBranch);
+      // Threads that were running in the worktree fall back to the main
+      // checkout, so their bindings need to be re-read.
+      const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (workspaceId) void useThreadStore.getState().refreshThreads(workspaceId);
       toast.success(t("worktrees.toasts.removed"));
     } catch (e) {
-      onError(String(e));
+      const busyThreads = readBusyWorktreeThreads(e);
+      onError(
+        busyThreads && busyThreads.length > 0
+          ? t("worktrees.errors.threadRunning", { threads: busyThreads.join(", ") })
+          : String(e),
+      );
     } finally {
       setLoadingKey(null);
     }

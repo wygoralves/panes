@@ -17,6 +17,7 @@ import {
   Gauge,
   LayoutGrid,
   ListFilter,
+  KeyRound,
   LockKeyhole,
   Minus,
   Monitor,
@@ -36,7 +37,6 @@ import {
   MessageSquare,
   Pencil,
   Trash2,
-  KeyRound,
   ZoomIn,
   History,
 } from "lucide-react";
@@ -1338,6 +1338,16 @@ export function SettingsPage() {
                         </button>
                       ) : null}
                     </SettingsRow>
+                    {helperStatus?.status !== "registered" ? (
+                      <SettingsRow icon={<KeyRound size={17} />} title={t("app:powerModal.passwordPromptFallback")} description={t("app:powerModal.passwordPromptFallbackDescription")}>
+                        <Toggle
+                          checked={powerDraft?.allowPasswordPromptFallback ?? false}
+                          disabled={!powerDraft || !powerDraft.keepAwakeEnabled || !powerDraft.preventClosedDisplaySleep}
+                          label={t("app:powerModal.passwordPromptFallback")}
+                          onChange={(enabled) => updatePowerDraft({ allowPasswordPromptFallback: enabled })}
+                        />
+                      </SettingsRow>
+                    ) : null}
                   </div>
                 </section>
               ) : null}

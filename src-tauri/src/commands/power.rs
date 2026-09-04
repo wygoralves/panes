@@ -41,6 +41,7 @@ pub struct PowerSettingsDto {
     pub battery_threshold: Option<u8>,
     pub session_duration_secs: Option<u64>,
     pub prevent_closed_display_sleep: bool,
+    pub allow_password_prompt_fallback: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -53,6 +54,8 @@ pub struct PowerSettingsInput {
     pub battery_threshold: Option<u8>,
     pub session_duration_secs: Option<u64>,
     pub prevent_closed_display_sleep: bool,
+    #[serde(default)]
+    pub allow_password_prompt_fallback: bool,
 }
 
 #[tauri::command]
@@ -137,6 +140,7 @@ pub async fn get_power_settings(_state: State<'_, AppState>) -> Result<PowerSett
         battery_threshold: config.battery_threshold,
         session_duration_secs: config.session_duration_secs,
         prevent_closed_display_sleep: config.prevent_closed_display_sleep,
+        allow_password_prompt_fallback: config.allow_password_prompt_fallback,
     })
 }
 
@@ -161,6 +165,7 @@ pub async fn set_power_settings(
         battery_threshold: settings.battery_threshold,
         session_duration_secs: settings.session_duration_secs,
         prevent_closed_display_sleep: settings.prevent_closed_display_sleep,
+        allow_password_prompt_fallback: settings.allow_password_prompt_fallback,
     };
 
     // Apply runtime changes first so persistence cannot leave disk and runtime

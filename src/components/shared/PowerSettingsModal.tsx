@@ -187,6 +187,7 @@ function resetPowerSettingsForm(
   setCustomHours: (value: string) => void,
   setCustomMinutes: (value: string) => void,
   setPreventClosedDisplaySleep: (value: boolean) => void,
+  setAllowPasswordPromptFallback: (value: boolean) => void,
 ) {
   setKeepAwakeEnabled(false);
   setPreventDisplaySleep(false);
@@ -199,6 +200,7 @@ function resetPowerSettingsForm(
   setCustomHours("");
   setCustomMinutes("");
   setPreventClosedDisplaySleep(false);
+  setAllowPasswordPromptFallback(false);
 }
 
 export function PowerSettingsModal() {
@@ -227,6 +229,7 @@ export function PowerSettingsModal() {
   const [customHours, setCustomHours] = useState("");
   const [customMinutes, setCustomMinutes] = useState("");
   const [preventClosedDisplaySleep, setPreventClosedDisplaySleep] = useState(false);
+  const [allowPasswordPromptFallback, setAllowPasswordPromptFallback] = useState(false);
   const isMacOS = navigator.platform.startsWith("Mac");
 
   useEffect(() => {
@@ -243,6 +246,7 @@ export function PowerSettingsModal() {
       setCustomHours,
       setCustomMinutes,
       setPreventClosedDisplaySleep,
+      setAllowPasswordPromptFallback,
     );
     let cancelled = false;
     void loadPowerSettings().then((settings) => {
@@ -259,6 +263,7 @@ export function PowerSettingsModal() {
       setCustomHours(nextSessionState.customHours);
       setCustomMinutes(nextSessionState.customMinutes);
       setPreventClosedDisplaySleep(settings.preventClosedDisplaySleep);
+      setAllowPasswordPromptFallback(settings.allowPasswordPromptFallback);
       if (isMacOS && settings.preventClosedDisplaySleep) {
         void loadHelperStatus();
       }
@@ -296,6 +301,7 @@ export function PowerSettingsModal() {
       batteryThreshold: batteryThresholdEnabled ? batteryThreshold : null,
       sessionDurationSecs: sessionMode === "fixed" ? sessionDuration : null,
       preventClosedDisplaySleep,
+      allowPasswordPromptFallback,
     };
     const result = await savePowerSettings(input);
     if (result) handleClose();
@@ -565,6 +571,20 @@ export function PowerSettingsModal() {
                       <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>...</span>
                     )}
                   </div>
+                  {helperStatus && helperStatus.status !== "registered" && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--wash-06)" }}>
+                      <SettingsRow
+                        label={t("powerModal.passwordPromptFallback")}
+                        description={t("powerModal.passwordPromptFallbackDescription")}
+                      >
+                        <ToggleSwitch
+                          checked={allowPasswordPromptFallback}
+                          onChange={setAllowPasswordPromptFallback}
+                          disabled={disabled}
+                        />
+                      </SettingsRow>
+                    </div>
+                  )}
                 </div>
               )}
             </>

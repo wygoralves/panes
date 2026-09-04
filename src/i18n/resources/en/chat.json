@@ -330,7 +330,7 @@
     "custom": "Custom",
     "presets": {
       "inherit": {
-        "label": "Auto",
+        "label": "Repo default",
         "description": "Follow the repo trust policy."
       },
       "read-only": {
@@ -338,15 +338,15 @@
         "description": "Inspect and answer. Safe reads run; nothing changes without your approval."
       },
       "ask": {
-        "label": "Ask to act",
-        "description": "Reads are free. Edits and commands ask first."
+        "label": "Ask for approval",
+        "description": "Reads run freely. Edits and commands wait for your approval."
       },
       "auto": {
-        "label": "Auto in workspace",
-        "description": "Works freely inside the workspace sandbox. Asks only to leave it."
+        "label": "Approve for me",
+        "description": "Works inside the workspace without asking. Asks only to leave it."
       },
       "full": {
-        "label": "Full autonomy",
+        "label": "Full access",
         "description": "Never asks. Full disk and network access."
       }
     },
@@ -363,7 +363,7 @@
         "read-only": "Use restricted approvals with read-only files and no network.",
         "ask": "Use standard approvals with workspace writes and no network.",
         "auto": "Use trusted approvals and workspace writes. Network follows repo trust.",
-        "full": "Use trusted approvals with workspace writes and network enabled."
+        "full": "Use trusted approvals with full disk and network access."
       },
       "codexExternal": {
         "read-only": "Use untrusted approvals and block network. The external sandbox controls filesystem access.",
@@ -381,6 +381,19 @@
     "defaultSaveFailed": "Failed to save the default autonomy: {{error}}"
   },
   "panel": {
+    "queueMessageHint": "Queue this message (Alt+Enter)",
+    "queue": {
+      "title_one": "{{count}} queued",
+      "title_other": "{{count}} queued",
+      "sendsWhenIdle": "Sends when this turn ends",
+      "idle": "Waiting to send",
+      "sendNext": "Send next",
+      "clear": "Clear",
+      "sendNow": "Send now",
+      "remove": "Remove",
+      "attachments_one": "{{count}} attachment",
+      "attachments_other": "{{count}} attachments"
+    },
     "assistantFallback": "Assistant",
     "workspaceChatTitle": "Workspace Chat",
     "repoChatTitle": "{{name}} Chat",
@@ -418,6 +431,8 @@
     "draftSearchProjects": "Search projects",
     "draftNoProjectsFound": "No projects match",
     "placeholders": {
+      "steer": "Steer the current turn. Alt+Enter queues it for later.",
+      "queue": "Queue a message for when this turn ends",
       "plan": "Describe what you want to plan...",
       "chat": "Ask for follow-up changes",
       "draft": "Describe the change you want"
@@ -480,7 +495,6 @@
       "on": "on",
       "off": "off",
       "personalityUpdated": "Personality -> {{value}}",
-      "claudeSandboxUnsupported": "Claude supports only read-only and workspace-write sandbox modes.",
       "fullAccessNetworkWarning": "Full access sandbox temporarily enables network access.",
       "updateExecutionPolicyFailed": "Failed to update thread execution policy: {{error}}",
       "approvalBatchFailed": "One or more approvals could not be accepted. The thread policy was not changed.",
@@ -504,6 +518,24 @@
     }
   },
   "messageBlocks": {
+    "subagent": {
+      "label": "Subagent",
+      "started_one": "{{names}} started working",
+      "started_other": "{{names}} started working",
+      "startedMore_one": "{{names}} and {{count}} more started working",
+      "startedMore_other": "{{names}} and {{count}} more started working",
+      "finished_one": "{{names}} finished working",
+      "finished_other": "{{names}} finished working",
+      "finishedMore_one": "{{names}} and {{count}} more finished working",
+      "finishedMore_other": "{{names}} and {{count}} more finished working",
+      "open": "Open subagents",
+      "status": {
+        "running": "Running",
+        "done": "Done",
+        "error": "Failed",
+        "interrupted": "Stopped"
+      }
+    },
     "diffFallback": "diff ({{scope}})",
     "parsing": "Parsing...",
     "parsingDiff": "Parsing diff...",
@@ -625,22 +657,97 @@
       "blockedBy": "blocked by {{count}}"
     }
   },
+  "subagentPanel": {
+    "worker": "Subagent",
+    "active": "Active",
+    "finished": "Finished",
+    "working": "Working",
+    "showAll": "Show all ({{count}})",
+    "showLess": "Show less",
+    "back": "Back to the list",
+    "empty": "No subagents in this chat yet.",
+    "otherThread": "These subagents belong to another chat.",
+    "openChat": "Open that chat",
+    "missing": "This subagent is no longer in the transcript.",
+    "waiting": "Waiting for the subagent to start",
+    "noOutput": "The subagent finished without output."
+  },
+  "branchPicker": {
+    "title": "Branch",
+    "openMenu": "Switch branch or create a new one",
+    "searchPlaceholder": "Switch or create a branch",
+    "chooseRepo": "Choose a repository",
+    "local": "Local",
+    "remote": "Remote",
+    "noMatches": "No branches match",
+    "noBranches": "No branches yet",
+    "loading": "Loading branches",
+    "fetching": "Fetching remotes",
+    "current": "Current branch",
+    "ahead": "{{count}} ahead",
+    "behind": "{{count}} behind",
+    "newBranch": "New branch",
+    "newBranchNamed": "New branch \"{{name}}\"",
+    "back": "Back to branches",
+    "inWorktree": "This chat works in the worktree {{name}}",
+    "rowInWorktree": "Checked out in the worktree {{name}}. Selecting it moves this chat there.",
+    "leaveWorktree": "Back to main checkout",
+    "turnRunning": "Wait for the current turn to finish before changing branches.",
+    "badges": {
+      "default": "default"
+    },
+    "busy": {
+      "checkout": "Switching",
+      "pull": "Pulling",
+      "create": "Creating",
+      "detach": "Detaching",
+      "move": "Moving"
+    },
+    "create": {
+      "title": "New branch",
+      "namePlaceholder": "feature/short-description",
+      "from": "From",
+      "worktreeTitle": "Create in a worktree",
+      "worktreeDescription": "Checks it out in .panes/worktrees/{{folder}} so this chat leaves your current files alone.",
+      "worktreeNeedsThread": "Open a chat before creating a worktree.",
+      "submit": "Create branch",
+      "submitWorktree": "Create worktree",
+      "creating": "Creating",
+      "invalidName": "Branch names cannot contain spaces, \"..\", or characters like ~ ^ : ? * [ \\."
+    },
+    "toasts": {
+      "switched": "Switched to {{branch}}",
+      "switchedAndPulled": "Switched to {{branch}} and pulled the latest changes",
+      "pullFailed": "Switched to {{branch}}, but pull failed: {{error}}",
+      "switchFailed": "Could not switch branch: {{error}}",
+      "created": "Created {{branch}} and switched to it",
+      "worktreeCreated": "This chat now works in the {{branch}} worktree",
+      "detached": "Back to the main checkout",
+      "detachFailed": "Could not detach the worktree: {{error}}",
+      "movedToWorktree": "This chat now works on {{branch}} in the {{name}} worktree",
+      "movedToCheckout": "This chat now works on {{branch}} in the main checkout",
+      "moveFailed": "Could not move this chat: {{error}}",
+      "worktreeNeedsThread": "Open a chat before switching to a worktree.",
+      "loadFailed": "Could not load branches: {{error}}"
+    }
+  },
   "status": {
-    "now": "now",
     "minutesShort": "{{count}} min",
     "hoursMinutesShort": "{{hours}} h {{minutes}} min",
     "daysHoursShort": "{{days}} d {{hours}} h",
     "context": "Context left",
-    "windowFiveHoursLeft": "5h left",
-    "windowWeeklyLeft": "Weekly left",
-    "windowFableWeeklyLeft": "Fable weekly left",
-    "windowOpusWeeklyLeft": "Opus weekly left",
-    "windowSonnetWeeklyLeft": "Sonnet weekly left",
-    "resets": "resets {{time}}",
+    "contextWindow": "Context window",
+    "planLimits": "Plan usage limits",
+    "fiveHourLimit": "5-hour limit",
+    "weeklyAllModels": "Weekly · all models",
+    "weeklyModel": "Weekly · {{model}}",
+    "resetsIn": "Resets in {{time}}",
+    "viewDetails": "View details",
+    "openUsagePopover": "Usage and limits",
+    "percentLeft": "{{percent}}% left",
+    "ringUsage": "{{label}}: {{percent}} left",
     "usageLoading": "Loading usage limits...",
-    "usageUnavailable": "Usage limits unavailable from server",
-    "openUsageLimits": "Open usage limits",
-    "contextRingTitle": "Context left: {{percent}}. Open usage limits."
+    "usageUnavailable": "Usage limits unavailable from server"
   },
   "slashCommands": {
     "panels": {

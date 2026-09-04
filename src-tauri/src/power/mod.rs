@@ -96,6 +96,9 @@ struct PowerProfile {
     prevent_screen_saver: bool,
     ac_only: bool,
     prevent_closed_display_sleep: bool,
+    /// Whether lid-close prevention may fall back to `pmset` behind an admin
+    /// password dialog when the privileged helper is unavailable.
+    allow_password_prompt_fallback: bool,
 }
 
 impl PowerProfile {
@@ -106,6 +109,7 @@ impl PowerProfile {
             prevent_screen_saver: config.prevent_screen_saver,
             ac_only: config.ac_only_mode,
             prevent_closed_display_sleep: config.prevent_closed_display_sleep,
+            allow_password_prompt_fallback: config.allow_password_prompt_fallback,
         }
     }
 
@@ -116,6 +120,7 @@ impl PowerProfile {
             prevent_screen_saver: false,
             ac_only: false,
             prevent_closed_display_sleep: false,
+            allow_password_prompt_fallback: false,
         }
     }
 }
@@ -379,7 +384,9 @@ impl KeepAwakeManager {
                 // Ask privileged helper to disable closed-display sleep
                 #[cfg(target_os = "macos")]
                 if profile.prevent_closed_display_sleep {
-                    let success = try_prevent_closed_display_sleep().await;
+                    let success =
+                        try_prevent_closed_display_sleep(profile.allow_password_prompt_fallback)
+                            .await;
                     self.runtime.lock().await.closed_display_sleep_disabled = success;
                 }
 
@@ -435,8 +442,12 @@ impl KeepAwakeManager {
         #[cfg(target_os = "macos")]
         if runtime.closed_display_sleep_disabled {
             runtime.closed_display_sleep_disabled = false;
+            let allow_password_prompt = runtime
+                .active_profile
+                .as_ref()
+                .is_some_and(|profile| profile.allow_password_prompt_fallback);
             drop(runtime);
-            try_allow_closed_display_sleep().await;
+            try_allow_closed_display_sleep(allow_password_prompt).await;
             runtime = self.runtime.lock().await;
         }
 
@@ -541,8 +552,12 @@ impl KeepAwakeManager {
                         #[cfg(target_os = "macos")]
                         if runtime.closed_display_sleep_disabled {
                             runtime.closed_display_sleep_disabled = false;
+                            let allow_password_prompt = runtime
+                                .active_profile
+                                .as_ref()
+                                .is_some_and(|profile| profile.allow_password_prompt_fallback);
                             drop(runtime);
-                            try_allow_closed_display_sleep().await;
+                            try_allow_closed_display_sleep(allow_password_prompt).await;
                         }
                         let _ = clear_helper_state(&self.state_path());
                     } else if runtime.paused_due_to_battery {
@@ -592,7 +607,10 @@ impl KeepAwakeManager {
                                     // Re-activate closed-display sleep prevention
                                     #[cfg(target_os = "macos")]
                                     if profile.prevent_closed_display_sleep {
-                                        let success = try_prevent_closed_display_sleep().await;
+                                        let success = try_prevent_closed_display_sleep(
+                                            profile.allow_password_prompt_fallback,
+                                        )
+                                        .await;
                                         self.runtime.lock().await.closed_display_sleep_disabled =
                                             success;
                                     }
@@ -845,12 +863,11 @@ fn linux_display_inhibit_active(_runtime: &KeepAwakeRuntime) -> bool {
 }
 
 /// Best-effort: ask the privileged helper to set `SleepDisabled = true`.
-/// Falls back to `pmset -a disablesleep 1` via an admin-password dialog when
-/// the helper socket is not available.
-/// Logs on failure but does not return an error — the rest of keep-awake still
-/// works even if the helper is not installed.
+/// Falls back to `pmset -a disablesleep 1` via an admin-password dialog only
+/// when the user opted into that prompt; otherwise lid-close prevention stays
+/// off and the rest of keep-awake keeps working.
 #[cfg(target_os = "macos")]
-async fn try_prevent_closed_display_sleep() -> bool {
+async fn try_prevent_closed_display_sleep(allow_password_prompt: bool) -> bool {
     if macos_helper::helper_socket_exists() {
         match macos_helper::HelperConnection::connect().await {
             Ok(mut conn) => match conn.prevent_sleep().await {
@@ -868,14 +885,22 @@ async fn try_prevent_closed_display_sleep() -> bool {
         }
     }
 
+    if !allow_password_prompt {
+        log::info!(
+            "keep-awake helper unavailable and the password prompt fallback is off; lid-close sleep prevention stays inactive"
+        );
+        return false;
+    }
+
     // Fallback: use pmset via osascript admin-password prompt
     log::info!("helper socket not available, falling back to pmset via osascript");
     macos_helper::pmset_set_disablesleep(true).await
 }
 
-/// Best-effort: restore `SleepDisabled = false` via the helper or pmset.
+/// Best-effort: restore `SleepDisabled = false` via the helper, or via pmset
+/// when the password prompt fallback set it in the first place.
 #[cfg(target_os = "macos")]
-async fn try_allow_closed_display_sleep() {
+async fn try_allow_closed_display_sleep(allow_password_prompt: bool) {
     if macos_helper::helper_socket_exists() {
         match macos_helper::HelperConnection::connect().await {
             Ok(mut conn) => {
@@ -890,6 +915,12 @@ async fn try_allow_closed_display_sleep() {
                 log::warn!("failed to connect to keep-awake helper for allowSleep: {error}");
             }
         }
+    }
+
+    // Without the opt-in, pmset never set the flag, so there is nothing of
+    // ours to restore and no reason to raise a password dialog.
+    if !allow_password_prompt {
+        return;
     }
 
     // Fallback: only restore via pmset if SleepDisabled is actually set,
@@ -2407,6 +2438,7 @@ mod tests {
             battery_threshold: Some(20),
             session_duration_secs: Some(3600),
             prevent_closed_display_sleep: true,
+            allow_password_prompt_fallback: true,
         };
         let profile = PowerProfile::from_config(&config);
         assert!(profile.prevent_system_sleep);
@@ -2414,6 +2446,7 @@ mod tests {
         assert!(profile.prevent_screen_saver);
         assert!(profile.ac_only);
         assert!(profile.prevent_closed_display_sleep);
+        assert!(profile.allow_password_prompt_fallback);
     }
 
     #[test]

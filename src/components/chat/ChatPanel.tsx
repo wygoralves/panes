@@ -17,36 +17,41 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TFunction } from "i18next";
 import {
-  Send,
-  Loader2,
-  Square,
-  GitBranch,
-  Shield,
-  Monitor,
-  SquareTerminal,
-  MessageSquare,
-  FilePen,
-  Pencil,
   AlertTriangle,
   AtSign,
-  DollarSign,
-  Plus,
-  ListChecks,
-  Copy,
   Check,
   Clock,
-  Zap,
-  RotateCcw,
-  Minimize2,
-  Search,
-  Scissors,
-  Sparkles,
-  Server,
-  SquareCode,
+  Copy,
+  CornerDownLeft,
+  DollarSign,
+  FilePen,
   FlaskConical,
+  GitBranch,
+  ListChecks,
+  ListPlus,
+  Loader2,
+  MessageSquare,
+  Minimize2,
+  Monitor,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Scissors,
+  Search,
+  Send,
+  Server,
+  Shield,
+  Sparkles,
+  Square,
+  SquareCode,
+  SquareTerminal,
   UserCircle,
+  X,
+  Zap,
 } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
+import { readThreadWorktreePath } from "../../lib/threadWorktree";
+import { BranchPicker } from "./BranchPicker";
 import { DraftScopePicker } from "./DraftScopePicker";
 import { useShallow } from "zustand/react/shallow";
 import { useChatStore } from "../../stores/chatStore";
@@ -65,7 +70,15 @@ import {
   resolveRelativePathWithinRoot,
   resolveThreadFileRootPath,
 } from "../../lib/fileRootUtils";
+import { shouldShowUsageTrigger } from "../../lib/usageWindows";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useWorkspacePaneStore } from "../../stores/workspacePaneStore";
+import { engineSupportsSteering } from "../../lib/engineSteering";
+import {
+  selectThreadQueue,
+  useChatQueueStore,
+  type QueuedMessage,
+} from "../../stores/chatQueueStore";
 import { useGitStore } from "../../stores/gitStore";
 import { useTerminalStore, type LayoutMode } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
@@ -121,6 +134,7 @@ import {
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
 import { PermissionPicker } from "./PermissionPicker";
+import { UsagePopover } from "./UsagePopover";
 import { OpenCodeAgentPicker } from "./OpenCodeAgentPicker";
 // CodexReviewPicker and CodexThreadPicker replaced by slash commands (ChatSlashMenu + ChatCommandPanel)
 import { ChatSlashMenu, type SlashCommand } from "./ChatSlashMenu";
@@ -143,6 +157,7 @@ import type {
   Message,
   OpenCodeRemoteSession,
   OpenCodeRuntimeCatalog,
+  Repo,
   Thread,
   TrustLevel,
 } from "../../types";
@@ -1124,26 +1139,6 @@ function formatMessageTimestamp(raw: string | undefined, locale: string): string
   });
 }
 
-function formatResetTime(
-  t: TFunction<"chat">,
-  isoDate: string | null,
-): string {
-  if (!isoDate) return "";
-  const date = new Date(isoDate);
-  if (Number.isNaN(date.getTime())) return "";
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
-  if (diffMs <= 0) return t("status.now");
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 60) return t("status.minutesShort", { count: diffMin });
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) {
-    return t("status.hoursMinutesShort", { hours: diffHr, minutes: diffMin % 60 });
-  }
-  const diffDays = Math.floor(diffHr / 24);
-  return t("status.daysHoursShort", { days: diffDays, hours: diffHr % 24 });
-}
-
 function estimateMessageOffset(
   messages: Message[],
   index: number,
@@ -1169,6 +1164,7 @@ interface MessageRowProps {
   onLoadActionOutput: (messageId: string, actionId: string) => Promise<void>;
   onEditResend?: (text: string) => void;
   onOpenDiffFile?: (filePath: string) => void;
+  onOpenSubagent?: (agentId: string | null) => void;
 }
 
 function extractMessageCopyText(message: Message): string {
@@ -1228,6 +1224,7 @@ function MessageRowView({
   onLoadActionOutput,
   onEditResend,
   onOpenDiffFile,
+  onOpenSubagent,
 }: MessageRowProps) {
   const { t, i18n } = useTranslation("chat");
   const isUser = message.role === "user";
@@ -1374,6 +1371,7 @@ function MessageRowView({
               onApproval={onApproval}
               onLoadActionOutput={(actionId) => onLoadActionOutput(message.id, actionId)}
               onOpenDiffFile={onOpenDiffFile}
+              onOpenSubagent={onOpenSubagent}
             />
           ) : (
             <WorkingIndicator
@@ -1399,7 +1397,8 @@ const MessageRow = memo(
     prev.onApproval === next.onApproval &&
     prev.onLoadActionOutput === next.onLoadActionOutput &&
     prev.onEditResend === next.onEditResend &&
-    prev.onOpenDiffFile === next.onOpenDiffFile,
+    prev.onOpenDiffFile === next.onOpenDiffFile &&
+    prev.onOpenSubagent === next.onOpenSubagent,
 );
 
 function getFileExtension(fileName: string): string {
@@ -1519,29 +1518,6 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("Failed to read image data."));
     reader.readAsDataURL(blob);
   });
-}
-
-function formatUsagePercent(percent: number | null): string {
-  if (typeof percent !== "number" || !Number.isFinite(percent)) {
-    return "--";
-  }
-  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
-}
-
-function usagePercentToWidth(percent: number | null): string {
-  if (typeof percent !== "number" || !Number.isFinite(percent)) {
-    return "0%";
-  }
-  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
-}
-
-function usageProgressLevelClass(percent: number | null): string {
-  if (typeof percent !== "number" || !Number.isFinite(percent)) {
-    return "";
-  }
-  if (percent <= 10) return " chat-context-progress-fill-critical";
-  if (percent <= 25) return " chat-context-progress-fill-warning";
-  return "";
 }
 
 function resolveClaudeModelFamily(model: EngineModel | null): "fable" | "opus" | "sonnet" | null {
@@ -1764,6 +1740,32 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     })),
   );
   const gitStatus = useGitStore((s) => s.status);
+  // The branch picker acts on the repo the thread is bound to; a draft falls
+  // back to the workspace's active repo, and a single-repo workspace needs no
+  // choice at all.
+  const branchPickerRepo = useMemo<Repo | null>(() => {
+    if (activeThread?.repoId) {
+      return repos.find((repo) => repo.id === activeThread.repoId) ?? null;
+    }
+    return activeRepo ?? (repos.length === 1 ? repos[0] : null);
+  }, [activeThread?.repoId, activeRepo, repos]);
+  const activeThreadWorktreePath = readThreadWorktreePath(activeThread);
+  // The git panel follows the thread: a worktree-bound chat shows its
+  // worktree, and switching back to a plain chat returns to the checkout.
+  useEffect(() => {
+    if (!branchPickerRepo) return;
+    const git = useGitStore.getState();
+    if (activeThreadWorktreePath) {
+      if (git.activeRepoPath !== activeThreadWorktreePath) {
+        git.setActiveRepoPath(activeThreadWorktreePath);
+        git.setMainRepoPath(branchPickerRepo.path);
+      }
+      return;
+    }
+    if (git.mainRepoPath === branchPickerRepo.path && git.activeRepoPath !== branchPickerRepo.path) {
+      git.setActiveRepoPath(branchPickerRepo.path);
+    }
+  }, [activeThread?.id, activeThreadWorktreePath, branchPickerRepo]);
   const setComposerRuntime = useChatComposerStore((state) => state.setWorkspaceRuntime);
   const clearComposerRuntime = useChatComposerStore((state) => state.clearWorkspaceRuntime);
 
@@ -1924,19 +1926,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     switch (resolveClaudeModelFamily(selectedModel)) {
       case "fable":
         return {
-          label: t("status.windowFableWeeklyLeft"),
+          label: t("status.weeklyModel", { model: "Fable" }),
           percent: usageLimits.windowFableWeeklyPercent,
           resetsAt: usageLimits.windowFableWeeklyResetsAt,
         };
       case "opus":
         return {
-          label: t("status.windowOpusWeeklyLeft"),
+          label: t("status.weeklyModel", { model: "Opus" }),
           percent: usageLimits.windowOpusWeeklyPercent,
           resetsAt: usageLimits.windowOpusWeeklyResetsAt,
         };
       case "sonnet":
         return {
-          label: t("status.windowSonnetWeeklyLeft"),
+          label: t("status.weeklyModel", { model: "Sonnet" }),
           percent: usageLimits.windowSonnetWeeklyPercent,
           resetsAt: usageLimits.windowSonnetWeeklyResetsAt,
         };
@@ -2020,7 +2022,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       !threadId ||
       !activeThread ||
       !activeWorkspaceId ||
-      engineKind(selectedEngineId) !== "codex"
+      !engineSupportsSteering(selectedEngineId)
     ) {
       return false;
     }
@@ -2030,7 +2032,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       activeThread.id === threadId &&
       activeThread.workspaceId === activeWorkspaceId &&
       activeThread.repoId === activeScopeRepoId &&
-      engineKind(activeThread.engineId) === "codex"
+      engineSupportsSteering(activeThread.engineId)
     );
   }, [
     activeRepo?.id,
@@ -2040,6 +2042,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     streaming,
     threadId,
   ]);
+  const queuedMessages = useChatQueueStore(selectThreadQueue(threadId));
+  // Any running turn on the open thread can take a queued follow-up; the
+  // engine only decides whether it is delivered now (steer) or after the turn.
+  const canQueueMessage = useMemo(() => {
+    if (!streaming || !threadId || !activeThread || !activeWorkspaceId) {
+      return false;
+    }
+    return (
+      activeThread.id === threadId &&
+      activeThread.workspaceId === activeWorkspaceId &&
+      activeThread.repoId === (activeRepo?.id ?? null)
+    );
+  }, [activeRepo?.id, activeThread, activeWorkspaceId, streaming, threadId]);
   const codexReferencesAvailable = codexSkills.length > 0 || codexApps.length > 0;
   const openCodeSelectableAgents = useMemo(
     () =>
@@ -4016,6 +4031,65 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
   }
 
+  function rememberSubmittedInput(text: string) {
+    const hist = inputHistoryRef.current;
+    if (hist[0] !== text) {
+      inputHistoryRef.current = [text, ...hist].slice(0, 50);
+    }
+    inputHistCursorRef.current = -1;
+    inputLiveDraftRef.current = "";
+  }
+
+  async function enqueueDraft(): Promise<boolean> {
+    const text = input.trim();
+    if (!text || !canQueueMessage || !threadId || !activeThread) {
+      return false;
+    }
+    const engineId = activeThread.engineId;
+    const runtime = resolveComposerRuntimeSelection();
+    const inputItems = await resolveCodexInputItems(text, engineId);
+    const currentAttachments = [...attachments];
+    useChatQueueStore.getState().enqueue({
+      threadId,
+      text,
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      inputItems: inputItems && inputItems.length > 0 ? inputItems : undefined,
+      planMode: engineKind(engineId) === "opencode" ? false : planMode,
+      engineId,
+      modelId: runtime && runtime.engineId === engineId ? runtime.modelId : activeThread.modelId,
+      reasoningEffort:
+        runtime && runtime.engineId === engineId ? runtime.reasoningEffort ?? null : null,
+    });
+    rememberSubmittedInput(text);
+    setInput("");
+    setAttachments([]);
+    return true;
+  }
+
+  async function sendQueuedNow(item: QueuedMessage): Promise<void> {
+    if (!threadId || !canSteerActiveTurn) {
+      return;
+    }
+    const queue = useChatQueueStore.getState();
+    // The drain may have taken this message between the render and the click.
+    const stillQueued = (queue.queuesByThread[threadId] ?? []).some(
+      (queued) => queued.id === item.id,
+    );
+    if (!stillQueued) {
+      return;
+    }
+    queue.remove(threadId, item.id);
+    const steered = await steer(item.text, {
+      threadIdOverride: threadId,
+      attachments: item.attachments && item.attachments.length > 0 ? item.attachments : undefined,
+      inputItems: item.inputItems,
+      planMode: item.planMode ?? false,
+    });
+    if (!steered) {
+      useChatQueueStore.getState().restoreFront(item);
+    }
+  }
+
   async function submitMessage(): Promise<boolean> {
     if (!input.trim() || !activeWorkspaceId) return false;
     const preflightStartedAt = performance.now();
@@ -4032,7 +4106,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
         return false;
       }
 
-      const inputItems = await resolveCodexInputItems(text, "codex");
+      const inputItems = await resolveCodexInputItems(text, activeThread?.engineId ?? "codex");
       const steered = await steer(text, {
         threadIdOverride: activeThreadId,
         attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
@@ -4533,14 +4607,6 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     }
 
     if (
-      engineKind(currentThread.engineId) === "claude" &&
-      patch.sandboxMode === "danger-full-access"
-    ) {
-      toast.error(t("panel.toasts.claudeSandboxUnsupported"));
-      return;
-    }
-
-    if (
       engineKind(currentThread.engineId) !== "codex" &&
       engineKind(currentThread.engineId) !== "claude" &&
       patch.sandboxMode !== undefined
@@ -4793,6 +4859,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       void respondApproval(approvalId, response);
     },
     [respondApproval],
+  );
+
+  const handleOpenSubagent = useCallback(
+    (agentId: string | null) => {
+      const currentThreadId = threadId ?? activeThread?.id ?? null;
+      if (!activeWorkspaceId || !currentThreadId) return;
+      useWorkspacePaneStore.getState().openSubagentPane(activeWorkspaceId, {
+        threadId: currentThreadId,
+        ...(agentId ? { agentId } : {}),
+        revision: Date.now(),
+      });
+    },
+    [activeThread?.id, activeWorkspaceId, threadId],
   );
 
   const handleLoadActionOutput = useCallback(
@@ -5414,6 +5493,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         onLoadActionOutput={handleLoadActionOutput}
                         onEditResend={handleEditResend}
                         onOpenDiffFile={handleOpenDiffFile}
+                        onOpenSubagent={handleOpenSubagent}
                       />
                     </MeasuredMessageRow>
                   );
@@ -5440,6 +5520,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   onLoadActionOutput={handleLoadActionOutput}
                   onEditResend={handleEditResend}
                   onOpenDiffFile={handleOpenDiffFile}
+                  onOpenSubagent={handleOpenSubagent}
                 />
               );
             })}
@@ -5496,6 +5577,70 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             gap: 8,
           }}
         >
+          {queuedMessages.length > 0 && threadId && (
+            <div className="chat-queue-strip">
+              <div className="chat-queue-head">
+                <span className="chat-queue-title">
+                  <ListPlus size={11} aria-hidden="true" />
+                  {t("panel.queue.title", { count: queuedMessages.length })}
+                </span>
+                <span className="chat-queue-hint">
+                  {streaming ? t("panel.queue.sendsWhenIdle") : t("panel.queue.idle")}
+                </span>
+                {!streaming && (
+                  <button
+                    type="button"
+                    className="chat-queue-head-btn"
+                    onClick={() => void useChatStore.getState().drainQueue(threadId)}
+                  >
+                    {t("panel.queue.sendNext")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="chat-queue-head-btn"
+                  onClick={() => useChatQueueStore.getState().clear(threadId)}
+                >
+                  {t("panel.queue.clear")}
+                </button>
+              </div>
+              <ol className="chat-queue-list">
+                {queuedMessages.map((item, index) => (
+                  <li key={item.id} className="chat-queue-item">
+                    <span className="chat-queue-index">{index + 1}</span>
+                    <span className="chat-queue-text" title={item.text}>
+                      {item.text}
+                    </span>
+                    {item.attachments && item.attachments.length > 0 ? (
+                      <span className="chat-queue-meta">
+                        {t("panel.queue.attachments", { count: item.attachments.length })}
+                      </span>
+                    ) : null}
+                    {canSteerActiveTurn && (
+                      <button
+                        type="button"
+                        className="chat-queue-action"
+                        title={t("panel.queue.sendNow")}
+                        aria-label={t("panel.queue.sendNow")}
+                        onClick={() => void sendQueuedNow(item)}
+                      >
+                        <CornerDownLeft size={11} aria-hidden="true" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="chat-queue-action"
+                      title={t("panel.queue.remove")}
+                      aria-label={t("panel.queue.remove")}
+                      onClick={() => useChatQueueStore.getState().remove(threadId, item.id)}
+                    >
+                      <X size={11} aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
           {/* Pending approvals: one request in focus, lifted above the composer */}
           {activeApproval && (() => {
             const approval = activeApproval;
@@ -5894,6 +6039,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       }
                       return;
                     }
+                    if (
+                      e.key === "Enter" &&
+                      e.altKey &&
+                      !e.nativeEvent.isComposing &&
+                      canQueueMessage
+                    ) {
+                      e.preventDefault();
+                      void enqueueDraft();
+                      return;
+                    }
                     if (shouldSubmitChatInput({
                       key: e.key,
                       ctrlKey: e.ctrlKey,
@@ -5903,6 +6058,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     })) {
                       e.preventDefault();
                       if (streaming && !canSteerActiveTurn) {
+                        if (canQueueMessage) {
+                          void enqueueDraft();
+                        }
                         return;
                       }
                       void onSubmit(e);
@@ -5917,9 +6075,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   placeholder={
                     activePlanMode
                       ? t("panel.placeholders.plan")
-                      : messages.length === 0 && !pendingSubmission
-                        ? t("panel.placeholders.draft")
-                        : t("panel.placeholders.chat")
+                      : streaming && canSteerActiveTurn
+                        ? t("panel.placeholders.steer")
+                        : streaming && canQueueMessage
+                          ? t("panel.placeholders.queue")
+                          : messages.length === 0 && !pendingSubmission
+                            ? t("panel.placeholders.draft")
+                            : t("panel.placeholders.chat")
                   }
                   disabled={!activeWorkspaceId}
                   style={{
@@ -6182,11 +6344,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                         : undefined
                     }
                     networkDisabled={
-                      engineKind(activeThread?.engineId) === "codex" &&
+                      (engineKind(activeThread?.engineId) === "codex" ||
+                        engineKind(activeThread?.engineId) === "claude") &&
                       activeThreadSandboxMode === "danger-full-access"
                     }
                     networkNotice={
-                      engineKind(activeThread?.engineId) === "codex" &&
+                      (engineKind(activeThread?.engineId) === "codex" ||
+                        engineKind(activeThread?.engineId) === "claude") &&
                       activeThreadSandboxMode === "danger-full-access"
                         ? t("policy.fullAccessNotice")
                         : null
@@ -6200,40 +6364,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {!showSpecialInputComposer &&
                   (isCodexEngine || engineKind(selectedEngineId) === "claude") &&
-                  usageLimits?.contextPercent != null && (
-                  <button
-                    type="button"
-                    className={`chat-context-ring${
-                      usageLimits.contextPercent <= 10
-                        ? " chat-context-ring--critical"
-                        : usageLimits.contextPercent <= 25
-                          ? " chat-context-ring--warning"
-                          : ""
-                    }`}
-                    onClick={openUsageLimitsModal}
-                    title={t("status.contextRingTitle", {
-                      percent: formatUsagePercent(usageLimits.contextPercent),
-                    })}
-                    aria-label={t("status.contextRingTitle", {
-                      percent: formatUsagePercent(usageLimits.contextPercent),
-                    })}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 16 16" style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
-                      <circle className="chat-context-ring-track" cx="8" cy="8" r="6" strokeWidth="2" />
-                      <circle
-                        className="chat-context-ring-value"
-                        cx="8"
-                        cy="8"
-                        r="6"
-                        strokeWidth="2"
-                        strokeDasharray={2 * Math.PI * 6}
-                        strokeDashoffset={
-                          2 * Math.PI * 6 * (1 - Math.max(0, Math.min(100, usageLimits.contextPercent)) / 100)
-                        }
-                      />
-                    </svg>
-                    <span>{formatUsagePercent(usageLimits.contextPercent)}</span>
-                  </button>
+                  usageLimits &&
+                  shouldShowUsageTrigger(usageLimits) && (
+                  <UsagePopover
+                    usage={usageLimits}
+                    familyWindow={selectedClaudeWeeklyUsage}
+                    onOpenDetails={openUsageLimitsModal}
+                  />
                 )}
 
                 {streaming && !showSpecialInputComposer && (
@@ -6241,9 +6378,23 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     type="button"
                     className="chat-stop-btn"
                     onClick={() => void cancel()}
+                    title={t("panel.stop")}
+                    aria-label={t("panel.stop")}
                   >
-                    <Square size={11} fill="currentColor" />
-                    {t("panel.stop")}
+                    <Square size={11} fill="currentColor" aria-hidden="true" />
+                  </button>
+                )}
+
+                {canQueueMessage && !showSpecialInputComposer && (
+                  <button
+                    type="button"
+                    className={`chat-queue-btn${input.trim() ? " chat-queue-btn--ready" : ""}`}
+                    disabled={!input.trim() || isSubmitting}
+                    onClick={() => void enqueueDraft()}
+                    title={t("panel.queueMessageHint")}
+                    aria-label={t("panel.queueMessageHint")}
+                  >
+                    <ListPlus size={13} aria-hidden="true" />
                   </button>
                 )}
 
@@ -6279,121 +6430,25 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             </div>
           </div>
 
-          {/* Bottom status bar with context usage */}
+          {/* Bottom status bar: branch picker, plus usage status while limits are unknown */}
           <div className="chat-status-bar">
-            {(isCodexEngine || engineKind(selectedEngineId) === "claude") && (
-              usageLimits ? (
-                <div className="chat-status-usage">
-                  {usageLimits.windowFiveHourPercent !== null && (
-                  <button
-                    type="button"
-                    className="chat-context-section"
-                    onClick={openUsageLimitsModal}
-                    title={t("status.openUsageLimits")}
-                  >
-                    <Clock size={10} />
-                    <span>{t("status.windowFiveHoursLeft")}</span>
-                    <div className="chat-context-progress">
-                      <div
-                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowFiveHourPercent)}`}
-                        style={{ width: usagePercentToWidth(usageLimits.windowFiveHourPercent) }}
-                      />
-                    </div>
-                    <span className="chat-context-percent">
-                      {formatUsagePercent(usageLimits.windowFiveHourPercent)}
-                    </span>
-                    {usageLimits.windowFiveHourResetsAt && (
-                      <span className="chat-context-reset">
-                        {t("status.resets", {
-                          time: formatResetTime(t, usageLimits.windowFiveHourResetsAt),
-                        })}
-                      </span>
-                    )}
-                  </button>
-                  )}
-
-                  {usageLimits.windowWeeklyPercent !== null && (
-                  <>
-                  {usageLimits.windowFiveHourPercent !== null && (
-                    <span className="chat-context-divider">&middot;</span>
-                  )}
-                  <button
-                    type="button"
-                    className="chat-context-section"
-                    onClick={openUsageLimitsModal}
-                    title={t("status.openUsageLimits")}
-                  >
-                    <Clock size={10} />
-                    <span>{t("status.windowWeeklyLeft")}</span>
-                    <div className="chat-context-progress">
-                      <div
-                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowWeeklyPercent)}`}
-                        style={{ width: usagePercentToWidth(usageLimits.windowWeeklyPercent) }}
-                      />
-                    </div>
-                    <span className="chat-context-percent">
-                      {formatUsagePercent(usageLimits.windowWeeklyPercent)}
-                    </span>
-                    {usageLimits.windowWeeklyResetsAt && (
-                      <span className="chat-context-reset">
-                        {t("status.resets", {
-                          time: formatResetTime(t, usageLimits.windowWeeklyResetsAt),
-                        })}
-                      </span>
-                    )}
-                  </button>
-                  </>
-                  )}
-
-                  {selectedClaudeWeeklyUsage && (
-                    <>
-                      {(usageLimits.windowFiveHourPercent !== null ||
-                        usageLimits.windowWeeklyPercent !== null) && (
-                        <span className="chat-context-divider">&middot;</span>
-                      )}
-
-                      <button
-                        type="button"
-                        className="chat-context-section"
-                        onClick={openUsageLimitsModal}
-                        title={t("status.openUsageLimits")}
-                      >
-                        <Clock size={10} />
-                        <span>{selectedClaudeWeeklyUsage.label}</span>
-                        <div className="chat-context-progress">
-                          <div
-                            className={`chat-context-progress-fill${usageProgressLevelClass(selectedClaudeWeeklyUsage.percent)}`}
-                            style={{ width: usagePercentToWidth(selectedClaudeWeeklyUsage.percent) }}
-                          />
-                        </div>
-                        <span className="chat-context-percent">
-                          {formatUsagePercent(selectedClaudeWeeklyUsage.percent)}
-                        </span>
-                        {selectedClaudeWeeklyUsage.resetsAt && (
-                          <span className="chat-context-reset">
-                            {t("status.resets", {
-                              time: formatResetTime(t, selectedClaudeWeeklyUsage.resetsAt),
-                            })}
-                          </span>
-                        )}
-                      </button>
-                    </>
-                  )}
-                </div>
-              ) : hasUserMessage ? (
+            {(isCodexEngine || engineKind(selectedEngineId) === "claude") &&
+              !usageLimits &&
+              hasUserMessage && (
                 <div className="chat-context-section">
                   <Clock size={10} />
                   <span>{t(resolveUsageStatusKey(streaming || usageLimitsLoading))}</span>
                 </div>
-              ) : null
-            )}
+              )}
 
-            {/* Branch */}
-            {gitStatus?.branch && (
-              <span className="chat-status-branch">
-                <GitBranch size={11} />
-                {gitStatus.branch}
-              </span>
+            {/* Branch and worktree for this chat */}
+            {repos.length > 0 && (
+              <BranchPicker
+                thread={activeThread}
+                repo={branchPickerRepo}
+                repos={repos}
+                turnActive={streaming}
+              />
             )}
           </div>
         </form>

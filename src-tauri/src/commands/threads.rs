@@ -418,6 +418,7 @@ async fn resolve_thread_cwd(state: &AppState, thread: &ThreadDto) -> Result<Stri
     let workspace_id = thread.workspace_id.clone();
     let repo_id = thread.repo_id.clone();
     let thread_id = thread.id.clone();
+    let metadata = thread.engine_metadata.clone();
 
     run_db(state.db.clone(), move |db| {
         let workspace = db::workspaces::find_workspace_by_id(db, &workspace_id)?
@@ -425,7 +426,8 @@ async fn resolve_thread_cwd(state: &AppState, thread: &ThreadDto) -> Result<Stri
         if let Some(repo_id) = repo_id.as_deref() {
             let repo = db::repos::find_repo_by_id(db, repo_id)?
                 .ok_or_else(|| anyhow::anyhow!("repo not found for thread {thread_id}"))?;
-            return Ok(repo.path);
+            return resolve_thread_repo_cwd(&repo.path, metadata.as_ref())
+                .map_err(|error| anyhow::anyhow!(error));
         }
 
         Ok(workspace.root_path)
@@ -738,7 +740,7 @@ fn autonomy_policy_for_preset(
             },
             "full" => AutonomyPresetPolicy {
                 approval_policy: json!("trusted"),
-                sandbox_mode: Some("workspace-write"),
+                sandbox_mode: Some("danger-full-access"),
                 allow_network: Some(true),
             },
             _ => return Err(format!("unknown autonomy preset: {preset}")),
@@ -1727,6 +1729,20 @@ async fn set_thread_execution_policy_inner(
                 }
             }
         }
+
+        // Full access always launches with the network on, so a persisted
+        // `sandboxAllowNetwork: false` would advertise a restriction no run
+        // path enforces. Keep the stored value in step with the launch paths.
+        let resulting_full_access = object
+            .get("sandboxMode")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|value| value.eq_ignore_ascii_case("danger-full-access"));
+        if resulting_full_access
+            && object.get("sandboxAllowNetwork").and_then(Value::as_bool) == Some(false)
+        {
+            object.insert("sandboxAllowNetwork".to_string(), json!(true));
+        }
     }
 
     run_db(db.clone(), {
@@ -1742,6 +1758,220 @@ async fn set_thread_execution_policy_inner(
     })
     .await?
     .ok_or_else(|| format!("thread not found after execution policy update: {thread_id}"))
+}
+
+/// Worktree directory a thread runs in instead of its repo's main checkout.
+pub(crate) fn thread_worktree_path(metadata: Option<&Value>) -> Option<String> {
+    metadata
+        .and_then(|value| value.get("worktreePath"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// Strips the worktree binding from thread metadata, leaving every other
+/// per-thread override in place.
+pub(crate) fn metadata_without_worktree(metadata: Option<&Value>) -> Value {
+    let mut metadata = metadata.cloned().unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+    if let Some(object) = metadata.as_object_mut() {
+        object.remove("worktreePath");
+    }
+    metadata
+}
+
+/// The directory a repo-scoped thread runs in: its bound worktree when one is
+/// set and still verifiable, otherwise the repo checkout itself.
+///
+/// The persisted path is never trusted on its own. Between binding and the next
+/// turn the directory can be removed, swapped for a symlink, or unregistered
+/// from git, so it is re-checked against the repo's worktree list every time.
+pub(crate) fn resolve_thread_repo_cwd(
+    repo_path: &str,
+    metadata: Option<&Value>,
+) -> Result<String, String> {
+    match thread_worktree_path(metadata) {
+        Some(worktree_path) => verify_thread_worktree(repo_path, &worktree_path),
+        None => Ok(repo_path.to_string()),
+    }
+}
+
+/// `resolve_thread_repo_cwd` for async callers: verification shells out to git,
+/// so it runs on the blocking pool.
+pub(crate) async fn resolve_thread_repo_cwd_async(
+    repo_path: &str,
+    metadata: Option<&Value>,
+) -> Result<String, String> {
+    let repo_path = repo_path.to_string();
+    let metadata = metadata.cloned();
+    tokio::task::spawn_blocking(move || resolve_thread_repo_cwd(&repo_path, metadata.as_ref()))
+        .await
+        .map_err(err_to_string)?
+}
+
+/// Confirms `worktree_path` is still a real directory and still a linked
+/// worktree of `repo_path`, returning git's own path for it.
+pub(crate) fn verify_thread_worktree(
+    repo_path: &str,
+    worktree_path: &str,
+) -> Result<String, String> {
+    let detach_hint = format!(
+        "Detach this thread from the branch menu to run in the main checkout at {repo_path}, or recreate the worktree."
+    );
+
+    match std::fs::symlink_metadata(worktree_path) {
+        Ok(entry) if entry.file_type().is_symlink() => {
+            return Err(format!(
+                "The worktree path {worktree_path} is now a symlink, so Panes will not run there. {detach_hint}"
+            ));
+        }
+        Ok(entry) if !entry.is_dir() => {
+            return Err(format!(
+                "The worktree path {worktree_path} is no longer a directory. {detach_hint}"
+            ));
+        }
+        Ok(_) => {}
+        Err(_) => {
+            return Err(format!(
+                "The worktree for this thread is missing at {worktree_path}. {detach_hint}"
+            ));
+        }
+    }
+
+    let worktree = crate::git::worktree::find_worktree(repo_path, worktree_path)
+        .map_err(|error| {
+            format!(
+                "Panes could not verify the worktree at {worktree_path}: {error}. {detach_hint}"
+            )
+        })?
+        .ok_or_else(|| {
+            format!(
+                "{worktree_path} is no longer a registered worktree of {repo_path}. {detach_hint}"
+            )
+        })?;
+
+    if worktree.is_main {
+        return Err(format!(
+            "{worktree_path} now resolves to the main checkout instead of a linked worktree. {detach_hint}"
+        ));
+    }
+
+    Ok(worktree.path)
+}
+
+/// Bind a thread to a git worktree of one of its workspace repos, or detach it
+/// with `worktree_path = None`. Turns then run inside that directory.
+#[tauri::command]
+pub async fn set_thread_worktree(
+    state: State<'_, AppState>,
+    thread_id: String,
+    repo_id: Option<String>,
+    worktree_path: Option<String>,
+) -> Result<ThreadDto, String> {
+    set_thread_worktree_inner(state.inner(), thread_id, repo_id, worktree_path).await
+}
+
+async fn set_thread_worktree_inner(
+    state: &AppState,
+    thread_id: String,
+    repo_id: Option<String>,
+    worktree_path: Option<String>,
+) -> Result<ThreadDto, String> {
+    let db = state.db.clone();
+    let thread = run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found: {thread_id}"))?;
+
+    let requested_worktree = worktree_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let target_repo_id = repo_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| thread.repo_id.clone());
+
+    let repo_id_changed = target_repo_id != thread.repo_id;
+
+    // Any repository this call would attach the thread to has to belong to the
+    // thread's workspace, whether or not a worktree comes with it. Rebinding
+    // through a null worktree path is still a rebind.
+    let target_repo = match target_repo_id.as_deref() {
+        Some(repo_id) if requested_worktree.is_some() || repo_id_changed => {
+            let repo = run_db(db.clone(), {
+                let repo_id = repo_id.to_string();
+                move |db| db::repos::find_repo_by_id(db, &repo_id)
+            })
+            .await?
+            .ok_or_else(|| format!("repo not found: {repo_id}"))?;
+            if repo.workspace_id != thread.workspace_id {
+                return Err(
+                    "The repository belongs to a different workspace than this thread.".to_string(),
+                );
+            }
+            Some(repo)
+        }
+        _ => None,
+    };
+
+    let resolved_worktree = if let Some(requested) = requested_worktree {
+        let Some(repo) = target_repo else {
+            return Err(
+                "A repository is required before a thread can run in a worktree.".to_string(),
+            );
+        };
+        let repo_path = repo.path.clone();
+        let worktree = tokio::task::spawn_blocking(move || {
+            crate::git::worktree::find_worktree(&repo_path, &requested)
+        })
+        .await
+        .map_err(err_to_string)?
+        .map_err(err_to_string)?
+        .ok_or_else(|| format!("{} has no worktree registered for this thread", repo.path))?;
+        if worktree.is_main {
+            return Err(
+                "The main checkout cannot be attached as a worktree. Detach the thread instead."
+                    .to_string(),
+            );
+        }
+        Some(worktree.path)
+    } else {
+        None
+    };
+
+    let mut metadata = metadata_without_worktree(thread.engine_metadata.as_ref());
+    if let (Some(object), Some(path)) = (metadata.as_object_mut(), resolved_worktree.as_ref()) {
+        object.insert("worktreePath".to_string(), json!(path));
+    }
+
+    run_db(db.clone(), {
+        let thread_id = thread_id.clone();
+        let metadata = metadata.clone();
+        let target_repo_id = target_repo_id.clone();
+        move |db| {
+            if repo_id_changed {
+                db::threads::set_thread_repo_id(db, &thread_id, target_repo_id.as_deref())?;
+            }
+            db::threads::update_engine_metadata(db, &thread_id, &metadata)
+        }
+    })
+    .await?;
+
+    run_db(db, {
+        let thread_id = thread_id.clone();
+        move |db| db::threads::get_thread(db, &thread_id)
+    })
+    .await?
+    .ok_or_else(|| format!("thread not found after worktree update: {thread_id}"))
 }
 
 #[tauri::command]
@@ -2123,8 +2353,14 @@ async fn build_codex_branch_context(
         }
     }
 
-    let writable_roots = match selected_repo.as_ref() {
-        Some(repo) => vec![repo.path.clone()],
+    let selected_repo_cwd = match selected_repo.as_ref() {
+        Some(repo) => {
+            Some(resolve_thread_repo_cwd_async(&repo.path, thread.engine_metadata.as_ref()).await?)
+        }
+        None => None,
+    };
+    let writable_roots = match selected_repo_cwd.as_ref() {
+        Some(repo_cwd) => vec![repo_cwd.clone()],
         None => workspace_writable_roots
             .as_ref()
             .map(|resolution| resolution.roots.clone())
@@ -2142,10 +2378,7 @@ async fn build_codex_branch_context(
     )?;
 
     Ok((
-        selected_repo
-            .as_ref()
-            .map(|repo| repo.path.clone())
-            .unwrap_or(workspace_root),
+        selected_repo_cwd.unwrap_or(workspace_root),
         thread_last_model_id(thread.engine_metadata.as_ref())
             .unwrap_or_else(|| thread.model_id.clone()),
         SandboxPolicy {
@@ -3061,6 +3294,75 @@ mod tests {
         .expect("failed to create thread")
     }
 
+    fn test_repo(state: &AppState, workspace_id: &str, path: &str) -> crate::models::RepoDto {
+        crate::db::repos::upsert_repo(&state.db, workspace_id, "repo", path, "main", true)
+            .expect("failed to create repo")
+    }
+
+    struct TempGitRepo {
+        path: std::path::PathBuf,
+        // Spawning git races with tests that point the process-global PATH at
+        // an empty temp dir; hold the shared env lock for the repo's lifetime.
+        _env_guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TempGitRepo {
+        fn init() -> Self {
+            let env_guard = crate::process_utils::test_env_lock()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let path = std::env::temp_dir().join(format!("panes-threads-git-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).expect("create temp repo dir");
+            let repo = Self {
+                path,
+                _env_guard: env_guard,
+            };
+            let repo_path = repo.path_str().to_string();
+            crate::git::cli_fallback::run_git(&repo_path, &["init", "--initial-branch=main"])
+                .expect("git init");
+            crate::git::cli_fallback::run_git(
+                &repo_path,
+                &["config", "user.email", "test@example.com"],
+            )
+            .expect("config email");
+            crate::git::cli_fallback::run_git(&repo_path, &["config", "user.name", "Test"])
+                .expect("config name");
+            fs::write(repo.path.join("a.txt"), "committed\n").expect("write file");
+            crate::git::cli_fallback::run_git(&repo_path, &["add", "-A"]).expect("git add");
+            crate::git::cli_fallback::run_git(&repo_path, &["commit", "-m", "init"])
+                .expect("git commit");
+            repo
+        }
+
+        fn path_str(&self) -> &str {
+            self.path.to_str().expect("utf-8 temp path")
+        }
+
+        fn worktrees_dir(&self) -> std::path::PathBuf {
+            self.path.join(".panes/worktrees")
+        }
+
+        fn add_worktree(&self, branch: &str) -> String {
+            let path = self.worktrees_dir().join(branch);
+            fs::create_dir_all(path.parent().expect("worktrees parent"))
+                .expect("create worktrees dir");
+            crate::git::worktree::add_worktree(
+                self.path_str(),
+                path.to_str().expect("utf-8 worktree path"),
+                branch,
+                None,
+            )
+            .expect("add worktree")
+            .path
+        }
+    }
+
+    impl Drop for TempGitRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
     #[test]
     fn thread_allow_network_reads_explicit_override_in_full_access_mode() {
         let metadata = json!({
@@ -3636,7 +3938,7 @@ mod tests {
             autonomy_policy_for_preset("claude", "full", false).unwrap(),
             AutonomyPresetPolicy {
                 approval_policy: json!("trusted"),
-                sandbox_mode: Some("workspace-write"),
+                sandbox_mode: Some("danger-full-access"),
                 allow_network: Some(true),
             }
         );
@@ -3783,11 +4085,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_thread_execution_policy_rejects_claude_danger_full_access() {
+    async fn set_thread_execution_policy_allows_claude_danger_full_access() {
         let state = test_app_state();
         let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
 
-        let error = set_thread_execution_policy_inner(
+        let updated = set_thread_execution_policy_inner(
             &state,
             thread.id.clone(),
             false,
@@ -3802,9 +4104,95 @@ mod tests {
             None,
         )
         .await
-        .expect_err("expected danger-full-access to be rejected");
+        .expect("expected danger-full-access to be accepted for Claude");
 
-        assert!(error.contains("Claude sandbox mode `danger-full-access` is not supported"));
+        assert_eq!(
+            updated
+                .engine_metadata
+                .as_ref()
+                .and_then(|value| value.get("sandboxMode"))
+                .and_then(serde_json::Value::as_str),
+            Some("danger-full-access")
+        );
+    }
+
+    #[tokio::test]
+    async fn set_thread_execution_policy_keeps_network_on_for_full_access() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+
+        // Denying the network in the same update that selects full access must
+        // not persist a restriction the launch paths ignore.
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("danger-full-access".to_string()),
+            true,
+            Some(false),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("expected full access update to succeed");
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(
+            metadata.get("sandboxMode"),
+            Some(&json!("danger-full-access"))
+        );
+        assert_eq!(metadata.get("sandboxAllowNetwork"), Some(&json!(true)));
+        assert_eq!(thread_allow_network_override(Some(&metadata)), Some(true));
+
+        // Denying it later, while the thread is still on full access, is
+        // corrected the same way.
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            false,
+            None,
+            true,
+            Some(false),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("expected network update to succeed");
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(thread_allow_network_override(Some(&metadata)), Some(true));
+
+        // A narrower sandbox still records the denial.
+        let updated = set_thread_execution_policy_inner(
+            &state,
+            thread.id.clone(),
+            false,
+            None,
+            true,
+            Some("workspace-write".to_string()),
+            true,
+            Some(false),
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("expected workspace-write update to succeed");
+        let metadata = updated
+            .engine_metadata
+            .expect("expected engine metadata to be present");
+        assert_eq!(thread_allow_network_override(Some(&metadata)), Some(false));
     }
 
     #[tokio::test]
@@ -4005,5 +4393,154 @@ mod tests {
         .expect_err("expected non-opencode thread to be rejected");
 
         assert!(error.contains("OpenCode thread config is only available for OpenCode threads"));
+    }
+
+    #[tokio::test]
+    async fn set_thread_worktree_rejects_a_foreign_repo_without_a_worktree_path() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.4");
+        let other_workspace = test_workspace(&state);
+        let foreign_repo = test_repo(
+            &state,
+            &other_workspace.id,
+            other_workspace.root_path.as_str(),
+        );
+
+        let error = set_thread_worktree_inner(
+            &state,
+            thread.id.clone(),
+            Some(foreign_repo.id.clone()),
+            None,
+        )
+        .await
+        .expect_err("expected a cross-workspace repo binding to be rejected");
+
+        assert!(error.contains("different workspace"), "got: {error}");
+
+        let stored = crate::db::threads::get_thread(&state.db, &thread.id)
+            .expect("read thread")
+            .expect("thread exists");
+        assert_eq!(stored.repo_id, None, "the foreign repo must not be bound");
+    }
+
+    #[tokio::test]
+    async fn set_thread_worktree_binds_a_repo_from_the_same_workspace_without_a_worktree_path() {
+        let state = test_app_state();
+        let workspace = test_workspace(&state);
+        let thread = crate::db::threads::create_thread(
+            &state.db,
+            &workspace.id,
+            None,
+            "codex",
+            "gpt-5.4",
+            "Thread",
+        )
+        .expect("failed to create thread");
+        let repo = test_repo(&state, &workspace.id, workspace.root_path.as_str());
+
+        let updated =
+            set_thread_worktree_inner(&state, thread.id.clone(), Some(repo.id.clone()), None)
+                .await
+                .expect("expected a same-workspace repo binding to succeed");
+
+        assert_eq!(updated.repo_id.as_deref(), Some(repo.id.as_str()));
+        assert!(thread_worktree_path(updated.engine_metadata.as_ref()).is_none());
+    }
+
+    #[tokio::test]
+    async fn set_thread_worktree_rejects_a_foreign_repo_with_a_worktree_path() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.4");
+        let git_repo = TempGitRepo::init();
+        let worktree_path = git_repo.add_worktree("feature");
+        let other_workspace = test_workspace(&state);
+        let foreign_repo = test_repo(&state, &other_workspace.id, git_repo.path_str());
+
+        let error = set_thread_worktree_inner(
+            &state,
+            thread.id.clone(),
+            Some(foreign_repo.id.clone()),
+            Some(worktree_path),
+        )
+        .await
+        .expect_err("expected a cross-workspace worktree binding to be rejected");
+
+        assert!(error.contains("different workspace"), "got: {error}");
+    }
+
+    #[test]
+    fn resolve_thread_repo_cwd_uses_the_checkout_without_a_binding() {
+        assert_eq!(
+            resolve_thread_repo_cwd("/repos/app", None).expect("expected the checkout path"),
+            "/repos/app"
+        );
+    }
+
+    #[test]
+    fn resolve_thread_repo_cwd_accepts_a_registered_worktree() {
+        let repo = TempGitRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let metadata = json!({ "worktreePath": worktree_path });
+
+        let resolved = resolve_thread_repo_cwd(repo.path_str(), Some(&metadata))
+            .expect("expected the registered worktree to resolve");
+
+        assert!(crate::git::worktree::worktree_paths_match(
+            &resolved,
+            &worktree_path
+        ));
+    }
+
+    #[test]
+    fn resolve_thread_repo_cwd_rejects_a_directory_that_is_not_a_worktree() {
+        let repo = TempGitRepo::init();
+        let impostor = repo.worktrees_dir().join("impostor");
+        fs::create_dir_all(&impostor).expect("create impostor dir");
+        let metadata = json!({ "worktreePath": impostor.to_str().expect("utf-8 path") });
+
+        let error = resolve_thread_repo_cwd(repo.path_str(), Some(&metadata))
+            .expect_err("expected an unregistered directory to be rejected");
+
+        assert!(
+            error.contains("no longer a registered worktree"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn resolve_thread_repo_cwd_rejects_the_main_checkout_as_a_worktree() {
+        let repo = TempGitRepo::init();
+        let metadata = json!({ "worktreePath": repo.path_str() });
+
+        let error = resolve_thread_repo_cwd(repo.path_str(), Some(&metadata))
+            .expect_err("expected the main checkout to be rejected");
+
+        assert!(error.contains("main checkout"), "got: {error}");
+    }
+
+    #[test]
+    fn resolve_thread_repo_cwd_rejects_a_missing_worktree() {
+        let repo = TempGitRepo::init();
+        let metadata = json!({ "worktreePath": repo.worktrees_dir().join("gone").to_str().expect("utf-8 path") });
+
+        let error = resolve_thread_repo_cwd(repo.path_str(), Some(&metadata))
+            .expect_err("expected a missing worktree to be rejected");
+
+        assert!(error.contains("missing"), "got: {error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_thread_repo_cwd_rejects_a_worktree_replaced_by_a_symlink() {
+        let repo = TempGitRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let swapped = repo.worktrees_dir().join("swapped");
+        std::os::unix::fs::symlink(&worktree_path, &swapped).expect("create symlink");
+        let metadata = json!({ "worktreePath": swapped.to_str().expect("utf-8 path") });
+
+        let error = resolve_thread_repo_cwd(repo.path_str(), Some(&metadata))
+            .expect_err("expected a symlinked worktree path to be rejected");
+
+        assert!(error.contains("symlink"), "got: {error}");
     }
 }

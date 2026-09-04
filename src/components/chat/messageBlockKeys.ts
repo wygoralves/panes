@@ -30,6 +30,8 @@ export function getMessageBlockKey(
       return `task-list:${block.source}`;
     case "steer":
       return `steer:${block.steerId}`;
+    case "subagent":
+      return `subagent:${block.agentId}`;
     case "diff":
       return `diff:${block.scope}:${getBlockTypeOrdinal(blocks, index, "diff")}`;
     default:

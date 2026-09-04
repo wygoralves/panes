@@ -16,12 +16,13 @@ pub fn insert_action_started(
     action_type: &ActionType,
     summary: &str,
     details: &Value,
+    agent_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
     conn.execute(
         "INSERT OR REPLACE INTO actions (
-      id, thread_id, message_id, engine_action_id, action_type, summary, details_json, status
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running')",
+      id, thread_id, message_id, engine_action_id, action_type, summary, details_json, status, agent_id
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8)",
         params![
             action_id,
             thread_id,
@@ -29,7 +30,8 @@ pub fn insert_action_started(
             engine_action_id,
             action_type.as_str(),
             summary,
-            details.to_string()
+            details.to_string(),
+            agent_id
         ],
     )
     .context("failed to insert action")?;

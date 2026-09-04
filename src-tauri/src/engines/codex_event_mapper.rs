@@ -415,6 +415,7 @@ impl TurnEventMapper {
                     action_type: ActionType::Command,
                     summary,
                     details: item.clone(),
+                    agent_id: None,
                 }]
             }
             "fileChange" => {
@@ -430,6 +431,7 @@ impl TurnEventMapper {
                     action_type: ActionType::FileEdit,
                     summary,
                     details: item.clone(),
+                    agent_id: None,
                 }]
             }
             "webSearch" => {
@@ -442,6 +444,7 @@ impl TurnEventMapper {
                     action_type: ActionType::Search,
                     summary: "Web search".to_string(),
                     details: item.clone(),
+                    agent_id: None,
                 }]
             }
             "mcpToolCall" => {
@@ -454,6 +457,7 @@ impl TurnEventMapper {
                     summary: extract_any_string(item, &["name", "toolName"])
                         .unwrap_or_else(|| "Tool call".to_string()),
                     details: item.clone(),
+                    agent_id: None,
                 }];
 
                 if let Some(engine_item_id) = extract_any_string(item, &["id"]) {
@@ -482,9 +486,13 @@ impl TurnEventMapper {
                     action_type: ActionType::Other,
                     summary: summarize_collab_agent_tool_call(item),
                     details: item.clone(),
+                    agent_id: None,
                 }]
             }
-            "agentMessage" => Vec::new(),
+            "subAgentActivity" => map_sub_agent_activity(item),
+            // The text itself arrives as deltas; the item start is only useful
+            // as the boundary between two consecutive assistant messages.
+            "agentMessage" => vec![EngineEvent::TextItemStarted],
             "plan" => {
                 let text = extract_any_string(item, &["text"]).unwrap_or_default();
                 if text.is_empty() {
@@ -582,6 +590,7 @@ impl TurnEventMapper {
                     },
                 }]
             }
+            "subAgentActivity" => map_sub_agent_activity(item),
             "agentMessage" => {
                 if let Some(item_id) = extract_any_string(item, &["id"]) {
                     if self.streamed_agent_message_items.remove(&item_id) {
@@ -1179,6 +1188,65 @@ fn collab_agent_completion_output(item: &Value) -> Option<String> {
     } else {
         Some(lines.join("\n"))
     }
+}
+
+/// Parent-side `subAgentActivity` items narrate what a child thread is doing.
+/// The item shape is not documented, so the message is the first readable
+/// field found on the item (or its nested `activity`).
+fn map_sub_agent_activity(item: &Value) -> Vec<EngineEvent> {
+    let Some(agent_id) = extract_any_string(item, &["agentThreadId", "agent_thread_id"]) else {
+        return Vec::new();
+    };
+    vec![EngineEvent::SubagentProgress {
+        agent_id,
+        message: summarize_sub_agent_activity(item),
+    }]
+}
+
+const SUB_AGENT_ACTIVITY_MAX_CHARS: usize = 200;
+
+fn summarize_sub_agent_activity(item: &Value) -> String {
+    const TEXT_KEYS: [&str; 6] = [
+        "message",
+        "summary",
+        "text",
+        "description",
+        "status",
+        "kind",
+    ];
+    let mut message = extract_any_string(item, &TEXT_KEYS);
+    if message.is_none() {
+        if let Some(activity) = item.get("activity") {
+            message = activity.as_str().map(ToOwned::to_owned).or_else(|| {
+                extract_any_string(
+                    activity,
+                    &[
+                        "message",
+                        "summary",
+                        "text",
+                        "description",
+                        "status",
+                        "type",
+                        "kind",
+                    ],
+                )
+            });
+        }
+    }
+
+    let compact = message
+        .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Working".to_string());
+    if compact.chars().count() <= SUB_AGENT_ACTIVITY_MAX_CHARS {
+        return compact;
+    }
+    let mut truncated = compact
+        .chars()
+        .take(SUB_AGENT_ACTIVITY_MAX_CHARS)
+        .collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn collab_agent_error(item: &Value, normalized_status: &str) -> Option<String> {
@@ -2164,6 +2232,27 @@ mod tests {
     }
 
     #[test]
+    fn map_item_started_marks_the_start_of_an_agent_message() {
+        let mut mapper = TurnEventMapper::default();
+
+        let events = mapper.map_notification(
+            "item/started",
+            &json!({
+                "threadId": "thr_123",
+                "turnId": "turn_123",
+                "item": {
+                    "id": "msg_1",
+                    "type": "agentMessage",
+                    "text": ""
+                }
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], EngineEvent::TextItemStarted));
+    }
+
+    #[test]
     fn map_item_started_maps_collab_agent_tool_call() {
         let mut mapper = TurnEventMapper::default();
 
@@ -2198,6 +2287,71 @@ mod tests {
             }
             other => panic!("expected action started event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sub_agent_activity_items_map_to_subagent_progress() {
+        let mut mapper = TurnEventMapper::default();
+
+        let started = mapper.map_notification(
+            "item/started",
+            &json!({
+                "threadId": "thr_root",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "activity_1",
+                    "type": "subAgentActivity",
+                    "agentThreadId": "thr_child",
+                    "agentPath": "explorer",
+                    "kind": "started"
+                }
+            }),
+        );
+        assert_eq!(started.len(), 1);
+        match &started[0] {
+            EngineEvent::SubagentProgress { agent_id, message } => {
+                assert_eq!(agent_id, "thr_child");
+                assert_eq!(message, "started");
+            }
+            other => panic!("expected subagent progress, got {other:?}"),
+        }
+
+        let completed = mapper.map_notification(
+            "item/completed",
+            &json!({
+                "threadId": "thr_root",
+                "turnId": "turn_1",
+                "item": {
+                    "id": "activity_1",
+                    "type": "subAgentActivity",
+                    "agentThreadId": "thr_child",
+                    "activity": { "type": "toolCall", "message": "Reading   src/main.rs\n" }
+                }
+            }),
+        );
+        assert_eq!(completed.len(), 1);
+        match &completed[0] {
+            EngineEvent::SubagentProgress { agent_id, message } => {
+                assert_eq!(agent_id, "thr_child");
+                assert_eq!(message, "Reading src/main.rs");
+            }
+            other => panic!("expected subagent progress, got {other:?}"),
+        }
+
+        let bare = mapper.map_notification(
+            "item/started",
+            &json!({ "item": { "type": "subAgentActivity", "agentThreadId": "thr_child" } }),
+        );
+        match &bare[0] {
+            EngineEvent::SubagentProgress { message, .. } => assert_eq!(message, "Working"),
+            other => panic!("expected subagent progress, got {other:?}"),
+        }
+
+        let missing_agent = mapper.map_notification(
+            "item/started",
+            &json!({ "item": { "type": "subAgentActivity", "kind": "started" } }),
+        );
+        assert!(missing_agent.is_empty());
     }
 
     #[test]

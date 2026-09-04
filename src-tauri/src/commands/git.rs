@@ -3,14 +3,26 @@ use tauri::Emitter;
 use tauri::State;
 
 use crate::{
+    db,
     git::{repo, worktree},
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
         GitCompareSourceDto, GitDiffPreviewDto, GitFileCompareDto, GitInitRepoStatusDto,
-        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto,
+        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, ThreadStatusDto,
     },
     state::AppState,
 };
+
+async fn run_db<T, F>(db: crate::db::Database, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&crate::db::Database) -> anyhow::Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || operation(&db))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(err_to_string)
+}
 
 #[tauri::command]
 pub async fn get_git_status(
@@ -376,23 +388,15 @@ pub async fn add_git_worktree(
                 .map_err(|e| format!("failed to create worktree parent directory: {e}"))?;
         }
 
-        let created = worktree::add_worktree(
+        // `add_worktree` keeps `.panes/` out of `git status` through the
+        // repository's private exclude file before it creates the directory.
+        worktree::add_worktree(
             &repo_path,
             &worktree_path,
             &branch_name,
             base_ref.as_deref(),
         )
-        .map_err(err_to_string)?;
-
-        // Keep .panes/ ignored, but don't fail the command after successful creation.
-        if let Err(error) = ensure_gitignore_entry(&repo_path, ".panes/") {
-            eprintln!(
-                "warning: failed to ensure .panes/ in .gitignore for '{}': {}",
-                repo_path, error
-            );
-        }
-
-        Ok(created)
+        .map_err(err_to_string)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -410,13 +414,73 @@ pub async fn list_git_worktrees(
 
 #[tauri::command]
 pub async fn remove_git_worktree(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     repo_path: String,
     worktree_path: String,
     force: bool,
     branch_name: Option<String>,
     delete_branch: bool,
 ) -> Result<(), String> {
+    remove_git_worktree_inner(
+        state.inner(),
+        repo_path,
+        worktree_path,
+        force,
+        branch_name,
+        delete_branch,
+    )
+    .await
+}
+
+/// Marker the frontend matches on so it can render localized copy for the one
+/// removal failure the user can act on: a chat is still running in the worktree.
+pub(crate) const WORKTREE_BUSY_ERROR_PREFIX: &str = "worktree_busy:";
+
+async fn remove_git_worktree_inner(
+    state: &AppState,
+    repo_path: String,
+    worktree_path: String,
+    force: bool,
+    branch_name: Option<String>,
+    delete_branch: bool,
+) -> Result<(), String> {
+    let bound_threads = run_db(state.db.clone(), {
+        let worktree_path = worktree_path.clone();
+        move |db| {
+            Ok(db::threads::list_threads_with_worktree_binding(db)?
+                .into_iter()
+                .filter(|thread| {
+                    crate::commands::threads::thread_worktree_path(thread.engine_metadata.as_ref())
+                        .is_some_and(|bound| worktree::worktree_paths_match(&bound, &worktree_path))
+                })
+                .collect::<Vec<_>>())
+        }
+    })
+    .await?;
+
+    let mut busy = Vec::new();
+    let mut idle = Vec::new();
+    for thread in bound_threads {
+        let has_running_turn = state.turns.get(&thread.id).await.is_some()
+            || matches!(
+                thread.status,
+                ThreadStatusDto::Streaming | ThreadStatusDto::AwaitingApproval
+            );
+        if has_running_turn {
+            busy.push(if thread.title.trim().is_empty() {
+                thread.id.clone()
+            } else {
+                thread.title.trim().to_string()
+            });
+        } else {
+            idle.push(thread);
+        }
+    }
+
+    if !busy.is_empty() {
+        return Err(format!("{WORKTREE_BUSY_ERROR_PREFIX}{}", busy.join(", ")));
+    }
+
     tokio::task::spawn_blocking(move || {
         worktree::remove_worktree(
             &repo_path,
@@ -428,7 +492,29 @@ pub async fn remove_git_worktree(
         .map_err(err_to_string)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())??;
+
+    // Only now that git confirmed the worktree is gone do the idle threads fall
+    // back to the main checkout. Detaching first would strand them: without
+    // `force`, removal fails on a dirty or locked worktree, the directory stays,
+    // and the frontend never refreshes on the error path, so the UI would keep
+    // showing a binding the backend had already dropped. The reverse order is
+    // safe because `send_message` re-verifies a bound worktree on every turn and
+    // surfaces a detach hint when it is missing.
+    if !idle.is_empty() {
+        run_db(state.db.clone(), move |db| {
+            for thread in &idle {
+                let metadata = crate::commands::threads::metadata_without_worktree(
+                    thread.engine_metadata.as_ref(),
+                );
+                db::threads::update_engine_metadata(db, &thread.id, &metadata)?;
+            }
+            Ok(())
+        })
+        .await?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -441,29 +527,6 @@ pub async fn prune_git_worktrees(
     })
     .await
     .map_err(|error| error.to_string())?
-}
-
-/// Ensures a pattern exists in the repo's .gitignore file.
-fn ensure_gitignore_entry(repo_path: &str, pattern: &str) -> Result<(), String> {
-    let gitignore_path = std::path::Path::new(repo_path).join(".gitignore");
-
-    if gitignore_path.exists() {
-        let content = std::fs::read_to_string(&gitignore_path)
-            .map_err(|e| format!("read .gitignore: {e}"))?;
-        // Check if pattern is already present (as a whole line)
-        if content.lines().any(|line| line.trim() == pattern) {
-            return Ok(());
-        }
-        // Append with newline separator if file doesn't end with one
-        let prefix = if content.ends_with('\n') { "" } else { "\n" };
-        std::fs::write(&gitignore_path, format!("{content}{prefix}{pattern}\n"))
-            .map_err(|e| format!("write .gitignore: {e}"))?;
-    } else {
-        std::fs::write(&gitignore_path, format!("{pattern}\n"))
-            .map_err(|e| format!("create .gitignore: {e}"))?;
-    }
-
-    Ok(())
 }
 
 // ── Init & Remote Management ──────────────────────────────────
@@ -555,4 +618,291 @@ pub async fn rename_git_remote(
 
 fn err_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, sync::Arc};
+
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::{
+        config::app_config::AppConfig,
+        engines::EngineManager,
+        git::{cli_fallback::run_git, repo::FileTreeCache, watcher::GitWatcherManager},
+        models::ThreadDto,
+        power::KeepAwakeManager,
+        state::TurnManager,
+        terminal::TerminalManager,
+        terminal_notifications::TerminalNotificationManager,
+    };
+
+    struct TestRepo {
+        state: AppState,
+        workspace_id: String,
+        path: std::path::PathBuf,
+        // Spawning git races with tests that point the process-global PATH at
+        // an empty temp dir; hold the shared env lock for the repo's lifetime.
+        _env_guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TestRepo {
+        fn init() -> Self {
+            let env_guard = crate::process_utils::test_env_lock()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let root = std::env::temp_dir().join(format!("panes-git-cmd-{}", Uuid::new_v4()));
+            fs::create_dir_all(&root).expect("create temp root");
+            let db = crate::db::Database::open(root.join("workspaces.db"))
+                .expect("failed to create test database");
+            let state = AppState {
+                db,
+                config: Arc::new(AppConfig::default()),
+                config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+                engines: Arc::new(EngineManager::new()),
+                git_watchers: Arc::new(GitWatcherManager::default()),
+                terminals: Arc::new(TerminalManager::default()),
+                notifications: Arc::new(TerminalNotificationManager::default()),
+                keep_awake: Arc::new(KeepAwakeManager::new()),
+                turns: Arc::new(TurnManager::default()),
+                file_tree_cache: Arc::new(FileTreeCache::new()),
+            };
+
+            let path = root.join("repo");
+            fs::create_dir_all(&path).expect("create repo dir");
+            let mut repo = Self {
+                state,
+                workspace_id: String::new(),
+                path,
+                _env_guard: env_guard,
+            };
+            let repo_path = repo.path_str().to_string();
+            run_git(&repo_path, &["init", "--initial-branch=main"]).expect("git init");
+            run_git(&repo_path, &["config", "user.email", "test@example.com"])
+                .expect("config email");
+            run_git(&repo_path, &["config", "user.name", "Test"]).expect("config name");
+            fs::write(repo.path.join("a.txt"), "committed\n").expect("write file");
+            run_git(&repo_path, &["add", "-A"]).expect("git add");
+            run_git(&repo_path, &["commit", "-m", "init"]).expect("git commit");
+
+            let workspace =
+                crate::db::workspaces::upsert_workspace(&repo.state.db, &repo_path, Some(1))
+                    .expect("create workspace");
+            repo.workspace_id = workspace.id;
+            repo
+        }
+
+        fn path_str(&self) -> &str {
+            self.path.to_str().expect("utf-8 temp path")
+        }
+
+        fn add_worktree(&self, branch: &str) -> String {
+            let path = self.path.join(".panes/worktrees").join(branch);
+            fs::create_dir_all(path.parent().expect("worktrees parent"))
+                .expect("create worktrees dir");
+            worktree::add_worktree(
+                self.path_str(),
+                path.to_str().expect("utf-8 worktree path"),
+                branch,
+                None,
+            )
+            .expect("add worktree")
+            .path
+        }
+
+        fn thread_bound_to(&self, worktree_path: &str, title: &str) -> ThreadDto {
+            let thread = crate::db::threads::create_thread(
+                &self.state.db,
+                &self.workspace_id,
+                None,
+                "codex",
+                "gpt-5.4",
+                title,
+            )
+            .expect("create thread");
+            crate::db::threads::update_engine_metadata(
+                &self.state.db,
+                &thread.id,
+                &json!({ "worktreePath": worktree_path, "sandboxMode": "read-only" }),
+            )
+            .expect("bind worktree");
+            thread
+        }
+
+        fn reload(&self, thread_id: &str) -> ThreadDto {
+            crate::db::threads::get_thread(&self.state.db, thread_id)
+                .expect("read thread")
+                .expect("thread exists")
+        }
+    }
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            if let Some(root) = self.path.parent() {
+                let _ = fs::remove_dir_all(root);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_git_worktree_rejects_removal_while_a_bound_thread_streams() {
+        let repo = TestRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let thread = repo.thread_bound_to(&worktree_path, "Refactor auth");
+        crate::db::threads::update_thread_status(
+            &repo.state.db,
+            &thread.id,
+            ThreadStatusDto::Streaming,
+        )
+        .expect("mark streaming");
+
+        let error = remove_git_worktree_inner(
+            &repo.state,
+            repo.path_str().to_string(),
+            worktree_path.clone(),
+            false,
+            Some("feature".to_string()),
+            false,
+        )
+        .await
+        .expect_err("expected removal to be refused while a turn is running");
+
+        assert!(
+            error.starts_with(WORKTREE_BUSY_ERROR_PREFIX),
+            "got: {error}"
+        );
+        assert!(error.contains("Refactor auth"), "got: {error}");
+        assert!(
+            std::path::Path::new(&worktree_path).is_dir(),
+            "the worktree must survive a refused removal"
+        );
+        assert_eq!(
+            crate::commands::threads::thread_worktree_path(
+                repo.reload(&thread.id).engine_metadata.as_ref()
+            )
+            .as_deref(),
+            Some(worktree_path.as_str()),
+            "a refused removal must leave the binding alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_git_worktree_rejects_removal_while_a_bound_thread_holds_a_turn() {
+        let repo = TestRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let thread = repo.thread_bound_to(&worktree_path, "Refactor auth");
+        assert!(
+            repo.state
+                .turns
+                .try_register(&thread.id, tokio_util::sync::CancellationToken::new())
+                .await,
+            "expected the turn to register"
+        );
+
+        let error = remove_git_worktree_inner(
+            &repo.state,
+            repo.path_str().to_string(),
+            worktree_path.clone(),
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect_err("expected removal to be refused while a turn is registered");
+
+        assert!(
+            error.starts_with(WORKTREE_BUSY_ERROR_PREFIX),
+            "got: {error}"
+        );
+        assert!(std::path::Path::new(&worktree_path).is_dir());
+    }
+
+    #[tokio::test]
+    async fn remove_git_worktree_keeps_bindings_when_git_refuses_the_removal() {
+        let repo = TestRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let idle = repo.thread_bound_to(&worktree_path, "Idle thread");
+        // `git worktree remove` refuses a worktree with uncommitted work unless
+        // it is forced, which is the failure the detach must not run ahead of.
+        fs::write(
+            std::path::Path::new(&worktree_path).join("a.txt"),
+            "uncommitted\n",
+        )
+        .expect("dirty the worktree");
+
+        let error = remove_git_worktree_inner(
+            &repo.state,
+            repo.path_str().to_string(),
+            worktree_path.clone(),
+            false,
+            Some("feature".to_string()),
+            false,
+        )
+        .await
+        .expect_err("expected git to refuse removing a dirty worktree");
+
+        assert!(
+            !error.starts_with(WORKTREE_BUSY_ERROR_PREFIX),
+            "the refusal must come from git, not the busy check: {error}"
+        );
+        assert!(
+            std::path::Path::new(&worktree_path).is_dir(),
+            "the worktree must survive a failed removal"
+        );
+        assert_eq!(
+            crate::commands::threads::thread_worktree_path(
+                repo.reload(&idle.id).engine_metadata.as_ref()
+            )
+            .as_deref(),
+            Some(worktree_path.as_str()),
+            "a failed removal must leave the idle thread bound to the worktree that still exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_git_worktree_detaches_idle_threads_after_removing() {
+        let repo = TestRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let other_worktree_path = repo.add_worktree("other");
+        let idle = repo.thread_bound_to(&worktree_path, "Idle thread");
+        let untouched = repo.thread_bound_to(&other_worktree_path, "Other thread");
+
+        remove_git_worktree_inner(
+            &repo.state,
+            repo.path_str().to_string(),
+            worktree_path.clone(),
+            false,
+            Some("feature".to_string()),
+            true,
+        )
+        .await
+        .expect("expected the removal to succeed");
+
+        assert!(!std::path::Path::new(&worktree_path).exists());
+
+        let detached = repo.reload(&idle.id);
+        assert!(
+            crate::commands::threads::thread_worktree_path(detached.engine_metadata.as_ref())
+                .is_none(),
+            "the idle thread should fall back to the main checkout"
+        );
+        assert_eq!(
+            detached
+                .engine_metadata
+                .as_ref()
+                .and_then(|value| value.get("sandboxMode")),
+            Some(&json!("read-only")),
+            "detaching must not drop the thread's other overrides"
+        );
+        assert_eq!(
+            crate::commands::threads::thread_worktree_path(
+                repo.reload(&untouched.id).engine_metadata.as_ref()
+            )
+            .as_deref(),
+            Some(other_worktree_path.as_str()),
+            "threads bound to other worktrees must be left alone"
+        );
+    }
 }

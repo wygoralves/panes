@@ -4,6 +4,9 @@ import { ipc, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
 import { useThreadStore } from "./threadStore";
 import { useThreadReadStore } from "./threadReadStore";
+import { useChatQueueStore } from "./chatQueueStore";
+import type { QueuedMessage } from "./chatQueueStore";
+import { subagentStatusFromTurn } from "../lib/subagentBlocks";
 import type {
   ApprovalResponse,
   ActionBlock,
@@ -21,9 +24,11 @@ import type {
   SkillBlock,
   SteerBlock,
   StreamEvent,
+  SubagentBlock,
   TaskListBlock,
   TaskStatus,
-  ThreadStatus
+  ThreadStatus,
+  TurnCompletionStatus
 } from "../types";
 
 interface ChatState {
@@ -69,6 +74,33 @@ interface ChatState {
     threadIdOverride?: string,
   ) => Promise<boolean>;
   hydrateActionOutput: (messageId: string, actionId: string) => Promise<void>;
+  /**
+   * Sends the next queued message for a thread that just went idle. A turn
+   * that was interrupted or failed leaves the queue alone; called without a
+   * status (the explicit "Send next" control) it always drains.
+   */
+  drainQueue: (threadId: string, status?: TurnCompletionStatus) => Promise<void>;
+}
+
+/**
+ * The backend answers a send for a thread that is gone with "thread not
+ * found: <id>". Requeuing then only replays the same failure forever.
+ */
+function isMissingThreadError(message: string): boolean {
+  return /thread not found/i.test(message);
+}
+
+function queuedSendOptions(message: QueuedMessage) {
+  return {
+    threadIdOverride: message.threadId,
+    engineId: message.engineId ?? null,
+    modelId: message.modelId ?? null,
+    reasoningEffort: message.reasoningEffort ?? null,
+    attachments:
+      message.attachments && message.attachments.length > 0 ? message.attachments : undefined,
+    inputItems: message.inputItems && message.inputItems.length > 0 ? message.inputItems : undefined,
+    planMode: message.planMode ?? false,
+  };
 }
 
 let activeThreadBindSeq = 0;
@@ -936,6 +968,25 @@ function upsertBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[
   return [...blocks, block];
 }
 
+function upsertSubagentBlock(
+  blocks: ContentBlock[],
+  agentId: string,
+  update: (existing: SubagentBlock) => SubagentBlock,
+): ContentBlock[] {
+  const idx = blocks.findIndex(
+    (block) => block.type === "subagent" && block.agentId === agentId,
+  );
+  if (idx >= 0) {
+    const next = [...blocks];
+    next[idx] = update(blocks[idx] as SubagentBlock);
+    return next;
+  }
+  return [
+    ...blocks,
+    update({ type: "subagent", agentId, description: agentId, status: "running", startedAt: Date.now() }),
+  ];
+}
+
 function upsertNoticeBlock(blocks: ContentBlock[], block: NoticeBlock): ContentBlock[] {
   const idx = blocks.findIndex(
     (candidate) =>
@@ -964,6 +1015,13 @@ function upsertTaskListBlock(
   return [block, ...withoutSource];
 }
 
+/**
+ * Rebuilds a stored message so it reads the way it streamed. Rows written
+ * before deltas merged through hold one block per delta whenever a worker
+ * spoke mid-sentence, which breaks the markdown apart on reload, so each text
+ * or thinking block rejoins the one its own producer was writing. A steer echo
+ * and a block the engine already closed end a message and never take more.
+ */
 function normalizeBlocks(blocks?: ContentBlock[]): ContentBlock[] | undefined {
   if (!Array.isArray(blocks)) {
     return blocks;
@@ -971,21 +1029,43 @@ function normalizeBlocks(blocks?: ContentBlock[]): ContentBlock[] | undefined {
 
   const normalized: ContentBlock[] = [];
   for (const block of blocks) {
-    const last = normalized[normalized.length - 1];
-    if (block.type === "text" && last?.type === "text") {
-      normalized[normalized.length - 1] = {
-        ...last,
-        content: `${last.content}${block.content ?? ""}`
+    if (block.type !== "text" && block.type !== "thinking") {
+      normalized.push(block);
+      continue;
+    }
+
+    const producer = block.agentId ?? null;
+    const index = nearestOwnBlockIndex(normalized, producer, "stored");
+    const target = index >= 0 ? normalized[index] : undefined;
+
+    if (
+      block.type === "text" &&
+      target?.type === "text" &&
+      (target.agentId ?? null) === producer &&
+      !target.isSteer &&
+      !target.closed &&
+      !block.isSteer
+    ) {
+      normalized[index] = {
+        ...target,
+        content: `${target.content}${block.content ?? ""}`,
+        ...(block.closed ? { closed: true } : {}),
       };
       continue;
     }
-    if (block.type === "thinking" && last?.type === "thinking") {
-      normalized[normalized.length - 1] = {
-        ...last,
-        content: `${last.content}${block.content ?? ""}`
+
+    if (
+      block.type === "thinking" &&
+      target?.type === "thinking" &&
+      (target.agentId ?? null) === producer
+    ) {
+      normalized[index] = {
+        ...target,
+        content: `${target.content}${block.content ?? ""}`,
       };
       continue;
     }
+
     normalized.push(block);
   }
 
@@ -1206,13 +1286,12 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
     typeof maxContextTokensRaw === "number" ? Math.max(0, Math.round(maxContextTokensRaw)) : null;
   const hasContextMetrics = currentTokens !== null || maxContextTokens !== null;
 
-  let contextPercent = calculateContextPercentRemaining(currentTokens, maxContextTokens);
-  if (contextPercent === null && typeof contextPercentRaw === "number") {
-    contextPercent = Math.round(contextPercentRaw);
-  }
-  if (contextPercent !== null && !Number.isFinite(contextPercent)) {
-    contextPercent = null;
-  }
+  // Each engine owns its own context accounting, so the percent it reports wins.
+  // The token estimate is only a fallback for engines that send raw counts and no percent.
+  const contextPercent =
+    typeof contextPercentRaw === "number" && Number.isFinite(contextPercentRaw)
+      ? Math.round(contextPercentRaw)
+      : calculateContextPercentRemaining(currentTokens, maxContextTokens);
 
   const hasAnyMetric =
     hasContextMetrics ||
@@ -1362,6 +1441,122 @@ function resolveAssistantTargetFromEvent(
   };
 }
 
+/**
+ * Who wrote a block: a worker id, or null for the main agent. A `subagent`
+ * block belongs to whoever spawned the worker, not to the worker itself.
+ */
+function blockProducerId(block: ContentBlock): string | null {
+  if (block.type === "subagent") return block.parentAgentId ?? null;
+  return "agentId" in block ? block.agentId ?? null : null;
+}
+
+/**
+ * Where the scan is running.
+ *
+ * `stream` is the live turn, where the boundaries are known: only subagent
+ * scaffolding is transparent, so a worker's text never moves across the main
+ * agent's content and vice versa.
+ *
+ * `stored` is history repair. Rows written before deltas merged through were
+ * cut into one block per delta, so any other producer's block is transparent.
+ * A `subagent` block is not: those rows carry no `closed` flag, and a worker
+ * being announced is the only message boundary that data still has.
+ */
+type BlockScanMode = "stream" | "stored";
+
+/** Whether text from `producer` may reach past this block. */
+function isSubagentScopedBlock(
+  block: ContentBlock,
+  producer: string | null,
+  mode: BlockScanMode = "stream",
+): boolean {
+  if (block.type === "subagent") return mode === "stream";
+  const blockProducer = blockProducerId(block);
+  if (blockProducer === producer) return false;
+  return mode === "stored" || blockProducer !== null;
+}
+
+/**
+ * The last block `producer` could still be writing, looking past subagent
+ * output that landed in between. -1 when nothing of theirs is reachable.
+ */
+function nearestOwnBlockIndex(
+  blocks: ContentBlock[],
+  producer: string | null,
+  mode: BlockScanMode = "stream",
+): number {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    if (!isSubagentScopedBlock(blocks[index], producer, mode)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Appends to the text block this producer was last writing, even when a
+ * subagent card or another worker's output landed in between: a sentence split
+ * across those renders as separate paragraphs and breaks markdown mid-list.
+ * A steer echo and a closed block always start a new one.
+ */
+function appendTextDelta(
+  blocks: ContentBlock[],
+  delta: string,
+  producer: string | null,
+): ContentBlock[] {
+  const index = nearestOwnBlockIndex(blocks, producer);
+  const target = index >= 0 ? blocks[index] : undefined;
+  if (
+    target?.type === "text" &&
+    (target.agentId ?? null) === producer &&
+    !target.isSteer &&
+    !target.closed
+  ) {
+    return [
+      ...blocks.slice(0, index),
+      { ...target, content: `${target.content}${delta}` },
+      ...blocks.slice(index + 1),
+    ];
+  }
+  return [
+    ...blocks,
+    producer === null
+      ? { type: "text", content: delta }
+      : { type: "text", content: delta, agentId: producer },
+  ];
+}
+
+function appendThinkingDelta(
+  blocks: ContentBlock[],
+  delta: string,
+  producer: string | null,
+): ContentBlock[] {
+  const index = nearestOwnBlockIndex(blocks, producer);
+  const target = index >= 0 ? blocks[index] : undefined;
+  if (target?.type === "thinking" && (target.agentId ?? null) === producer) {
+    return [
+      ...blocks.slice(0, index),
+      { ...target, content: `${target.content}${delta}` },
+      ...blocks.slice(index + 1),
+    ];
+  }
+  const opened = { type: "thinking" as const, content: delta, startedAt: Date.now() };
+  return [...blocks, producer === null ? opened : { ...opened, agentId: producer }];
+}
+
+/**
+ * Marks the text block `producer` was writing as finished, so the next delta
+ * opens a new one instead of gluing two messages into one paragraph.
+ */
+function closeOpenTextBlock(blocks: ContentBlock[], producer: string | null): ContentBlock[] {
+  const index = nearestOwnBlockIndex(blocks, producer);
+  const target = index >= 0 ? blocks[index] : undefined;
+  if (target?.type !== "text" || (target.agentId ?? null) !== producer || target.closed) {
+    return blocks;
+  }
+  return [...blocks.slice(0, index), { ...target, closed: true }, ...blocks.slice(index + 1)];
+}
+
 function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: string): Message[] {
   if (event.type === "UsageLimitsUpdated") {
     return messages;
@@ -1387,55 +1582,96 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     assistant.clientTurnId = event.client_turn_id;
   }
 
-  // Stamp durationMs on the last thinking block when a non-thinking event arrives
-  if (event.type !== "ThinkingDelta") {
+  // Close a thought when its own producer moves on to something else. A
+  // thinking delta is the block still being written, and another producer's
+  // interleaved output says nothing about when this thought ended.
+  if (event.type !== "ThinkingDelta" && event.type !== "SubagentThinkingDelta") {
     const blocks = assistant.blocks ?? [];
-    const last = blocks[blocks.length - 1];
+    const eventAgentId =
+      "agent_id" in event && typeof event.agent_id === "string" ? event.agent_id : null;
+    // The producer's own last block, which interleaved output may have buried.
+    let index = blocks.length - 1;
+    while (index >= 0 && blockProducerId(blocks[index]) !== eventAgentId) {
+      index -= 1;
+    }
+    const last = index >= 0 ? blocks[index] : undefined;
     if (last?.type === "thinking" && last.startedAt != null && last.durationMs == null) {
       assistant.blocks = [
-        ...blocks.slice(0, -1),
+        ...blocks.slice(0, index),
         { ...last, durationMs: Date.now() - last.startedAt },
+        ...blocks.slice(index + 1),
       ];
     }
   }
 
   if (event.type === "TextDelta") {
-    const blocks = assistant.blocks ?? [];
     const delta = String(event.content ?? "");
     if (!delta) {
       return next;
     }
-    const last = blocks[blocks.length - 1];
-    if (last?.type === "text") {
-      assistant.blocks = [
-        ...blocks.slice(0, -1),
-        {
-          ...last,
-          content: `${last.content}${delta}`,
-        },
-      ];
-    } else {
-      assistant.blocks = [...blocks, { type: "text", content: delta }];
-    }
+    assistant.blocks = appendTextDelta(assistant.blocks ?? [], delta, null);
   }
 
   if (event.type === "ThinkingDelta") {
-    const blocks = assistant.blocks ?? [];
     const delta = String(event.content ?? "");
     if (!delta) {
       return next;
     }
-    const last = blocks[blocks.length - 1];
-    if (last?.type === "thinking") {
-      assistant.blocks = [
-        ...blocks.slice(0, -1),
-        {
-          ...last,
-          content: `${last.content}${delta}`,
-        },
-      ];
-    } else {
-      assistant.blocks = [...blocks, { type: "thinking" as const, content: delta, startedAt: Date.now() }];
+    assistant.blocks = appendThinkingDelta(assistant.blocks ?? [], delta, null);
+  }
+
+  if (event.type === "TextItemStarted") {
+    assistant.blocks = closeOpenTextBlock(assistant.blocks ?? [], null);
+  }
+
+  if (event.type === "SubagentTextDelta" || event.type === "SubagentThinkingDelta") {
+    const delta = String(event.content ?? "");
+    const agentId = String(event.agent_id ?? "");
+    if (!delta || !agentId) {
+      return next;
+    }
+    assistant.blocks =
+      event.type === "SubagentTextDelta"
+        ? appendTextDelta(assistant.blocks ?? [], delta, agentId)
+        : appendThinkingDelta(assistant.blocks ?? [], delta, agentId);
+  }
+
+  if (event.type === "SubagentStarted") {
+    const agentId = String(event.agent_id ?? "");
+    if (agentId) {
+      assistant.blocks = upsertSubagentBlock(assistant.blocks ?? [], agentId, (existing) => ({
+        ...existing,
+        agentType: event.agent_type ?? existing.agentType,
+        description: String(event.description ?? "") || existing.description,
+        parentActionId: event.parent_action_id ?? existing.parentActionId,
+        parentAgentId: event.parent_agent_id ?? existing.parentAgentId,
+        status: "running",
+        startedAt: existing.startedAt ?? Date.now(),
+      }));
+    }
+  }
+
+  if (event.type === "SubagentProgress") {
+    const agentId = String(event.agent_id ?? "");
+    if (agentId) {
+      assistant.blocks = upsertSubagentBlock(assistant.blocks ?? [], agentId, (existing) => ({
+        ...existing,
+        progress: String(event.message ?? "") || existing.progress,
+      }));
+    }
+  }
+
+  if (event.type === "SubagentCompleted") {
+    const agentId = String(event.agent_id ?? "");
+    if (agentId) {
+      const finishedAt = Date.now();
+      assistant.blocks = upsertSubagentBlock(assistant.blocks ?? [], agentId, (existing) => ({
+        ...existing,
+        status: subagentStatusFromTurn(event.status),
+        summary: event.summary ?? existing.summary,
+        progress: undefined,
+        durationMs: existing.startedAt ? finishedAt - existing.startedAt : existing.durationMs,
+      }));
     }
   }
 
@@ -1445,6 +1681,7 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
       type: "action",
       actionId: String(event.action_id),
       engineActionId: event.engine_action_id as string | undefined,
+      ...(event.agent_id ? { agentId: String(event.agent_id) } : {}),
       actionType: String(event.action_type ?? "other") as ActionBlock["actionType"],
       summary: String(event.summary ?? ""),
       details: (event.details as Record<string, unknown>) ?? {},
@@ -1693,6 +1930,18 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     } else {
       assistant.status = "completed";
     }
+    const settledAt = Date.now();
+    const settledStatus = subagentStatusFromTurn(status);
+    assistant.blocks = (assistant.blocks ?? []).map((block) =>
+      block.type === "subagent" && block.status === "running"
+        ? {
+            ...block,
+            status: settledStatus,
+            progress: undefined,
+            durationMs: block.startedAt ? settledAt - block.startedAt : block.durationMs,
+          }
+        : block,
+    );
   }
 
   assistant.hydration = "full";
@@ -1752,6 +2001,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       listenThreadEvents(currentThreadId, (event) => {
         if (event.type === "TurnCompleted") {
           cleanupBackgroundListener(currentThreadId!);
+          void useChatStore.getState().drainQueue(currentThreadId!, event.status);
         }
       }).then((unsub) => {
         // If the user already switched back to this thread, don't register
@@ -1977,6 +2227,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           useThreadStore.getState().markThreadReadIfActive(threadId);
           flushQueuedStreamEvents();
           emitEventRateMetric(performance.now());
+          void useChatStore.getState().drainQueue(threadId, event.status);
           return;
         }
         if (queuedStreamEvents.length >= STREAM_EVENT_QUEUE_FLUSH_THRESHOLD) {
@@ -2289,6 +2540,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       await ipc.cancelTurn(threadId);
+      // Stop means stop: whatever was waiting behind this turn is dropped.
+      useChatQueueStore.getState().clear(threadId);
       pendingTurnMetaByThread.delete(threadId);
       // Remove the trailing assistant message if it has no meaningful content
       // (e.g. only thinking blocks with no text, or completely empty)
@@ -2307,6 +2560,73 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: String(error) });
     }
   },
+  drainQueue: async (threadId, status) => {
+    if (status !== undefined && status !== "completed") {
+      // The turn was interrupted or failed; sending the next message would
+      // walk over whatever the user stopped for.
+      return;
+    }
+    const queue = useChatQueueStore.getState();
+    const nextMessage = queue.peek(threadId);
+    if (!nextMessage) {
+      return;
+    }
+    const state = get();
+    if (state.threadId === threadId) {
+      if (state.streaming) {
+        return;
+      }
+      queue.remove(threadId, nextMessage.id);
+      const sent = await get().send(nextMessage.text, queuedSendOptions(nextMessage));
+      if (!sent) {
+        useChatQueueStore.getState().restoreFront(nextMessage);
+      }
+      return;
+    }
+
+    // The thread is in the background: send without touching the visible
+    // transcript and keep listening so the rest of the queue follows. The
+    // listener goes up before the send so a fast turn cannot finish unseen.
+    queue.remove(threadId, nextMessage.id);
+    cleanupBackgroundListener(threadId);
+    const unsub = await listenThreadEvents(threadId, (event) => {
+      if (event.type === "TurnCompleted") {
+        cleanupBackgroundListener(threadId);
+        void useChatStore.getState().drainQueue(threadId, event.status);
+      }
+    });
+    backgroundStreamListeners.set(threadId, unsub);
+    try {
+      await ipc.sendMessage(
+        threadId,
+        nextMessage.text,
+        nextMessage.modelId ?? null,
+        nextMessage.reasoningEffort ?? null,
+        nextMessage.attachments && nextMessage.attachments.length > 0
+          ? nextMessage.attachments
+          : null,
+        nextMessage.inputItems && nextMessage.inputItems.length > 0
+          ? nextMessage.inputItems
+          : null,
+        nextMessage.planMode ?? false,
+        crypto.randomUUID(),
+      );
+    } catch (error) {
+      cleanupBackgroundListener(threadId);
+      const message = String(error);
+      if (!isMissingThreadError(message)) {
+        useChatQueueStore.getState().restoreFront(nextMessage);
+      }
+      set({ error: message });
+      return;
+    }
+    if (useChatStore.getState().threadId === threadId) {
+      // The thread became active meanwhile; its own listener drains the rest.
+      cleanupBackgroundListener(threadId);
+    }
+  },
+
+
   respondApproval: async (approvalId, response, threadIdOverride) => {
     const threadId = threadIdOverride ?? get().threadId;
     if (!threadId) {

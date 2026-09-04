@@ -34,6 +34,8 @@ const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const NODE_RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const CLAUDE_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(12);
 const CLAUDE_RUNTIME_INFO_TIMEOUT: Duration = Duration::from_secs(5);
+const CLAUDE_STEER_TIMEOUT: Duration = Duration::from_secs(10);
+const CLAUDE_CANCEL_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const ARCHIVED_CLAUDE_SDK_NODE_MODULES: &str = "claude-sdk-node_modules.tar.gz";
 const SIDECAR_EVENT_BUFFER_CAPACITY: usize = 1024;
 const MINIMUM_NODE_VERSION: &str = "20.5";
@@ -78,6 +80,15 @@ enum SidecarEvent {
     TurnStarted {
         id: Option<String>,
     },
+    /// Sent once a cancelled query has stopped for good, either because it
+    /// yielded its final result or because the sidecar closed it.
+    CancelResult {
+        id: Option<String>,
+        #[serde(rename = "requestId")]
+        request_id: Option<String>,
+        #[serde(default)]
+        closed: bool,
+    },
     TextDelta {
         id: Option<String>,
         content: String,
@@ -85,6 +96,11 @@ enum SidecarEvent {
     ThinkingDelta {
         id: Option<String>,
         content: String,
+    },
+    /// The model opened a new text content block, which is where one assistant
+    /// message ends and the next begins.
+    TextItemStarted {
+        id: Option<String>,
     },
     ActionStarted {
         id: Option<String>,
@@ -94,6 +110,49 @@ enum SidecarEvent {
         action_type: String,
         summary: String,
         details: Option<serde_json::Value>,
+        #[serde(rename = "agentId")]
+        agent_id: Option<String>,
+    },
+    SubagentStarted {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        #[serde(rename = "agentType")]
+        agent_type: Option<String>,
+        description: String,
+        #[serde(rename = "parentActionId")]
+        parent_action_id: Option<String>,
+        #[serde(rename = "parentAgentId")]
+        parent_agent_id: Option<String>,
+    },
+    SubagentProgress {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        message: String,
+    },
+    SubagentCompleted {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        status: String,
+        summary: Option<String>,
+    },
+    SubagentTextDelta {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        content: String,
+    },
+    SubagentThinkingDelta {
+        id: Option<String>,
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        content: String,
+    },
+    SteerResult {
+        id: Option<String>,
+        ok: bool,
     },
     ActionOutputDelta {
         id: Option<String>,
@@ -197,7 +256,15 @@ impl SidecarEvent {
             | SidecarEvent::TurnStarted { id, .. }
             | SidecarEvent::TextDelta { id, .. }
             | SidecarEvent::ThinkingDelta { id, .. }
+            | SidecarEvent::TextItemStarted { id, .. }
             | SidecarEvent::ActionStarted { id, .. }
+            | SidecarEvent::SubagentStarted { id, .. }
+            | SidecarEvent::SubagentProgress { id, .. }
+            | SidecarEvent::SubagentCompleted { id, .. }
+            | SidecarEvent::SubagentTextDelta { id, .. }
+            | SidecarEvent::SubagentThinkingDelta { id, .. }
+            | SidecarEvent::SteerResult { id, .. }
+            | SidecarEvent::CancelResult { id, .. }
             | SidecarEvent::ActionOutputDelta { id, .. }
             | SidecarEvent::ActionProgressUpdated { id, .. }
             | SidecarEvent::ActionCompleted { id, .. }
@@ -816,6 +883,75 @@ impl ClaudeSidecarEngine {
             "stderr" => OutputStream::Stderr,
             _ => OutputStream::Stdout,
         }
+    }
+
+    fn parse_completion_status(s: &str) -> TurnCompletionStatus {
+        match s {
+            "completed" => TurnCompletionStatus::Completed,
+            "interrupted" => TurnCompletionStatus::Interrupted,
+            _ => TurnCompletionStatus::Failed,
+        }
+    }
+
+    /// Sends a steer command for the thread's running turn and waits for the
+    /// sidecar to acknowledge it.
+    async fn send_steer_command(
+        &self,
+        engine_thread_id: &str,
+        method: &str,
+        mut params: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let (transport, request_id) = {
+            let state = self.state.lock().await;
+            let transport = state
+                .transport
+                .clone()
+                .context("Claude sidecar is not running")?;
+            let request_id = state
+                .threads
+                .get(engine_thread_id)
+                .and_then(|config| config.active_request_id.clone())
+                .context("No active Claude turn to steer")?;
+            (transport, request_id)
+        };
+
+        params["requestId"] = serde_json::Value::String(request_id);
+        let steer_id = Uuid::new_v4().to_string();
+        let mut receiver = transport.subscribe();
+        transport
+            .send_command(&serde_json::json!({
+                "id": steer_id,
+                "method": method,
+                "params": params,
+            }))
+            .await?;
+
+        timeout(CLAUDE_STEER_TIMEOUT, async {
+            loop {
+                match receiver.recv().await {
+                    Ok(SidecarEvent::SteerResult { id, ok })
+                        if id.as_deref() == Some(steer_id.as_str()) =>
+                    {
+                        if ok {
+                            return Ok(());
+                        }
+                        anyhow::bail!("Claude sidecar rejected the steer request");
+                    }
+                    Ok(SidecarEvent::Error { id, message, .. })
+                        if id.as_deref() == Some(steer_id.as_str()) =>
+                    {
+                        anyhow::bail!(message);
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        anyhow::bail!("Claude sidecar closed while steering the turn");
+                    }
+                }
+            }
+        })
+        .await
+        .context("timed out waiting for the Claude sidecar to accept the steer")?
     }
 
     fn is_claude_auth_error(message: &str, error_type: Option<&str>, is_auth_error: bool) -> bool {
@@ -1874,7 +2010,7 @@ impl Engine for ClaudeSidecarEngine {
         let config = ThreadConfig {
             scope,
             model_id: model.to_string(),
-            sandbox,
+            sandbox: normalize_claude_sandbox_policy(sandbox),
             agent_session_id: existing_session,
             active_request_id: None,
         };
@@ -1973,14 +2109,26 @@ impl Engine for ClaudeSidecarEngine {
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => {
+                    let cancel_id = Uuid::new_v4().to_string();
                     let cancel_cmd = serde_json::json!({
+                        "id": cancel_id.clone(),
                         "method": "cancel",
                         "params": { "requestId": request_id.clone() },
                     });
                     let _ = transport.send_command(&cancel_cmd).await;
+                    // The sidecar answers only once the cancelled query has
+                    // stopped. Releasing the thread before that would let the
+                    // next turn overlap the query being torn down.
+                    if !wait_for_cancel_ack(&mut rx, &request_id, &cancel_id).await {
+                        log::warn!(
+                            "claude sidecar did not acknowledge the cancel for request {request_id}"
+                        );
+                    }
                     let mut state = self.state.lock().await;
                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
-                        config.active_request_id = None;
+                        if config.active_request_id.as_deref() == Some(request_id.as_str()) {
+                            config.active_request_id = None;
+                        }
                     }
                     return Ok(());
                 }
@@ -2021,11 +2169,15 @@ impl Engine for ClaudeSidecarEngine {
                                         .await
                                         .ok();
                                 }
+                                SidecarEvent::TextItemStarted { .. } => {
+                                    event_tx.send(EngineEvent::TextItemStarted).await.ok();
+                                }
                                 SidecarEvent::ActionStarted {
                                     action_id,
                                     action_type,
                                     summary,
                                     details,
+                                    agent_id,
                                     ..
                                 } => {
                                     event_tx
@@ -2035,6 +2187,68 @@ impl Engine for ClaudeSidecarEngine {
                                             action_type: Self::parse_action_type(&action_type),
                                             summary,
                                             details: details.unwrap_or(serde_json::json!({})),
+                                            agent_id,
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentStarted {
+                                    agent_id,
+                                    agent_type,
+                                    description,
+                                    parent_action_id,
+                                    parent_agent_id,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentStarted {
+                                            agent_id,
+                                            agent_type,
+                                            description,
+                                            parent_action_id,
+                                            parent_agent_id,
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentProgress {
+                                    agent_id, message, ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentProgress { agent_id, message })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentCompleted {
+                                    agent_id,
+                                    status,
+                                    summary,
+                                    ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentCompleted {
+                                            agent_id,
+                                            status: Self::parse_completion_status(&status),
+                                            summary,
+                                        })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentTextDelta {
+                                    agent_id, content, ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentTextDelta { agent_id, content })
+                                        .await
+                                        .ok();
+                                }
+                                SidecarEvent::SubagentThinkingDelta {
+                                    agent_id, content, ..
+                                } => {
+                                    event_tx
+                                        .send(EngineEvent::SubagentThinkingDelta {
+                                            agent_id,
+                                            content,
                                         })
                                         .await
                                         .ok();
@@ -2146,11 +2360,8 @@ impl Engine for ClaudeSidecarEngine {
                                         }
                                     }
 
-                                    let completion_status = match status.as_str() {
-                                        "completed" => TurnCompletionStatus::Completed,
-                                        "interrupted" => TurnCompletionStatus::Interrupted,
-                                        _ => TurnCompletionStatus::Failed,
-                                    };
+                                    let completion_status =
+                                        Self::parse_completion_status(&status);
                                     // Emit non-trivial stop reason BEFORE TurnCompleted so it
                                     // lands in the current assistant message, not a new shell.
                                     // Skip "end_turn" — that is the normal completion case.
@@ -2235,11 +2446,12 @@ impl Engine for ClaudeSidecarEngine {
                                     is_auth_error,
                                     ..
                                 } => {
-                                    if Self::is_claude_auth_error(
+                                    let auth_failure = Self::is_claude_auth_error(
                                         &message,
                                         error_type.as_deref(),
                                         is_auth_error.unwrap_or(false),
-                                    ) {
+                                    );
+                                    if auth_failure {
                                         auth_invalidated_transport = true;
                                         let mut state = self.state.lock().await;
                                         if state
@@ -2260,10 +2472,32 @@ impl Engine for ClaudeSidecarEngine {
                                         })
                                         .await
                                         .ok();
+                                    if auth_failure {
+                                        // The child is gone, but this loop still holds the
+                                        // transport and with it the event sender, so the
+                                        // channel never closes on its own. End the turn here
+                                        // or the thread stays registered as running.
+                                        event_tx
+                                            .send(EngineEvent::TurnCompleted {
+                                                token_usage: None,
+                                                status: TurnCompletionStatus::Failed,
+                                            })
+                                            .await
+                                            .ok();
+                                        let mut state = self.state.lock().await;
+                                        if let Some(config) =
+                                            state.threads.get_mut(&engine_thread_id_owned)
+                                        {
+                                            config.active_request_id = None;
+                                        }
+                                        break;
+                                    }
                                 }
                                 SidecarEvent::Ready
                                 | SidecarEvent::Models { .. }
-                                | SidecarEvent::Version { .. } => {}
+                                | SidecarEvent::Version { .. }
+                                | SidecarEvent::SteerResult { .. }
+                                | SidecarEvent::CancelResult { .. } => {}
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -2341,10 +2575,35 @@ impl Engine for ClaudeSidecarEngine {
 
     async fn steer_message(
         &self,
-        _engine_thread_id: &str,
-        _input: TurnInput,
+        engine_thread_id: &str,
+        input: TurnInput,
     ) -> Result<(), anyhow::Error> {
-        anyhow::bail!("Claude does not support mid-turn steering")
+        let TurnInput {
+            message,
+            attachments,
+            plan_mode: _,
+            input_items: _,
+        } = input;
+        let params = serde_json::json!({
+            "prompt": message,
+            "attachments": attachments
+                .iter()
+                .map(|attachment| {
+                    serde_json::json!({
+                        "fileName": attachment.file_name,
+                        "filePath": attachment.file_path,
+                        "sizeBytes": attachment.size_bytes,
+                        "mimeType": attachment.mime_type,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        });
+        self.send_steer_command(engine_thread_id, "steer", params)
+            .await
+    }
+
+    fn supports_steering(&self) -> bool {
+        true
     }
 
     async fn respond_to_approval(
@@ -2399,9 +2658,120 @@ impl Engine for ClaudeSidecarEngine {
     }
 }
 
+/// Full access disables the OS sandbox, so a command can reach the network
+/// whatever the flag says. The launch config reports network access as enabled
+/// instead of claiming a restriction Panes cannot enforce.
+fn normalize_claude_sandbox_policy(mut sandbox: SandboxPolicy) -> SandboxPolicy {
+    let full_access = sandbox
+        .sandbox_mode
+        .as_deref()
+        .map(|mode| mode.eq_ignore_ascii_case("danger-full-access"))
+        .unwrap_or(false);
+    if full_access {
+        sandbox.allow_network = true;
+    }
+    sandbox
+}
+
+/// Waits for the sidecar to confirm that a cancelled query stopped. Returns
+/// false when the acknowledgement never arrives so the caller can carry on
+/// instead of hanging.
+async fn wait_for_cancel_ack(
+    rx: &mut broadcast::Receiver<SidecarEvent>,
+    request_id: &str,
+    cancel_id: &str,
+) -> bool {
+    let acknowledged = timeout(CLAUDE_CANCEL_ACK_TIMEOUT, async {
+        loop {
+            match rx.recv().await {
+                Ok(SidecarEvent::CancelResult {
+                    id,
+                    request_id: cancelled_request_id,
+                    closed,
+                }) if cancelled_request_id.as_deref() == Some(request_id)
+                    || id.as_deref() == Some(cancel_id) =>
+                {
+                    if closed {
+                        log::warn!(
+                            "claude sidecar closed request {request_id} because it did not stop within the cancel grace period"
+                        );
+                    }
+                    return true;
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return false,
+            }
+        }
+    })
+    .await;
+
+    acknowledged.unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sandbox_policy(sandbox_mode: &str, allow_network: bool) -> SandboxPolicy {
+        SandboxPolicy {
+            writable_roots: vec!["/repo".to_string()],
+            allow_network,
+            approval_policy: None,
+            permission_profile: None,
+            approvals_reviewer: None,
+            reasoning_effort: None,
+            sandbox_mode: Some(sandbox_mode.to_string()),
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            opencode_agent: None,
+        }
+    }
+
+    #[test]
+    fn full_access_reports_network_access_as_enabled() {
+        assert!(
+            normalize_claude_sandbox_policy(sandbox_policy("danger-full-access", false))
+                .allow_network
+        );
+        assert!(
+            normalize_claude_sandbox_policy(sandbox_policy("Danger-Full-Access", false))
+                .allow_network
+        );
+        assert!(
+            !normalize_claude_sandbox_policy(sandbox_policy("workspace-write", false))
+                .allow_network
+        );
+        assert!(
+            normalize_claude_sandbox_policy(sandbox_policy("workspace-write", true)).allow_network
+        );
+    }
+
+    #[test]
+    fn deserializes_cancel_result_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "cancel_result",
+            "id": "cancel-1",
+            "requestId": "request-1",
+            "ok": true,
+            "closed": true,
+        }))
+        .expect("cancel_result should deserialize");
+
+        match event {
+            SidecarEvent::CancelResult {
+                id,
+                request_id,
+                closed,
+            } => {
+                assert_eq!(id.as_deref(), Some("cancel-1"));
+                assert_eq!(request_id.as_deref(), Some("request-1"));
+                assert!(closed);
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
 
     #[test]
     fn deserializes_action_output_delta_events() {
@@ -2428,6 +2798,152 @@ mod tests {
             }
             other => panic!("unexpected event variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn deserializes_action_started_agent_id() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "action_started",
+            "id": "request-1",
+            "actionId": "action-3",
+            "actionType": "file_read",
+            "summary": "Read: src/main.rs",
+            "details": { "file_path": "src/main.rs" },
+            "agentId": "toolu_task_1",
+        }))
+        .expect("action_started should deserialize");
+
+        match event {
+            SidecarEvent::ActionStarted {
+                action_id,
+                agent_id,
+                ..
+            } => {
+                assert_eq!(action_id, "action-3");
+                assert_eq!(agent_id.as_deref(), Some("toolu_task_1"));
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+
+        let without_agent: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "action_started",
+            "id": "request-1",
+            "actionId": "action-4",
+            "actionType": "command",
+            "summary": "Bash: ls",
+        }))
+        .expect("action_started without agentId should deserialize");
+        match without_agent {
+            SidecarEvent::ActionStarted { agent_id, .. } => assert!(agent_id.is_none()),
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserializes_subagent_lifecycle_events() {
+        let started: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_started",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "agentType": "Explore",
+            "description": "Explore the repo",
+            "parentActionId": "claude-action-2",
+            "parentAgentId": null,
+        }))
+        .expect("subagent_started should deserialize");
+        assert_eq!(started.request_id(), Some("request-1"));
+        match started {
+            SidecarEvent::SubagentStarted {
+                agent_id,
+                agent_type,
+                description,
+                parent_action_id,
+                parent_agent_id,
+                ..
+            } => {
+                assert_eq!(agent_id, "toolu_task_1");
+                assert_eq!(agent_type.as_deref(), Some("Explore"));
+                assert_eq!(description, "Explore the repo");
+                assert_eq!(parent_action_id.as_deref(), Some("claude-action-2"));
+                assert!(parent_agent_id.is_none());
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+
+        let progress: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_progress",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "message": "Reading files",
+        }))
+        .expect("subagent_progress should deserialize");
+        assert!(matches!(
+            progress,
+            SidecarEvent::SubagentProgress { ref agent_id, ref message, .. }
+                if agent_id == "toolu_task_1" && message == "Reading files"
+        ));
+
+        let completed: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_completed",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "status": "interrupted",
+            "summary": null,
+        }))
+        .expect("subagent_completed should deserialize");
+        match completed {
+            SidecarEvent::SubagentCompleted {
+                status, summary, ..
+            } => {
+                assert!(matches!(
+                    ClaudeSidecarEngine::parse_completion_status(&status),
+                    TurnCompletionStatus::Interrupted
+                ));
+                assert!(summary.is_none());
+            }
+            other => panic!("unexpected event variant: {other:?}"),
+        }
+
+        let text: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_text_delta",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "content": "Found it",
+        }))
+        .expect("subagent_text_delta should deserialize");
+        assert!(matches!(
+            text,
+            SidecarEvent::SubagentTextDelta { ref content, .. } if content == "Found it"
+        ));
+
+        let thinking: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "subagent_thinking_delta",
+            "id": "request-1",
+            "agentId": "toolu_task_1",
+            "content": "hmm",
+        }))
+        .expect("subagent_thinking_delta should deserialize");
+        assert!(matches!(
+            thinking,
+            SidecarEvent::SubagentThinkingDelta { ref content, .. } if content == "hmm"
+        ));
+    }
+
+    #[test]
+    fn deserializes_steer_result_events() {
+        let event: SidecarEvent = serde_json::from_value(serde_json::json!({
+            "type": "steer_result",
+            "id": "steer-1",
+            "ok": true,
+        }))
+        .expect("steer_result should deserialize");
+        assert_eq!(event.request_id(), Some("steer-1"));
+        assert!(matches!(event, SidecarEvent::SteerResult { ok: true, .. }));
+    }
+
+    #[test]
+    fn claude_engine_advertises_steering() {
+        assert!(ClaudeSidecarEngine::default().supports_steering());
     }
 
     #[test]

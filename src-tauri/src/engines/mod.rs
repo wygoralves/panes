@@ -128,7 +128,7 @@ const CODEX_CAPABILITIES: EngineCapabilities = EngineCapabilities {
 
 const CLAUDE_CAPABILITIES: EngineCapabilities = EngineCapabilities {
     permission_modes: &["restricted", "standard", "trusted"],
-    sandbox_modes: &["read-only", "workspace-write"],
+    sandbox_modes: &["read-only", "workspace-write", "danger-full-access"],
     approval_decisions: &["accept", "decline", "accept_for_session"],
 };
 
@@ -440,6 +440,11 @@ pub trait Engine: Send + Sync {
         engine_thread_id: &str,
         input: TurnInput,
     ) -> Result<(), anyhow::Error>;
+
+    /// Whether `steer_message` can inject input into a running turn.
+    fn supports_steering(&self) -> bool {
+        false
+    }
 
     async fn respond_to_approval(
         &self,
@@ -1117,6 +1122,13 @@ impl EngineManager {
             .with_context(|| format!("{} steer_message failed", handle.kind()))
     }
 
+    pub async fn supports_steering(&self, thread: &ThreadDto) -> bool {
+        match self.require(&thread.engine_id).await {
+            Ok(handle) => handle.engine().supports_steering(),
+            Err(_) => false,
+        }
+    }
+
     pub async fn respond_to_approval(
         &self,
         thread: &ThreadDto,
@@ -1326,7 +1338,7 @@ mod tests {
         );
         assert_eq!(
             capabilities.sandbox_modes,
-            &["read-only", "workspace-write"]
+            &["read-only", "workspace-write", "danger-full-access"]
         );
         assert_eq!(
             capabilities.approval_decisions,
@@ -1349,9 +1361,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_engine_sandbox_mode_rejects_unsupported_claude_full_access() {
-        assert!(validate_engine_sandbox_mode("claude", Some("danger-full-access")).is_err());
+    fn validate_engine_sandbox_mode_accepts_every_claude_mode() {
+        assert!(validate_engine_sandbox_mode("claude", Some("read-only")).is_ok());
         assert!(validate_engine_sandbox_mode("claude", Some("workspace-write")).is_ok());
+        assert!(validate_engine_sandbox_mode("claude", Some("danger-full-access")).is_ok());
+        assert!(validate_engine_sandbox_mode("claude", Some("unrestricted")).is_err());
     }
 
     #[test]

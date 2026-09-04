@@ -1,12 +1,22 @@
 import { create } from "zustand";
 import type { LayoutMode } from "./terminalStore";
 
-export type WorkspacePaneSurfaceKind = "chat" | "terminal" | "editor";
+export type WorkspacePaneSurfaceKind = "chat" | "terminal" | "editor" | "subagent";
 export type WorkspacePaneSplitDirection = "horizontal" | "vertical";
+
+/** A worker of one thread's running turn, shown in its own pane. */
+export interface WorkspacePaneSubagentTarget {
+  /** Absent means the pane opens on the list of subagents. */
+  threadId: string;
+  agentId?: string;
+  /** Bumped on every open so re-opening the same agent still navigates. */
+  revision?: number;
+}
 
 export interface WorkspacePaneTab {
   id: string;
   kind: WorkspacePaneSurfaceKind;
+  subagent?: WorkspacePaneSubagentTarget;
 }
 
 export interface WorkspacePaneLeaf {
@@ -62,6 +72,8 @@ interface WorkspacePaneState {
   closeLeaf: (workspaceId: string, leafId: string) => void;
   closeTab: (workspaceId: string, leafId: string, tabId: string) => void;
   updateRatio: (workspaceId: string, containerId: string, ratio: number) => void;
+  /** Shows a worker beside the focused pane, reusing an open worker pane. */
+  openSubagentPane: (workspaceId: string, target: WorkspacePaneSubagentTarget) => void;
 }
 
 const STORAGE_KEY = (workspaceId: string) => `panes:workspacePaneLayout:${workspaceId}`;
@@ -75,8 +87,11 @@ function makeId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2)}`;
 }
 
-function makeTab(kind: WorkspacePaneSurfaceKind): WorkspacePaneTab {
-  return { id: makeId(kind), kind };
+function makeTab(
+  kind: WorkspacePaneSurfaceKind,
+  subagent?: WorkspacePaneSubagentTarget,
+): WorkspacePaneTab {
+  return subagent ? { id: makeId(kind), kind, subagent } : { id: makeId(kind), kind };
 }
 
 function makeLeaf(kind?: WorkspacePaneSurfaceKind | null): WorkspacePaneLeaf {
@@ -316,6 +331,24 @@ function sanitizeTab(value: unknown): WorkspacePaneTab | null {
   const tab = value as Partial<WorkspacePaneTab>;
   if (!tab.id || typeof tab.id !== "string") {
     return null;
+  }
+  if (tab.kind === "subagent") {
+    const subagent = tab.subagent;
+    if (
+      !subagent ||
+      typeof subagent.threadId !== "string" ||
+      (subagent.agentId !== undefined && typeof subagent.agentId !== "string")
+    ) {
+      return null;
+    }
+    return {
+      id: tab.id,
+      kind: "subagent",
+      subagent: {
+        threadId: subagent.threadId,
+        ...(subagent.agentId ? { agentId: subagent.agentId } : {}),
+      },
+    };
   }
   if (tab.kind !== "chat" && tab.kind !== "terminal" && tab.kind !== "editor") {
     return null;
@@ -628,6 +661,40 @@ export const useWorkspacePaneStore = create<WorkspacePaneState>((set, get) => ({
       return;
     }
     get().splitLeaf(workspaceId, layout.focusedLeafId, direction, kind, position);
+  },
+
+  openSubagentPane: (workspaceId, target) => {
+    get().ensureWorkspace(workspaceId);
+    set((state) => ({
+      workspaces: updateWorkspace(state, workspaceId, (layout) => {
+        const existing = collectWorkspacePaneLeaves(layout.root).find((leaf) =>
+          leaf.tabs.some((tab) => tab.kind === "subagent"),
+        );
+        if (existing) {
+          const tabs = existing.tabs.map((tab) =>
+            tab.kind === "subagent" ? { ...tab, subagent: { ...target } } : tab,
+          );
+          const activeTabId = tabs.find((tab) => tab.kind === "subagent")?.id ?? existing.activeTabId;
+          const root = replaceLeaf(layout.root, existing.id, { ...existing, tabs, activeTabId });
+          return { root, focusedLeafId: existing.id, legacyMode: deriveLegacyMode(root) };
+        }
+        const targetLeaf =
+          findLeaf(layout.root, layout.focusedLeafId) ?? collectWorkspacePaneLeaves(layout.root)[0];
+        if (!targetLeaf) {
+          return layout;
+        }
+        const tab = makeTab("subagent", { ...target });
+        const newLeaf: WorkspacePaneLeaf = {
+          type: "leaf",
+          id: makeId("pane"),
+          tabs: [tab],
+          activeTabId: tab.id,
+        };
+        const split = makeSplit("vertical", [targetLeaf, newLeaf], 0.56);
+        const root = replaceLeaf(layout.root, targetLeaf.id, split);
+        return { root, focusedLeafId: newLeaf.id, legacyMode: deriveLegacyMode(root) };
+      }),
+    }));
   },
 
   closeLeaf: (workspaceId, leafId) => {

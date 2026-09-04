@@ -33,6 +33,10 @@ interface DropdownProps {
   searchable?: boolean;
   searchPlaceholder?: string;
   noResultsLabel?: string;
+  /** Extra class on the portaled menu, for callers that size it. */
+  menuClassName?: string;
+  /** Caps the menu height; the list scrolls past it. */
+  maxMenuHeight?: number;
 }
 
 /** Case-insensitive label match across flat options and group options. An
@@ -73,6 +77,8 @@ export function Dropdown({
   searchable = false,
   searchPlaceholder,
   noResultsLabel,
+  menuClassName,
+  maxMenuHeight,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -123,8 +129,10 @@ export function Dropdown({
     if (!open || !triggerRef.current) return;
 
     const rect = triggerRef.current.getBoundingClientRect();
-    const estimatedMenuHeight =
-      totalItems * 32 + 8 + (hasGroups ? 9 : 0) + (searchable ? 38 : 0);
+    const estimatedMenuHeight = Math.min(
+      totalItems * 32 + 8 + (hasGroups ? 9 : 0) + (searchable ? 38 : 0),
+      maxMenuHeight ?? Number.POSITIVE_INFINITY,
+    );
     const spaceBelow = window.innerHeight - rect.bottom;
     const goUp = spaceBelow < estimatedMenuHeight && rect.top > spaceBelow;
 
@@ -133,7 +141,7 @@ export function Dropdown({
       left: rect.left,
       direction: goUp ? "top" : "bottom",
     });
-  }, [open, totalItems, hasGroups, searchable]);
+  }, [open, totalItems, hasGroups, searchable, maxMenuHeight]);
 
   useEffect(() => {
     if (!open) return;
@@ -273,11 +281,12 @@ export function Dropdown({
     ? createPortal(
         <div
           ref={menuRef}
-          className="dropdown-menu"
+          className={`dropdown-menu${menuClassName ? ` ${menuClassName}` : ""}`}
           data-git-flyout-region={gitFlyoutContext ? "true" : undefined}
           style={{
             position: "fixed",
             left: pos.left,
+            ...(maxMenuHeight ? { maxHeight: maxMenuHeight, overflowY: "auto" } : {}),
             ...(pos.direction === "bottom"
               ? { top: pos.top }
               : { bottom: window.innerHeight - pos.top }),

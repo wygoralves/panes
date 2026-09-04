@@ -1,6 +1,8 @@
 use std::{
+    collections::BTreeMap,
     collections::BTreeSet,
     collections::HashMap,
+    collections::HashSet,
     env,
     ffi::OsString,
     path::{Path, PathBuf},
@@ -71,6 +73,14 @@ const MODEL_LIST_METHODS: &[&str] = &["model/list", "models/list"];
 const ACCOUNT_RATE_LIMITS_READ_METHODS: &[&str] = &["account/rateLimits/read"];
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a stopped root turn keeps routing sub-agent events while waiting
+/// for the children it interrupted to report their own `turn/completed`.
+const SUB_AGENT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+const SUB_AGENT_INTERRUPT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Error returned to sub-agent requests that arrive after their root turn
+/// ended, so the child fails fast instead of waiting for an answer nobody can
+/// give.
+const SUB_AGENT_SHUTDOWN_ERROR_CODE: i64 = -32000;
 const TURN_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 const HEALTH_APP_SERVER_TIMEOUT: Duration = Duration::from_secs(12);
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -131,7 +141,19 @@ struct TurnStartOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SubAgentLink {
     root_thread_id: String,
+    parent_thread_id: String,
     agent_path: String,
+}
+
+impl SubAgentLink {
+    /// The agent that spawned this one, or `None` when the root thread did.
+    fn parent_agent_id(&self) -> Option<String> {
+        if self.parent_thread_id == self.root_thread_id {
+            None
+        } else {
+            Some(self.parent_thread_id.clone())
+        }
+    }
 }
 
 #[derive(Default)]
@@ -597,6 +619,7 @@ impl Engine for CodexEngine {
         }
 
         let mut mapper = TurnEventMapper::default();
+        let mut sub_agents = SubAgentStreamState::default();
         let mut subscription = transport.subscribe();
         let thread_id = engine_thread_id.to_string();
 
@@ -638,6 +661,7 @@ impl Engine for CodexEngine {
         let mut rate_limits_done = false;
         let mut turn_request_done = false;
         let mut completion_seen = false;
+        let mut deferred_root_completion: Option<EngineEvent> = None;
         let mut expected_turn_id: Option<String> = None;
         let mut completion_last_progress_at: Option<Instant> = None;
         let completion_inactivity_timeout = completion_inactivity_timeout();
@@ -677,10 +701,24 @@ impl Engine for CodexEngine {
                     }
                   }
                 }
-                self
-                  .interrupt(&thread_id)
+                // Stop the children first: interrupting only the root leaves
+                // sub-agent threads running tools after the user pressed stop.
+                let outstanding = self.interrupt_sub_agents(&thread_id).await;
+                let root_interrupt = self
+                  .interrupt_root_turn(&thread_id)
                   .await
-                  .context("failed to interrupt codex turn on cancellation")?;
+                  .context("failed to interrupt codex turn on cancellation");
+                self
+                  .drain_stopped_sub_agents(
+                    &thread_id,
+                    outstanding,
+                    &mut sub_agents,
+                    &mut subscription,
+                    &event_tx,
+                    SUB_AGENT_SHUTDOWN_GRACE,
+                  )
+                  .await;
+                root_interrupt?;
                 return Ok(());
               }
               response = &mut turn_task, if !turn_request_done => {
@@ -733,6 +771,10 @@ impl Engine for CodexEngine {
                   if matches!(event, EngineEvent::TurnCompleted { .. }) {
                     completion_seen = true;
                     self.clear_active_turn(&thread_id).await;
+                    // Held back until the sub-agents this turn spawned have
+                    // been stopped and reported.
+                    deferred_root_completion = Some(event);
+                    continue;
                   }
                   event_tx.send(event).await.ok();
                 }
@@ -771,9 +813,36 @@ impl Engine for CodexEngine {
                     if normalized_method == "thread/started" {
                       if let Some((child, parent)) = extract_spawned_thread_link(&params) {
                         self.record_sub_agent_thread(&child, &parent, None).await;
+                        sub_agents.bind_spawned_child(&child, &parent);
                       }
                     }
                     if !belongs_to_thread(&params, &thread_id) {
+                      // Sub-agent threads spawned under this turn stream through
+                      // the root turn, attributed to their agent.
+                      let Some(child_thread_id) = extract_notification_thread_id(&params) else {
+                        continue;
+                      };
+                      let Some(link) = self.sub_agent_link(&child_thread_id).await else {
+                        continue;
+                      };
+                      if link.root_thread_id != thread_id {
+                        continue;
+                      }
+                      if turn_request_done && !completion_seen {
+                        completion_last_progress_at = Some(Instant::now());
+                      }
+                      self
+                        .route_sub_agent_notification(
+                          &thread_id,
+                          &child_thread_id,
+                          &link,
+                          &method,
+                          &normalized_method,
+                          &params,
+                          &mut sub_agents,
+                          &event_tx,
+                        )
+                        .await;
                       continue;
                     }
                     if let Some((agent_thread_id, agent_path)) =
@@ -828,6 +897,26 @@ impl Engine for CodexEngine {
                       if matches!(event, EngineEvent::TurnCompleted { .. }) {
                         completion_seen = true;
                         self.clear_active_turn(&thread_id).await;
+                        // Held back until the sub-agents this turn spawned have
+                        // been stopped and reported.
+                        deferred_root_completion = Some(event);
+                        continue;
+                      }
+                      sub_agents.note_action_event(&thread_id, &event);
+                      if let EngineEvent::SubagentProgress { agent_id, .. } = &event {
+                        if agent_id.as_str() == thread_id.as_str() {
+                          // An activity item naming the root thread describes
+                          // the turn itself, not a worker under it.
+                          continue;
+                        }
+                        // Parent-side activity can be the first sign of a child.
+                        let mut announcements = Vec::new();
+                        self
+                          .announce_subagent_once(&mut sub_agents, agent_id, &mut announcements)
+                          .await;
+                        for announcement in announcements {
+                          event_tx.send(announcement).await.ok();
+                        }
                       }
                       event_tx.send(event).await.ok();
                     }
@@ -1029,6 +1118,26 @@ impl Engine for CodexEngine {
             rate_limits_task.abort();
         }
 
+        // A finished root turn must not leave sub-agents running: stop them,
+        // keep routing their events until they report, and only then forward
+        // the root completion.
+        let root_completion = deferred_root_completion.take();
+        let outstanding = self.interrupt_sub_agents(&thread_id).await;
+        if root_completion.is_some() {
+            self.drain_stopped_sub_agents(
+                &thread_id,
+                outstanding,
+                &mut sub_agents,
+                &mut subscription,
+                &event_tx,
+                SUB_AGENT_SHUTDOWN_GRACE,
+            )
+            .await;
+        }
+        if let Some(event) = root_completion {
+            event_tx.send(event).await.ok();
+        }
+
         if !completion_seen {
             if !self
                 .try_emit_reconciled_turn_completion(
@@ -1060,6 +1169,10 @@ impl Engine for CodexEngine {
 
         self.clear_active_turn(&thread_id).await;
         Ok(())
+    }
+
+    fn supports_steering(&self) -> bool {
+        true
     }
 
     async fn steer_message(
@@ -1118,41 +1231,10 @@ impl Engine for CodexEngine {
     }
 
     async fn interrupt(&self, engine_thread_id: &str) -> Result<(), anyhow::Error> {
-        let transport = {
-            let state = self.state.lock().await;
-            state.transport.clone()
-        };
-
-        let Some(transport) = transport else {
-            return Ok(());
-        };
-
-        let Some(turn_id) = self.active_turn_id(engine_thread_id).await else {
-            log::warn!(
-                "skipping turn/interrupt because no active turn_id is tracked for thread {engine_thread_id}"
-            );
-            return Ok(());
-        };
-
-        let params = serde_json::json!({
-          "threadId": engine_thread_id,
-          "turnId": turn_id,
-        });
-
-        match request_with_fallback(
-            transport.as_ref(),
-            TURN_INTERRUPT_METHODS,
-            params,
-            Duration::from_secs(5),
-        )
-        .await
-        {
-            Ok(_) => {
-                self.clear_active_turn(engine_thread_id).await;
-                Ok(())
-            }
-            Err(error) => Err(error.context("codex turn interrupt request failed")),
-        }
+        // Stop covers the whole tree: a sub-agent thread keeps running tools
+        // when only its root turn is interrupted.
+        self.interrupt_sub_agents(engine_thread_id).await;
+        self.interrupt_root_turn(engine_thread_id).await
     }
 
     async fn archive_thread(&self, engine_thread_id: &str) -> Result<(), anyhow::Error> {
@@ -3059,6 +3141,341 @@ impl CodexEngine {
     async fn sub_agent_link(&self, child_thread_id: &str) -> Option<SubAgentLink> {
         let state = self.state.lock().await;
         state.sub_agent_threads.get(child_thread_id).cloned()
+    }
+
+    /// Pushes `SubagentStarted` for `agent_id` unless this turn already
+    /// announced it. Covers children whose first observed notification is not
+    /// their `turn/started`, and children only known through parent-side
+    /// activity items.
+    async fn announce_subagent_once(
+        &self,
+        sub_agents: &mut SubAgentStreamState,
+        agent_id: &str,
+        outgoing: &mut Vec<EngineEvent>,
+    ) {
+        if sub_agents.is_announced(agent_id) {
+            return;
+        }
+        let Some(link) = self.sub_agent_link(agent_id).await else {
+            return;
+        };
+        let parent_action_id = sub_agents.parent_action_id(agent_id, &link.parent_thread_id);
+        outgoing.push(synthesize_subagent_started(
+            agent_id,
+            &link,
+            parent_action_id.as_deref(),
+        ));
+        sub_agents.mark_announced(agent_id);
+    }
+
+    async fn interrupt_root_turn(&self, engine_thread_id: &str) -> Result<(), anyhow::Error> {
+        let transport = {
+            let state = self.state.lock().await;
+            state.transport.clone()
+        };
+
+        let Some(transport) = transport else {
+            return Ok(());
+        };
+
+        let Some(turn_id) = self.active_turn_id(engine_thread_id).await else {
+            log::warn!(
+                "skipping turn/interrupt because no active turn_id is tracked for thread {engine_thread_id}"
+            );
+            return Ok(());
+        };
+
+        let params = serde_json::json!({
+          "threadId": engine_thread_id,
+          "turnId": turn_id,
+        });
+
+        match request_with_fallback(
+            transport.as_ref(),
+            TURN_INTERRUPT_METHODS,
+            params,
+            SUB_AGENT_INTERRUPT_TIMEOUT,
+        )
+        .await
+        {
+            Ok(_) => {
+                self.clear_active_turn(engine_thread_id).await;
+                Ok(())
+            }
+            Err(error) => Err(error.context("codex turn interrupt request failed")),
+        }
+    }
+
+    /// Interrupts every sub-agent thread under `root_thread_id` that still has
+    /// an active turn. Sub-agent turns are interrupted with `turn/interrupt`
+    /// addressed to the child's own thread and turn ids, the same request the
+    /// app-server takes for parent-owned Multi-Agent V2 sub-agents.
+    ///
+    /// The returned map carries the status each child should report if it
+    /// never sends its own `turn/completed`.
+    async fn interrupt_sub_agents(
+        &self,
+        root_thread_id: &str,
+    ) -> BTreeMap<String, TurnCompletionStatus> {
+        let (transport, pending) = {
+            let state = self.state.lock().await;
+            (
+                state.transport.clone(),
+                pending_sub_agent_shutdowns(
+                    &state.sub_agent_threads,
+                    &state.active_turn_ids,
+                    root_thread_id,
+                ),
+            )
+        };
+
+        let mut outstanding = BTreeMap::new();
+        for child in pending {
+            let Some(transport) = transport.as_ref() else {
+                // Without a transport the app-server connection is gone, so
+                // the child cannot still be running.
+                outstanding.insert(child.agent_id, TurnCompletionStatus::Interrupted);
+                continue;
+            };
+
+            let params = serde_json::json!({
+              "threadId": child.agent_id,
+              "turnId": child.turn_id,
+            });
+            let status = match request_with_fallback(
+                transport.as_ref(),
+                TURN_INTERRUPT_METHODS,
+                params,
+                SUB_AGENT_INTERRUPT_TIMEOUT,
+            )
+            .await
+            {
+                Ok(_) => {
+                    log::info!(
+                        "interrupted codex sub-agent thread {} (turn {})",
+                        child.agent_id,
+                        child.turn_id
+                    );
+                    self.clear_active_turn(&child.agent_id).await;
+                    TurnCompletionStatus::Interrupted
+                }
+                Err(error) => {
+                    log::warn!(
+                        "failed to interrupt codex sub-agent thread {}: {error}",
+                        child.agent_id
+                    );
+                    TurnCompletionStatus::Failed
+                }
+            };
+            outstanding.insert(child.agent_id, status);
+        }
+
+        outstanding
+    }
+
+    /// Maps one notification from a sub-agent thread onto the root turn's event
+    /// stream. Returns true when the notification carried the child's turn
+    /// completion.
+    #[allow(clippy::too_many_arguments)]
+    async fn route_sub_agent_notification(
+        &self,
+        root_thread_id: &str,
+        child_thread_id: &str,
+        link: &SubAgentLink,
+        method: &str,
+        normalized_method: &str,
+        params: &serde_json::Value,
+        sub_agents: &mut SubAgentStreamState,
+        event_tx: &mpsc::Sender<EngineEvent>,
+    ) -> bool {
+        if let Some((agent_thread_id, agent_path)) = extract_sub_agent_activity(params) {
+            self.record_sub_agent_thread(&agent_thread_id, child_thread_id, Some(&agent_path))
+                .await;
+        }
+
+        let mut child_turn_completed = false;
+        if normalized_method == "turn/started" {
+            if let Some(turn_id) = extract_turn_id(params) {
+                self.set_active_turn(child_thread_id, &turn_id).await;
+            }
+        } else if normalized_method == "turn/completed" {
+            self.clear_active_turn(child_thread_id).await;
+            child_turn_completed = true;
+        }
+
+        let mapped_events = sub_agents
+            .mapper_mut(child_thread_id)
+            .map_notification(method, params);
+        let mut outgoing = Vec::with_capacity(mapped_events.len() + 1);
+        for event in mapped_events {
+            if event_indicates_sandbox_denial(&event) {
+                self.force_external_sandbox_for_thread(root_thread_id).await;
+            }
+            if event_indicates_auth_failure(&event) {
+                self.invalidate_transport(
+                    "resetting codex transport after auth failure during sub-agent event",
+                )
+                .await;
+            }
+            sub_agents.note_action_event(child_thread_id, &event);
+            let parent_action_id =
+                sub_agents.parent_action_id(child_thread_id, &link.parent_thread_id);
+            let Some(event) = attribute_child_event(
+                event,
+                child_thread_id,
+                link,
+                parent_action_id.as_deref(),
+                sub_agents.is_announced(child_thread_id),
+            ) else {
+                continue;
+            };
+            match &event {
+                EngineEvent::SubagentStarted { agent_id, .. } => {
+                    sub_agents.mark_announced(agent_id);
+                }
+                EngineEvent::SubagentProgress { agent_id, .. } => {
+                    self.announce_subagent_once(sub_agents, child_thread_id, &mut outgoing)
+                        .await;
+                    self.announce_subagent_once(sub_agents, agent_id, &mut outgoing)
+                        .await;
+                }
+                _ => {
+                    self.announce_subagent_once(sub_agents, child_thread_id, &mut outgoing)
+                        .await;
+                }
+            }
+            outgoing.push(event);
+        }
+        for event in outgoing {
+            event_tx.send(event).await.ok();
+        }
+
+        child_turn_completed
+    }
+
+    /// Keeps routing sub-agent events after the root turn stopped so the
+    /// children it interrupted still report their own completion. Children that
+    /// stay silent past `grace` get a synthesized `SubagentCompleted` carrying
+    /// the status of the interrupt we sent them.
+    #[allow(clippy::too_many_arguments)]
+    async fn drain_stopped_sub_agents(
+        &self,
+        root_thread_id: &str,
+        mut outstanding: BTreeMap<String, TurnCompletionStatus>,
+        sub_agents: &mut SubAgentStreamState,
+        subscription: &mut broadcast::Receiver<IncomingMessage>,
+        event_tx: &mpsc::Sender<EngineEvent>,
+        grace: Duration,
+    ) {
+        if outstanding.is_empty() {
+            return;
+        }
+
+        let deadline = Instant::now() + grace;
+        while !outstanding.is_empty() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let incoming = match tokio::time::timeout(remaining, subscription.recv()).await {
+                Ok(Ok(incoming)) => incoming,
+                Ok(Err(broadcast::error::RecvError::Lagged(skipped))) => {
+                    log::warn!(
+                        "codex transport lagged while stopping sub-agents; skipped {skipped} messages"
+                    );
+                    continue;
+                }
+                Ok(Err(broadcast::error::RecvError::Closed)) => break,
+                Err(_) => break,
+            };
+
+            match incoming {
+                IncomingMessage::Notification { method, params } => {
+                    let params = raw_value_to_value(&params);
+                    let normalized_method = normalize_method(&method);
+                    if normalized_method == "thread/started" {
+                        if let Some((child, parent)) = extract_spawned_thread_link(&params) {
+                            self.record_sub_agent_thread(&child, &parent, None).await;
+                            sub_agents.bind_spawned_child(&child, &parent);
+                        }
+                    }
+                    let Some(child_thread_id) = extract_notification_thread_id(&params) else {
+                        continue;
+                    };
+                    if child_thread_id == root_thread_id {
+                        continue;
+                    }
+                    let Some(link) = self.sub_agent_link(&child_thread_id).await else {
+                        continue;
+                    };
+                    if link.root_thread_id != root_thread_id {
+                        continue;
+                    }
+                    let child_turn_completed = self
+                        .route_sub_agent_notification(
+                            root_thread_id,
+                            &child_thread_id,
+                            &link,
+                            &method,
+                            &normalized_method,
+                            &params,
+                            sub_agents,
+                            event_tx,
+                        )
+                        .await;
+                    if child_turn_completed {
+                        outstanding.remove(&child_thread_id);
+                    }
+                }
+                IncomingMessage::Request {
+                    raw_id,
+                    method,
+                    params,
+                    ..
+                } => {
+                    let params = raw_value_to_value(&params);
+                    let Some(child_thread_id) = extract_request_thread_id(&params) else {
+                        continue;
+                    };
+                    if !outstanding.contains_key(&child_thread_id) {
+                        continue;
+                    }
+                    // The turn is over, so nobody can answer a sub-agent
+                    // approval. Fail it instead of leaving the child blocked.
+                    let transport = {
+                        let state = self.state.lock().await;
+                        state.transport.clone()
+                    };
+                    if let Some(transport) = transport {
+                        transport
+                            .respond_error(
+                                &raw_id,
+                                SUB_AGENT_SHUTDOWN_ERROR_CODE,
+                                "Panes stopped this Codex sub-agent because its turn ended",
+                                Some(serde_json::json!({ "method": method })),
+                            )
+                            .await
+                            .ok();
+                    }
+                }
+                IncomingMessage::Response(_) => {}
+            }
+        }
+
+        for (agent_id, status) in outstanding {
+            let mut outgoing = Vec::new();
+            self.announce_subagent_once(sub_agents, &agent_id, &mut outgoing)
+                .await;
+            outgoing.push(EngineEvent::SubagentCompleted {
+                agent_id: agent_id.clone(),
+                status,
+                summary: None,
+            });
+            for event in outgoing {
+                event_tx.send(event).await.ok();
+            }
+            self.clear_active_turn(&agent_id).await;
+        }
     }
 
     async fn active_turn_id(&self, engine_thread_id: &str) -> Option<String> {
@@ -6627,6 +7044,75 @@ fn approval_response_target_error_message(
     }
 }
 
+/// A sub-agent thread that was still running a turn when its root turn
+/// stopped, so the root turn has to interrupt it and report its outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SubAgentShutdown {
+    agent_id: String,
+    turn_id: String,
+}
+
+/// Sub-agent threads under `root_thread_id` that still have an active turn,
+/// ordered by thread id so shutdown output is deterministic.
+fn pending_sub_agent_shutdowns(
+    sub_agent_threads: &HashMap<String, SubAgentLink>,
+    active_turn_ids: &HashMap<String, String>,
+    root_thread_id: &str,
+) -> Vec<SubAgentShutdown> {
+    let mut pending = sub_agent_threads
+        .iter()
+        .filter(|(agent_id, link)| {
+            link.root_thread_id == root_thread_id && agent_id.as_str() != root_thread_id
+        })
+        .filter_map(|(agent_id, _)| {
+            active_turn_ids
+                .get(agent_id)
+                .map(|turn_id| SubAgentShutdown {
+                    agent_id: agent_id.clone(),
+                    turn_id: turn_id.clone(),
+                })
+        })
+        .collect::<Vec<_>>();
+    pending.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
+    pending
+}
+
+/// Guards the ancestry walk in [`is_sub_agent_ancestor`] against a malformed
+/// link chain that loops back on itself.
+const SUB_AGENT_ANCESTRY_LIMIT: usize = 64;
+
+/// Whether `candidate_thread_id` is `thread_id` itself or sits above it in the
+/// sub-agent tree, walking `parent_thread_id` links up to the root. A thread
+/// with no link of its own is its own root.
+fn is_sub_agent_ancestor(
+    sub_agent_threads: &HashMap<String, SubAgentLink>,
+    candidate_thread_id: &str,
+    thread_id: &str,
+) -> bool {
+    if candidate_thread_id == thread_id {
+        return true;
+    }
+    let mut current = thread_id;
+    for _ in 0..SUB_AGENT_ANCESTRY_LIMIT {
+        let Some(link) = sub_agent_threads.get(current) else {
+            return candidate_thread_id == current;
+        };
+        if candidate_thread_id == link.root_thread_id
+            || candidate_thread_id == link.parent_thread_id
+        {
+            return true;
+        }
+        if link.parent_thread_id == current {
+            return false;
+        }
+        current = link.parent_thread_id.as_str();
+    }
+    log::warn!(
+        "codex sub-agent ancestry walk from thread {thread_id} exceeded {SUB_AGENT_ANCESTRY_LIMIT} links; treating {candidate_thread_id} as an ancestor"
+    );
+    true
+}
+
 fn record_sub_agent_thread(
     sub_agent_threads: &mut HashMap<String, SubAgentLink>,
     child_thread_id: &str,
@@ -6634,6 +7120,12 @@ fn record_sub_agent_thread(
     agent_path: Option<&str>,
 ) {
     if child_thread_id.is_empty() || child_thread_id == parent_thread_id {
+        return;
+    }
+    // A worker's `subAgentActivity` item can name an agent above it in the
+    // tree, the root thread most often. Registering that as a sub-agent of the
+    // worker would invent a worker for the root thread and build a cycle.
+    if is_sub_agent_ancestor(sub_agent_threads, child_thread_id, parent_thread_id) {
         return;
     }
     let (root_thread_id, parent_path) = match sub_agent_threads.get(parent_thread_id) {
@@ -6660,6 +7152,7 @@ fn record_sub_agent_thread(
         child_thread_id.to_string(),
         SubAgentLink {
             root_thread_id,
+            parent_thread_id: parent_thread_id.to_string(),
             agent_path,
         },
     );
@@ -6720,33 +7213,223 @@ fn decorate_sub_agent_approval(
     }
 }
 
-fn belongs_to_thread(params: &serde_json::Value, thread_id: &str) -> bool {
-    let candidates = [
-        "threadId",
-        "thread_id",
-        "engineThreadId",
-        "engine_thread_id",
-        "conversationId",
-        "conversation_id",
-        "sessionId",
-        "session_id",
-    ];
+/// Per-turn bookkeeping for the sub-agent threads streaming under a root turn.
+#[derive(Default)]
+struct SubAgentStreamState {
+    /// One mapper per child so child item ids never collide with the root's.
+    mappers: HashMap<String, TurnEventMapper>,
+    /// Children whose `SubagentStarted` already went out this turn.
+    announced: HashSet<String>,
+    /// Most recent spawn tool call per issuing thread.
+    latest_spawn_action: HashMap<String, String>,
+    /// Spawn tool call that created each child, once known.
+    spawn_action_by_child: HashMap<String, String>,
+}
 
-    if let Some(found) = extract_any_string(params, &candidates) {
-        return found == thread_id;
+impl SubAgentStreamState {
+    fn mapper_mut(&mut self, child_thread_id: &str) -> &mut TurnEventMapper {
+        self.mappers.entry(child_thread_id.to_string()).or_default()
+    }
+
+    fn is_announced(&self, agent_id: &str) -> bool {
+        self.announced.contains(agent_id)
+    }
+
+    fn mark_announced(&mut self, agent_id: &str) {
+        self.announced.insert(agent_id.to_string());
+    }
+
+    /// Remembers collab spawn calls so a child's start can point at the tool
+    /// call that created it.
+    fn note_action_event(&mut self, issuing_thread_id: &str, event: &EngineEvent) {
+        let EngineEvent::ActionStarted {
+            action_id, details, ..
+        } = event
+        else {
+            return;
+        };
+        if !is_collab_spawn_call(details) {
+            return;
+        }
+        self.latest_spawn_action
+            .insert(issuing_thread_id.to_string(), action_id.clone());
+        if let Some(receivers) = details
+            .get("receiverThreadIds")
+            .and_then(serde_json::Value::as_array)
+        {
+            for receiver in receivers.iter().filter_map(serde_json::Value::as_str) {
+                self.spawn_action_by_child
+                    .insert(receiver.to_string(), action_id.clone());
+            }
+        }
+    }
+
+    /// `thread/started` for a child arrives while the spawn call that created
+    /// it is still the parent's latest, so bind the two right away.
+    fn bind_spawned_child(&mut self, child_thread_id: &str, parent_thread_id: &str) {
+        if self.spawn_action_by_child.contains_key(child_thread_id) {
+            return;
+        }
+        if let Some(action_id) = self.latest_spawn_action.get(parent_thread_id) {
+            self.spawn_action_by_child
+                .insert(child_thread_id.to_string(), action_id.clone());
+        }
+    }
+
+    fn parent_action_id(&self, child_thread_id: &str, parent_thread_id: &str) -> Option<String> {
+        self.spawn_action_by_child
+            .get(child_thread_id)
+            .or_else(|| self.latest_spawn_action.get(parent_thread_id))
+            .cloned()
+    }
+}
+
+fn is_collab_spawn_call(details: &serde_json::Value) -> bool {
+    if extract_any_string(details, &["type"]).as_deref() != Some("collabAgentToolCall") {
+        return false;
+    }
+    match extract_any_string(details, &["tool"]) {
+        Some(tool) => tool.to_ascii_lowercase().contains("spawn"),
+        None => true,
+    }
+}
+
+fn synthesize_subagent_started(
+    agent_id: &str,
+    link: &SubAgentLink,
+    parent_action_id: Option<&str>,
+) -> EngineEvent {
+    EngineEvent::SubagentStarted {
+        agent_id: agent_id.to_string(),
+        agent_type: None,
+        description: link.agent_path.clone(),
+        parent_action_id: parent_action_id.map(ToOwned::to_owned),
+        parent_agent_id: link.parent_agent_id(),
+    }
+}
+
+/// Re-labels an event mapped from a sub-agent thread so the root turn can
+/// carry it. Returns `None` for events that only make sense on the root turn.
+fn attribute_child_event(
+    event: EngineEvent,
+    agent_id: &str,
+    link: &SubAgentLink,
+    parent_action_id: Option<&str>,
+    already_announced: bool,
+) -> Option<EngineEvent> {
+    match event {
+        EngineEvent::TurnStarted { .. } => {
+            if already_announced {
+                None
+            } else {
+                Some(synthesize_subagent_started(
+                    agent_id,
+                    link,
+                    parent_action_id,
+                ))
+            }
+        }
+        EngineEvent::TurnCompleted { status, .. } => Some(EngineEvent::SubagentCompleted {
+            agent_id: agent_id.to_string(),
+            status,
+            summary: None,
+        }),
+        EngineEvent::TextDelta { content } => Some(EngineEvent::SubagentTextDelta {
+            agent_id: agent_id.to_string(),
+            content,
+        }),
+        EngineEvent::ThinkingDelta { content } => Some(EngineEvent::SubagentThinkingDelta {
+            agent_id: agent_id.to_string(),
+            content,
+        }),
+        EngineEvent::ActionStarted {
+            action_id,
+            engine_action_id,
+            action_type,
+            summary,
+            details,
+            ..
+        } => Some(EngineEvent::ActionStarted {
+            action_id,
+            engine_action_id,
+            action_type,
+            summary,
+            details,
+            agent_id: Some(agent_id.to_string()),
+        }),
+        // Activity items can name an agent above the worker in the tree. The
+        // root thread is not a worker, so progress tagged with its id would
+        // synthesize a phantom worker on the frontend.
+        EngineEvent::SubagentProgress { agent_id, message } => {
+            if agent_id == link.root_thread_id {
+                None
+            } else {
+                Some(EngineEvent::SubagentProgress { agent_id, message })
+            }
+        }
+        event @ (EngineEvent::ActionOutputDelta { .. }
+        | EngineEvent::ActionProgressUpdated { .. }
+        | EngineEvent::ActionCompleted { .. }
+        | EngineEvent::SubagentStarted { .. }
+        | EngineEvent::SubagentCompleted { .. }
+        | EngineEvent::SubagentTextDelta { .. }
+        | EngineEvent::SubagentThinkingDelta { .. }) => Some(event),
+        EngineEvent::Error { message, .. } => {
+            log::warn!(
+                "codex sub-agent {} (thread {agent_id}) reported an error: {message}",
+                link.agent_path
+            );
+            None
+        }
+        // The boundary only exists for the root turn's own text; a worker's
+        // message boundary has no event to carry it.
+        EngineEvent::TextItemStarted
+        | EngineEvent::UsageLimitsUpdated { .. }
+        | EngineEvent::Notice { .. }
+        | EngineEvent::DiffUpdated { .. }
+        | EngineEvent::TaskListUpdated { .. }
+        | EngineEvent::ModelRerouted { .. }
+        | EngineEvent::ApprovalRequested { .. } => None,
+    }
+}
+
+const NOTIFICATION_THREAD_ID_KEYS: [&str; 8] = [
+    "threadId",
+    "thread_id",
+    "engineThreadId",
+    "engine_thread_id",
+    "conversationId",
+    "conversation_id",
+    "sessionId",
+    "session_id",
+];
+
+/// Thread id a notification carries, looked up the same way
+/// `belongs_to_thread` does so the two never disagree.
+fn extract_notification_thread_id(params: &serde_json::Value) -> Option<String> {
+    if let Some(found) = extract_any_string(params, &NOTIFICATION_THREAD_ID_KEYS) {
+        return Some(found);
     }
 
     for key in [
         "thread", "turn", "session", "context", "meta", "metadata", "item",
     ] {
         if let Some(nested) = params.get(key) {
-            if let Some(found) = extract_any_string(nested, &candidates) {
-                return found == thread_id;
+            if let Some(found) = extract_any_string(nested, &NOTIFICATION_THREAD_ID_KEYS) {
+                return Some(found);
             }
         }
     }
 
-    // No thread ID field found in params — pass through.
+    None
+}
+
+fn belongs_to_thread(params: &serde_json::Value, thread_id: &str) -> bool {
+    if let Some(found) = extract_notification_thread_id(params) {
+        return found == thread_id;
+    }
+
+    // No thread ID field found in params: pass through.
     // Server requests (e.g. approval requests) often omit threadId.
     // The turn ID check provides additional filtering when needed.
     log::debug!(
@@ -8568,6 +9251,7 @@ mod sub_agent_routing_tests {
             threads.get("child"),
             Some(&SubAgentLink {
                 root_thread_id: "root".to_string(),
+                parent_thread_id: "root".to_string(),
                 agent_path: "explorer".to_string(),
             })
         );
@@ -8575,8 +9259,14 @@ mod sub_agent_routing_tests {
             threads.get("grandchild"),
             Some(&SubAgentLink {
                 root_thread_id: "root".to_string(),
+                parent_thread_id: "child".to_string(),
                 agent_path: "explorer/grandchild".to_string(),
             })
+        );
+        assert_eq!(threads["child"].parent_agent_id(), None);
+        assert_eq!(
+            threads["grandchild"].parent_agent_id().as_deref(),
+            Some("child")
         );
     }
 
@@ -8587,6 +9277,69 @@ mod sub_agent_routing_tests {
         record_sub_agent_thread(&mut threads, "child", "root", Some("reviewer"));
         assert_eq!(threads["child"].agent_path, "reviewer");
         assert_eq!(threads["child"].root_thread_id, "root");
+    }
+
+    #[test]
+    fn activity_items_naming_the_root_do_not_register_it_as_a_worker() {
+        let mut threads = HashMap::new();
+        record_sub_agent_thread(&mut threads, "child", "root", Some("/root/frontend_tests"));
+        // The worker streams an activity item that names the root agent.
+        record_sub_agent_thread(&mut threads, "root", "child", Some("/root"));
+
+        assert!(!threads.contains_key("root"));
+        assert_eq!(
+            threads.get("child"),
+            Some(&SubAgentLink {
+                root_thread_id: "root".to_string(),
+                parent_thread_id: "root".to_string(),
+                agent_path: "/root/frontend_tests".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn activity_items_naming_an_ancestor_do_not_reparent_it() {
+        let mut threads = HashMap::new();
+        record_sub_agent_thread(&mut threads, "child", "root", Some("/root/rust_check"));
+        record_sub_agent_thread(
+            &mut threads,
+            "grandchild",
+            "child",
+            Some("/root/rust_check/cargo"),
+        );
+        // The grandchild names its own parent, which would invert the tree.
+        record_sub_agent_thread(
+            &mut threads,
+            "child",
+            "grandchild",
+            Some("/root/rust_check"),
+        );
+
+        assert_eq!(threads.len(), 2);
+        assert_eq!(threads["child"].parent_thread_id, "root");
+        assert_eq!(threads["child"].root_thread_id, "root");
+        assert_eq!(threads["grandchild"].parent_thread_id, "child");
+    }
+
+    #[test]
+    fn a_genuine_grandchild_still_registers_under_its_worker() {
+        let mut threads = HashMap::new();
+        record_sub_agent_thread(&mut threads, "child", "root", Some("/root/frontend_tests"));
+        record_sub_agent_thread(
+            &mut threads,
+            "grandchild",
+            "child",
+            Some("/root/frontend_tests/vitest_smoke"),
+        );
+
+        assert_eq!(
+            threads.get("grandchild"),
+            Some(&SubAgentLink {
+                root_thread_id: "root".to_string(),
+                parent_thread_id: "child".to_string(),
+                agent_path: "/root/frontend_tests/vitest_smoke".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -8634,6 +9387,7 @@ mod sub_agent_routing_tests {
             .expect("approval should map");
         let link = SubAgentLink {
             root_thread_id: "root".to_string(),
+            parent_thread_id: "root".to_string(),
             agent_path: "explorer".to_string(),
         };
         decorate_sub_agent_approval(&mut approval, "child", &link);
@@ -8653,5 +9407,563 @@ mod sub_agent_routing_tests {
             details.get(APPROVAL_DETAIL_SUB_AGENT_THREAD_ID_KEY),
             Some(&json!("child"))
         );
+    }
+
+    fn link(root: &str, parent: &str, agent_path: &str) -> SubAgentLink {
+        SubAgentLink {
+            root_thread_id: root.to_string(),
+            parent_thread_id: parent.to_string(),
+            agent_path: agent_path.to_string(),
+        }
+    }
+
+    fn spawn_action(action_id: &str, details: serde_json::Value) -> EngineEvent {
+        EngineEvent::ActionStarted {
+            action_id: action_id.to_string(),
+            engine_action_id: Some(format!("item-{action_id}")),
+            action_type: crate::engines::events::ActionType::Other,
+            summary: "Collaborative agent: spawnAgent".to_string(),
+            details,
+            agent_id: None,
+        }
+    }
+
+    #[test]
+    fn attribute_child_event_drops_progress_tagged_with_the_root_thread() {
+        let direct = link("root", "root", "/root/frontend_tests");
+        assert!(attribute_child_event(
+            EngineEvent::SubagentProgress {
+                agent_id: "root".to_string(),
+                message: "Working".to_string(),
+            },
+            "child",
+            &direct,
+            None,
+            true,
+        )
+        .is_none());
+        assert!(matches!(
+            attribute_child_event(
+                EngineEvent::SubagentProgress {
+                    agent_id: "grandchild".to_string(),
+                    message: "Working".to_string(),
+                },
+                "child",
+                &direct,
+                None,
+                true,
+            ),
+            Some(EngineEvent::SubagentProgress { .. })
+        ));
+    }
+
+    #[test]
+    fn attribute_child_event_announces_the_child_from_its_turn_start() {
+        let direct = link("root", "root", "explorer");
+        match attribute_child_event(
+            EngineEvent::TurnStarted {
+                client_turn_id: None,
+            },
+            "child",
+            &direct,
+            Some("action-spawn"),
+            false,
+        ) {
+            Some(EngineEvent::SubagentStarted {
+                agent_id,
+                agent_type,
+                description,
+                parent_action_id,
+                parent_agent_id,
+            }) => {
+                assert_eq!(agent_id, "child");
+                assert_eq!(agent_type, None);
+                assert_eq!(description, "explorer");
+                assert_eq!(parent_action_id.as_deref(), Some("action-spawn"));
+                assert_eq!(parent_agent_id, None);
+            }
+            other => panic!("expected subagent started, got {other:?}"),
+        }
+
+        // A second turn on the same child must not announce it again.
+        assert!(attribute_child_event(
+            EngineEvent::TurnStarted {
+                client_turn_id: None,
+            },
+            "child",
+            &direct,
+            None,
+            true,
+        )
+        .is_none());
+
+        let nested = link("root", "child", "explorer/grandchild");
+        match attribute_child_event(
+            EngineEvent::TurnStarted {
+                client_turn_id: None,
+            },
+            "grandchild",
+            &nested,
+            None,
+            false,
+        ) {
+            Some(EngineEvent::SubagentStarted {
+                parent_agent_id,
+                parent_action_id,
+                ..
+            }) => {
+                assert_eq!(parent_agent_id.as_deref(), Some("child"));
+                assert_eq!(parent_action_id, None);
+            }
+            other => panic!("expected subagent started, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn attribute_child_event_relabels_content_and_action_events() {
+        let child = link("root", "root", "reviewer");
+
+        match attribute_child_event(
+            EngineEvent::TextDelta {
+                content: "hello".to_string(),
+            },
+            "child",
+            &child,
+            None,
+            true,
+        ) {
+            Some(EngineEvent::SubagentTextDelta { agent_id, content }) => {
+                assert_eq!(agent_id, "child");
+                assert_eq!(content, "hello");
+            }
+            other => panic!("expected subagent text delta, got {other:?}"),
+        }
+        match attribute_child_event(
+            EngineEvent::ThinkingDelta {
+                content: "plan".to_string(),
+            },
+            "child",
+            &child,
+            None,
+            true,
+        ) {
+            Some(EngineEvent::SubagentThinkingDelta { agent_id, content }) => {
+                assert_eq!(agent_id, "child");
+                assert_eq!(content, "plan");
+            }
+            other => panic!("expected subagent thinking delta, got {other:?}"),
+        }
+        match attribute_child_event(
+            EngineEvent::TurnCompleted {
+                token_usage: None,
+                status: TurnCompletionStatus::Interrupted,
+            },
+            "child",
+            &child,
+            None,
+            true,
+        ) {
+            Some(EngineEvent::SubagentCompleted {
+                agent_id,
+                status,
+                summary,
+            }) => {
+                assert_eq!(agent_id, "child");
+                assert_eq!(status, TurnCompletionStatus::Interrupted);
+                assert_eq!(summary, None);
+            }
+            other => panic!("expected subagent completed, got {other:?}"),
+        }
+        match attribute_child_event(
+            spawn_action("action-1", json!({ "type": "commandExecution" })),
+            "child",
+            &child,
+            None,
+            true,
+        ) {
+            Some(EngineEvent::ActionStarted {
+                action_id,
+                agent_id,
+                engine_action_id,
+                ..
+            }) => {
+                assert_eq!(action_id, "action-1");
+                assert_eq!(agent_id.as_deref(), Some("child"));
+                assert_eq!(engine_action_id.as_deref(), Some("item-action-1"));
+            }
+            other => panic!("expected action started, got {other:?}"),
+        }
+        match attribute_child_event(
+            EngineEvent::ActionOutputDelta {
+                action_id: "action-1".to_string(),
+                stream: crate::engines::events::OutputStream::Stdout,
+                content: "out".to_string(),
+            },
+            "child",
+            &child,
+            None,
+            true,
+        ) {
+            Some(EngineEvent::ActionOutputDelta {
+                action_id, content, ..
+            }) => {
+                assert_eq!(action_id, "action-1");
+                assert_eq!(content, "out");
+            }
+            other => panic!("expected action output delta, got {other:?}"),
+        }
+        assert!(matches!(
+            attribute_child_event(
+                EngineEvent::ActionCompleted {
+                    action_id: "action-1".to_string(),
+                    result: crate::engines::ActionResult {
+                        success: true,
+                        output: None,
+                        error: None,
+                        diff: None,
+                        duration_ms: 1,
+                    },
+                },
+                "child",
+                &child,
+                None,
+                true,
+            ),
+            Some(EngineEvent::ActionCompleted { .. })
+        ));
+        assert!(matches!(
+            attribute_child_event(
+                EngineEvent::SubagentProgress {
+                    agent_id: "grandchild".to_string(),
+                    message: "started".to_string(),
+                },
+                "child",
+                &child,
+                None,
+                true,
+            ),
+            Some(EngineEvent::SubagentProgress { agent_id, .. }) if agent_id == "grandchild"
+        ));
+
+        for event in [
+            EngineEvent::Error {
+                message: "boom".to_string(),
+                recoverable: false,
+            },
+            EngineEvent::UsageLimitsUpdated {
+                usage: UsageLimitsSnapshot::default(),
+            },
+            EngineEvent::Notice {
+                kind: "k".to_string(),
+                level: "info".to_string(),
+                title: "t".to_string(),
+                message: "m".to_string(),
+            },
+            EngineEvent::DiffUpdated {
+                diff: "diff".to_string(),
+                scope: crate::engines::DiffScope::Turn,
+            },
+            EngineEvent::TaskListUpdated {
+                source: "codex".to_string(),
+                explanation: None,
+                tasks: Vec::new(),
+            },
+            EngineEvent::ModelRerouted {
+                from_model: "a".to_string(),
+                to_model: "b".to_string(),
+                reason: "r".to_string(),
+            },
+        ] {
+            assert!(
+                attribute_child_event(event.clone(), "child", &child, None, true).is_none(),
+                "expected {event:?} to be dropped for a child thread"
+            );
+        }
+    }
+
+    #[test]
+    fn sub_agent_stream_state_binds_children_to_the_spawn_call() {
+        let mut state = SubAgentStreamState::default();
+
+        state.note_action_event(
+            "root",
+            &spawn_action(
+                "action-1",
+                json!({ "type": "collabAgentToolCall", "tool": "spawnAgent" }),
+            ),
+        );
+        state.bind_spawned_child("child-a", "root");
+        state.note_action_event(
+            "root",
+            &spawn_action(
+                "action-2",
+                json!({ "type": "collabAgentToolCall", "tool": "spawnAgent" }),
+            ),
+        );
+
+        assert_eq!(
+            state.parent_action_id("child-a", "root").as_deref(),
+            Some("action-1")
+        );
+        // Unknown children fall back to the parent's latest spawn call.
+        assert_eq!(
+            state.parent_action_id("child-b", "root").as_deref(),
+            Some("action-2")
+        );
+        assert_eq!(state.parent_action_id("child-c", "elsewhere"), None);
+
+        // Other collab tools and plain commands do not count as spawns.
+        state.note_action_event(
+            "root",
+            &spawn_action(
+                "action-3",
+                json!({ "type": "collabAgentToolCall", "tool": "wait" }),
+            ),
+        );
+        state.note_action_event(
+            "root",
+            &spawn_action("action-4", json!({ "type": "commandExecution" })),
+        );
+        assert_eq!(
+            state.parent_action_id("child-b", "root").as_deref(),
+            Some("action-2")
+        );
+
+        // A spawn payload that already names the child binds it directly.
+        state.note_action_event(
+            "root",
+            &spawn_action(
+                "action-5",
+                json!({
+                    "type": "collabAgentToolCall",
+                    "tool": "spawnAgent",
+                    "receiverThreadIds": ["child-d"]
+                }),
+            ),
+        );
+        assert_eq!(
+            state.parent_action_id("child-d", "root").as_deref(),
+            Some("action-5")
+        );
+        assert_eq!(
+            state.parent_action_id("child-a", "root").as_deref(),
+            Some("action-1")
+        );
+
+        assert!(!state.is_announced("child-a"));
+        state.mark_announced("child-a");
+        assert!(state.is_announced("child-a"));
+    }
+
+    #[test]
+    fn notification_thread_id_lookup_matches_belongs_to_thread() {
+        assert_eq!(
+            extract_notification_thread_id(&json!({ "threadId": "child", "turnId": "t" }))
+                .as_deref(),
+            Some("child")
+        );
+        assert_eq!(
+            extract_notification_thread_id(&json!({ "item": { "threadId": "child" } })).as_deref(),
+            Some("child")
+        );
+        assert_eq!(
+            extract_notification_thread_id(&json!({ "thread": { "id": "child" } })),
+            None
+        );
+        assert!(belongs_to_thread(
+            &json!({ "thread": { "id": "child" } }),
+            "root"
+        ));
+        assert!(!belongs_to_thread(&json!({ "threadId": "child" }), "root"));
+        assert!(belongs_to_thread(&json!({ "threadId": "root" }), "root"));
+    }
+
+    fn child_notification(method: &str, params: serde_json::Value) -> IncomingMessage {
+        IncomingMessage::Notification {
+            method: method.to_string(),
+            params: serde_json::value::to_raw_value(&params).expect("params should serialize"),
+        }
+    }
+
+    fn drained_events(receiver: &mut mpsc::Receiver<EngineEvent>) -> Vec<EngineEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    fn completion_pairs(events: &[EngineEvent]) -> Vec<(String, TurnCompletionStatus)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::SubagentCompleted {
+                    agent_id, status, ..
+                } => Some((agent_id.clone(), status.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pending_sub_agent_shutdowns_lists_running_children_of_the_root() {
+        let mut sub_agent_threads = HashMap::new();
+        sub_agent_threads.insert("child-b".to_string(), link("root", "root", "explorer"));
+        sub_agent_threads.insert("child-a".to_string(), link("root", "root", "reviewer"));
+        sub_agent_threads.insert(
+            "grandchild".to_string(),
+            link("root", "child-a", "reviewer/deep"),
+        );
+        sub_agent_threads.insert("already-done".to_string(), link("root", "root", "finished"));
+        sub_agent_threads.insert(
+            "other-root-child".to_string(),
+            link("other-root", "other-root", "elsewhere"),
+        );
+
+        let mut active_turn_ids = HashMap::new();
+        active_turn_ids.insert("root".to_string(), "turn-root".to_string());
+        active_turn_ids.insert("child-a".to_string(), "turn-a".to_string());
+        active_turn_ids.insert("child-b".to_string(), "turn-b".to_string());
+        active_turn_ids.insert("grandchild".to_string(), "turn-g".to_string());
+        active_turn_ids.insert("other-root-child".to_string(), "turn-x".to_string());
+
+        assert_eq!(
+            pending_sub_agent_shutdowns(&sub_agent_threads, &active_turn_ids, "root"),
+            vec![
+                SubAgentShutdown {
+                    agent_id: "child-a".to_string(),
+                    turn_id: "turn-a".to_string(),
+                },
+                SubAgentShutdown {
+                    agent_id: "child-b".to_string(),
+                    turn_id: "turn-b".to_string(),
+                },
+                SubAgentShutdown {
+                    agent_id: "grandchild".to_string(),
+                    turn_id: "turn-g".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupt_sub_agents_only_targets_children_of_the_requested_root() {
+        let engine = CodexEngine::default();
+        engine
+            .record_sub_agent_thread("child-1", "root-1", Some("explorer"))
+            .await;
+        engine.set_active_turn("child-1", "turn-1").await;
+        engine
+            .record_sub_agent_thread("child-2", "root-2", Some("elsewhere"))
+            .await;
+        engine.set_active_turn("child-2", "turn-2").await;
+
+        let outstanding = engine.interrupt_sub_agents("root-1").await;
+
+        assert_eq!(
+            outstanding,
+            BTreeMap::from([("child-1".to_string(), TurnCompletionStatus::Interrupted)])
+        );
+        assert_eq!(
+            engine.active_turn_id("child-2").await.as_deref(),
+            Some("turn-2")
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_stopped_sub_agents_reports_the_completion_the_child_sends() {
+        let engine = CodexEngine::default();
+        engine
+            .record_sub_agent_thread("child-1", "root-1", Some("explorer"))
+            .await;
+        engine.set_active_turn("child-1", "turn-child").await;
+
+        let (broadcast_tx, _idle_receiver) = broadcast::channel(8);
+        let mut subscription = broadcast_tx.subscribe();
+        broadcast_tx
+            .send(child_notification(
+                "turn/completed",
+                json!({
+                    "threadId": "child-1",
+                    "turn": { "id": "turn-child", "status": "completed" }
+                }),
+            ))
+            .expect("subscriber should receive the notification");
+
+        let (event_tx, mut event_rx) = mpsc::channel(16);
+        let mut sub_agents = SubAgentStreamState::default();
+
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            engine.drain_stopped_sub_agents(
+                "root-1",
+                BTreeMap::from([("child-1".to_string(), TurnCompletionStatus::Interrupted)]),
+                &mut sub_agents,
+                &mut subscription,
+                &event_tx,
+                Duration::from_secs(30),
+            ),
+        )
+        .await
+        .expect("drain should return once every child reported");
+
+        let events = drained_events(&mut event_rx);
+        assert!(
+            matches!(
+                events.first(),
+                Some(EngineEvent::SubagentStarted { agent_id, .. }) if agent_id == "child-1"
+            ),
+            "expected the child to be announced, got {events:?}"
+        );
+        // The child finished on its own, so it must not be reported as interrupted.
+        assert_eq!(
+            completion_pairs(&events),
+            vec![("child-1".to_string(), TurnCompletionStatus::Completed)]
+        );
+        assert!(engine.active_turn_id("child-1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn drain_stopped_sub_agents_synthesizes_completions_after_the_grace_period() {
+        let engine = CodexEngine::default();
+        engine
+            .record_sub_agent_thread("child-1", "root-1", Some("explorer"))
+            .await;
+        engine
+            .record_sub_agent_thread("child-2", "root-1", Some("reviewer"))
+            .await;
+        engine.set_active_turn("child-1", "turn-1").await;
+        engine.set_active_turn("child-2", "turn-2").await;
+
+        let (broadcast_tx, _idle_receiver) = broadcast::channel(8);
+        let mut subscription = broadcast_tx.subscribe();
+        let (event_tx, mut event_rx) = mpsc::channel(16);
+        let mut sub_agents = SubAgentStreamState::default();
+
+        engine
+            .drain_stopped_sub_agents(
+                "root-1",
+                BTreeMap::from([
+                    ("child-1".to_string(), TurnCompletionStatus::Interrupted),
+                    ("child-2".to_string(), TurnCompletionStatus::Failed),
+                ]),
+                &mut sub_agents,
+                &mut subscription,
+                &event_tx,
+                Duration::from_millis(50),
+            )
+            .await;
+        drop(broadcast_tx);
+
+        let events = drained_events(&mut event_rx);
+        assert_eq!(
+            completion_pairs(&events),
+            vec![
+                ("child-1".to_string(), TurnCompletionStatus::Interrupted),
+                ("child-2".to_string(), TurnCompletionStatus::Failed),
+            ]
+        );
+        assert!(engine.active_turn_id("child-1").await.is_none());
+        assert!(engine.active_turn_id("child-2").await.is_none());
     }
 }

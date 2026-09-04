@@ -12,6 +12,7 @@ import {
   type RefObject,
 } from "react";
 import {
+  Bot,
   FilePen,
   MessageSquare,
   SquareSplitVertical,
@@ -36,6 +37,7 @@ import {
   type WorkspacePaneSplit,
   type WorkspacePaneSplitDirection,
   type WorkspacePaneSurfaceKind,
+  type WorkspacePaneTab,
 } from "../../stores/workspacePaneStore";
 import { applyWorkspaceEditorChatSplit } from "../../lib/workspacePaneNavigation";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
@@ -59,12 +61,21 @@ const LazyEditorWithExplorer = lazy(() =>
   })),
 );
 
+const LazySubagentPanel = lazy(() =>
+  import("../chat/SubagentPanel").then((module) => ({
+    default: module.SubagentPanel,
+  })),
+);
+
 function SurfaceIcon({ kind, size = 13 }: { kind: WorkspacePaneSurfaceKind; size?: number }) {
   if (kind === "terminal") {
     return <SquareTerminal size={size} />;
   }
   if (kind === "editor") {
     return <FilePen size={size} />;
+  }
+  if (kind === "subagent") {
+    return <Bot size={size} />;
   }
   return <MessageSquare size={size} />;
 }
@@ -855,7 +866,7 @@ function PaneLeafView({
 
       <div className="workspace-pane-body">
         {activeTab ? (
-          <SurfaceView kind={activeTab.kind} workspaceId={workspaceId} />
+          <SurfaceView tab={activeTab} workspaceId={workspaceId} />
         ) : (
           <EmptyPane />
         )}
@@ -875,13 +886,14 @@ function EmptyPane() {
 }
 
 function SurfaceView({
-  kind,
+  tab,
   workspaceId,
 }: {
-  kind: WorkspacePaneSurfaceKind;
+  tab: WorkspacePaneTab;
   workspaceId: string;
 }) {
   const { t } = useTranslation("app");
+  const kind = tab.kind;
 
   return (
     <Suspense
@@ -894,6 +906,14 @@ function SurfaceView({
       {kind === "chat" && <LazyChatPanel embedded />}
       {kind === "terminal" && <LazyTerminalPanel workspaceId={workspaceId} embedded />}
       {kind === "editor" && <LazyEditorWithExplorer embedded />}
+      {kind === "subagent" && tab.subagent && (
+        <LazySubagentPanel
+          key={tab.subagent.threadId}
+          threadId={tab.subagent.threadId}
+          agentId={tab.subagent.agentId}
+          revision={tab.subagent.revision}
+        />
+      )}
     </Suspense>
   );
 }

@@ -82,6 +82,24 @@ export function availableAutonomyPresets(engineId: ChatEngineId): AutonomyPreset
 }
 
 /**
+ * The rungs the picker offers: ask, approve for me, full access. OpenCode has
+ * no sandboxed middle rung. A thread already sitting on a rung outside this
+ * list (repo default, read only) keeps it visible at the top so the current
+ * state is never hidden.
+ */
+export function visibleAutonomyPresets(
+  engineId: ChatEngineId,
+  current?: AutonomyPresetId | null,
+): AutonomyPresetId[] {
+  const rungs: AutonomyPresetId[] =
+    engineKind(engineId) === "opencode" ? ["ask", "full"] : ["ask", "auto", "full"];
+  if (current && !rungs.includes(current) && availableAutonomyPresets(engineId).includes(current)) {
+    return [current, ...rungs];
+  }
+  return rungs;
+}
+
+/**
  * Clamp a preset onto the ladder the engine actually exposes. A rung an
  * engine does not implement must step *down* to the closest rung it does,
  * never sideways onto a more permissive one: OpenCode has no sandboxed
@@ -147,9 +165,7 @@ export function autonomyPresetPatch(
         // full autonomy, which pins the network on.
         return { approvalPolicy: "trusted", sandboxMode: "workspace-write", networkPolicy: "inherit" };
       case "full":
-        // Claude has no full-access sandbox in Panes; full autonomy keeps
-        // workspace-write.
-        return { approvalPolicy: "trusted", sandboxMode: "workspace-write", networkPolicy: "enabled" };
+        return { approvalPolicy: "trusted", sandboxMode: "danger-full-access", networkPolicy: "enabled" };
       default:
         return { approvalPolicy: "inherit", sandboxMode: "inherit", networkPolicy: "inherit" };
     }

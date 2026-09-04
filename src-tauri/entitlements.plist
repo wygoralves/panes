@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- WKWebView needs JIT under the hardened runtime. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- The Claude sidecar runs on the user's Node install and the keep-awake
+       fallback drives pmset through osascript, both outside our signature. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+  <!-- The nested keep-awake helper and registrar in Contents/MacOS are signed
+       with this same file. Keep every entitlement here free of the App Sandbox
+       and of anything that needs a provisioning profile, otherwise the helpers
+       stop launching as a root launchd daemon. -->
+</dict>
+</plist>
