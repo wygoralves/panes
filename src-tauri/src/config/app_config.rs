@@ -208,6 +208,11 @@ pub struct PowerConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_duration_secs: Option<u64>,
     pub prevent_closed_display_sleep: bool,
+    /// Without the privileged helper, lid-close sleep prevention can only be
+    /// toggled through `pmset` behind a macOS admin password dialog that
+    /// reappears on every activation. Off by default so the prompt never
+    /// fires unless the user asked for it.
+    pub allow_password_prompt_fallback: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -327,6 +332,7 @@ impl Default for PowerConfig {
             battery_threshold: None,
             session_duration_secs: None,
             prevent_closed_display_sleep: false,
+            allow_password_prompt_fallback: false,
         }
     }
 }

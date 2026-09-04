@@ -392,6 +392,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: 20,
       sessionDurationSecs: 3600,
       preventClosedDisplaySleep: false,
+      allowPasswordPromptFallback: false,
     };
     mockIpc.getPowerSettings.mockResolvedValue(settings);
 
@@ -424,6 +425,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: number | null;
       sessionDurationSecs: number | null;
       preventClosedDisplaySleep: boolean;
+      allowPasswordPromptFallback: boolean;
     }>();
     const secondLoad = createDeferred<{
       keepAwakeEnabled: boolean;
@@ -433,6 +435,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: number | null;
       sessionDurationSecs: number | null;
       preventClosedDisplaySleep: boolean;
+      allowPasswordPromptFallback: boolean;
     }>();
     mockIpc.getPowerSettings
       .mockReturnValueOnce(firstLoad.promise)
@@ -449,6 +452,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: null,
       sessionDurationSecs: null,
       preventClosedDisplaySleep: false,
+      allowPasswordPromptFallback: false,
     });
     await firstPromise;
 
@@ -464,6 +468,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: 25,
       sessionDurationSecs: 3600,
       preventClosedDisplaySleep: false,
+      allowPasswordPromptFallback: false,
     };
     secondLoad.resolve(latestSettings);
     const secondResult = await secondPromise;
@@ -483,6 +488,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: null,
       sessionDurationSecs: 1800,
       preventClosedDisplaySleep: false,
+      allowPasswordPromptFallback: false,
     };
     mockIpc.setPowerSettings.mockResolvedValue({
       supported: true,
@@ -519,6 +525,7 @@ describe("keepAwakeStore", () => {
         batteryThreshold: null,
         sessionDurationSecs: null,
         preventClosedDisplaySleep: false,
+        allowPasswordPromptFallback: false,
       },
       powerSettingsOpen: false,
     });
@@ -545,6 +552,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: null,
       sessionDurationSecs: 1800,
       preventClosedDisplaySleep: false,
+      allowPasswordPromptFallback: false,
     };
 
     const savePromise = useKeepAwakeStore.getState().savePowerSettings(input);
@@ -584,6 +592,7 @@ describe("keepAwakeStore", () => {
       batteryThreshold: null,
       sessionDurationSecs: null,
       preventClosedDisplaySleep: false,
+      allowPasswordPromptFallback: false,
     });
 
     expect(mockToast.error).toHaveBeenCalledWith("app:commandPalette.toasts.powerSettingsSaveFailed");

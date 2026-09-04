@@ -33,6 +33,10 @@ export interface PowerSettings {
   batteryThreshold: number | null;
   sessionDurationSecs: number | null;
   preventClosedDisplaySleep: boolean;
+  /** Let lid-close prevention use `pmset` behind a macOS password dialog when
+   * the privileged helper is missing. Off by default: the dialog reappears on
+   * every activation. */
+  allowPasswordPromptFallback: boolean;
 }
 
 export interface PowerSettingsInput {
@@ -43,6 +47,7 @@ export interface PowerSettingsInput {
   batteryThreshold: number | null;
   sessionDurationSecs: number | null;
   preventClosedDisplaySleep: boolean;
+  allowPasswordPromptFallback: boolean;
 }
 
 export interface HelperStatus {
