@@ -42,7 +42,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": true,
+      "files": {
+        "Library/LaunchDaemons/com.panes.app.helper.keepawake.plist": "helper/com.panes.app.helper.keepawake.plist"
+      }
+    }
   },
   "plugins": {
     "updater": {

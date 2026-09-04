@@ -446,13 +446,48 @@ jobs:
       - name: Build platform Claude sidecar assets
         run: pnpm run build:claude-sidecar
 
+      # Developer ID signing gives the bundle a stable code identity, which is
+      # what lets macOS keep privacy (TCC) grants across updates. The Apple
+      # secrets stay scoped to this one step: the Tauri bundler reads them from
+      # its own environment, and no later step (release upload included) can
+      # see them. Empty secrets are unset so an unconfigured fork still builds
+      # an ad-hoc signed bundle.
       - name: Build universal macOS bundles
         if: matrix.platform == 'macos-15'
-        run: pnpm exec tauri build --target universal-apple-darwin
         env:
           PANES_SKIP_DESKTOP_PREBUILD: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then unset "$name"; fi
+          done
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            echo "::warning::Apple signing secrets are not configured. The macOS bundle stays ad-hoc signed, so privacy grants reset on every update."
+          elif [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            echo "Apple code signing enabled; notarization skipped because APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID are not all set."
+          else
+            echo "Apple code signing and notarization enabled."
+          fi
+          pnpm exec tauri build --target universal-apple-darwin
+
+      - name: Verify macOS keep-awake helper payload
+        if: matrix.platform == 'macos-15'
+        run: |
+          APP="$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$APP" ]; then
+            echo "Unable to locate bundled Panes.app."
+            exit 1
+          fi
+          scripts/macos/check-bundle.sh "$APP"
 
       - name: Verify universal macOS app binary
         if: matrix.platform == 'macos-15'

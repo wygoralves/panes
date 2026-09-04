@@ -49,5 +49,17 @@ lipo -create \
 
 rm "$OUTPUT_DIR/registrar-arm64" "$OUTPUT_DIR/registrar-x86_64"
 
+# The Tauri bundler picks sidecars up by target-triple suffix and copies them
+# into Contents/MacOS/ under the unsuffixed name. Both binaries are already
+# universal, so every triple gets the same file. Going through the sidecar list
+# rather than bundle.macOS.files is what gets them signed: the bundler signs
+# sidecars inside out, before it seals the app, and codesign refuses to sign a
+# bundle that still contains unsigned nested code.
+for name in com.panes.app.helper.keepawake PanesHelperRegistrar; do
+  for triple in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
+    cp "$OUTPUT_DIR/$name" "$OUTPUT_DIR/$name-$triple"
+  done
+done
+
 echo "Helper binaries built in $OUTPUT_DIR"
 ls -la "$OUTPUT_DIR/com.panes.app.helper.keepawake" "$OUTPUT_DIR/PanesHelperRegistrar"

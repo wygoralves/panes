@@ -1,11 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Launch daemon definition for the privileged keep-awake helper.
+
+	The bundler copies this file to Panes.app/Contents/Library/LaunchDaemons/,
+	which is the only location SMAppService.daemon(plistName:) reads from. Label
+	must match this file name without the .plist extension.
+
+	BundleProgram is resolved relative to the app bundle root, so launchd runs
+	the helper straight out of Panes.app and validates it against the app's own
+	code signature. Do not switch this back to Program: an absolute path such as
+	/Library/PrivilegedHelperTools/... is the legacy SMJobBless layout, and
+	nothing in the app ever installs a binary there.
+-->
 <plist version="1.0">
 <dict>
 	<key>Label</key>
 	<string>com.panes.app.helper.keepawake</string>
-	<key>Program</key>
-	<string>/Library/PrivilegedHelperTools/com.panes.app.helper.keepawake</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/com.panes.app.helper.keepawake</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>KeepAlive</key>

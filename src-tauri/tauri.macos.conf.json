@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": [
+      "helper/build/PanesHelperRegistrar",
+      "helper/build/com.panes.app.helper.keepawake"
+    ]
+  }
+}

@@ -94,7 +94,7 @@ brew install --cask wygoralves/tap/panes
 
 Homebrew is the primary macOS install path for prebuilt Panes releases. The macOS release is shipped as a universal app, so the same DMG works on both Apple Silicon and Intel Macs. The app updater then handles later versions in-app.
 
-Panes is not currently signed and notarized with Apple, so Homebrew only reduces Gatekeeper friction; it does not eliminate it. The tap applies a best-effort quarantine removal step during install, but macOS may still require a manual first-launch confirmation depending on system policy. If that happens, use Finder's Open flow or download the DMG directly from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
+Panes is not currently signed and notarized with Apple, so Homebrew only reduces Gatekeeper friction; it does not eliminate it. Release builds sign automatically once the `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, and `APPLE_SIGNING_IDENTITY` secrets are set (notarization also needs `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`). A stable signature is what lets macOS keep privacy grants across updates; ad-hoc builds ask again after every update. For local builds, `scripts/macos/create-dev-signing-identity.sh` creates a self-signed identity and `scripts/macos/sign-app.sh` re-signs a bundle with it. The tap applies a best-effort quarantine removal step during install, but macOS may still require a manual first-launch confirmation depending on system policy. If that happens, use Finder's Open flow or download the DMG directly from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
 
 If Gatekeeper blocks a direct DMG install, use these commands instead of disabling Gatekeeper globally:
 
@@ -227,6 +227,26 @@ pnpm tauri:build
 Common bundle artifacts include macOS DMGs/app archives, Linux DEB/AppImage outputs, and Windows NSIS installers, depending on platform and target.
 
 Git is recommended for the repo-management features, but the app can still launch without it.
+
+#### macOS Keep-Awake Helper Payload
+
+Lid-close sleep prevention on macOS runs through a privileged launchd daemon, so the packaged app has to carry three extra files. `src-tauri/build.rs` compiles the Swift sources into `src-tauri/helper/build/`, and the bundle configuration places them in the app:
+
+| Bundle path | Config | Why it lives there |
+|---|---|---|
+| `Contents/MacOS/PanesHelperRegistrar` | `externalBin` | `power::macos_helper` resolves the registrar as a sibling of the running executable |
+| `Contents/MacOS/com.panes.app.helper.keepawake` | `externalBin` | The daemon plist's `BundleProgram` points at it, so launchd runs it from inside the bundle |
+| `Contents/Library/LaunchDaemons/com.panes.app.helper.keepawake.plist` | `bundle.macOS.files` | The only directory `SMAppService.daemon(plistName:)` reads |
+
+The two binaries go through `externalBin` in `src-tauri/tauri.macos.conf.json`, which Tauri merges into the main config on macOS only. That is what gets them signed: the bundler signs sidecars inside out, before it seals the app, with the same identity, hardened runtime, and `src-tauri/entitlements.plist`. Files listed in `bundle.macOS.files` are copied but never signed, which is fine for the plist and would make `codesign` refuse to seal the bundle for a Mach-O binary. Both binaries are universal (`arm64` + `x86_64`), so `build-helpers.sh` writes one copy per target triple for the bundler to pick up.
+
+To re-sign an existing bundle locally, `scripts/macos/sign-app.sh` signs every nested Mach-O file deepest first before sealing the bundle.
+
+```bash
+scripts/macos/check-bundle.sh src-tauri/target/release/bundle/macos/Panes.app
+```
+
+`check-bundle.sh` fails when any of those files is missing, when the daemon plist does not resolve to a binary that shipped, or when a signed bundle does not pass `codesign --verify --deep --strict`. CI runs it right after the macOS bundle step.
 
 ## Development
 
