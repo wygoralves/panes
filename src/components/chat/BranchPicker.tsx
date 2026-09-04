@@ -361,17 +361,29 @@ export function BranchPicker({ thread, repo, repos, turnActive }: Props) {
       }
     }
 
-    // Picking the default branch from a worktree lands back in the checkout.
-    if (target.nextWorktreePath !== worktreePath && thread) {
+    // Two reasons to rebind the thread. Picking the default branch from a
+    // worktree lands back in the checkout, and a thread still scoped to the
+    // workspace (or to another repo) has to follow the repo whose branch was
+    // just checked out, otherwise its next turn runs from the wrong root.
+    let moveFailed = false;
+    if (thread && (target.nextWorktreePath !== worktreePath || thread.repoId !== repo.id)) {
       setBusy({ kind: "move", branch: targetName });
-      await bindThreadWorktree(target.nextWorktreePath);
+      moveFailed = !(await bindThreadWorktree(target.nextWorktreePath));
     }
 
     setBusy(null);
     setCurrentBranch(targetName);
     refreshGitPanel(target.checkoutCwd);
     setOpen(false);
-    if (pullError) {
+    if (moveFailed) {
+      // The checkout landed, so report the part that did not: the chat is still
+      // pointed at its old repo or worktree.
+      toast.error(
+        t("branchPicker.toasts.moveFailed", {
+          error: useThreadStore.getState().error ?? "",
+        }),
+      );
+    } else if (pullError) {
       toast.warning(t("branchPicker.toasts.pullFailed", { branch: targetName, error: pullError }));
     } else if (pulled) {
       toast.success(t("branchPicker.toasts.switchedAndPulled", { branch: targetName }));
