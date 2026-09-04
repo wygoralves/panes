@@ -669,7 +669,7 @@ describe("chatStore send", () => {
       usage: {
         current_tokens: 30000,
         max_context_tokens: 200000,
-        context_window_percent: 45,
+        context_window_percent: 90,
         five_hour_percent: 17,
         weekly_percent: 42,
       },
@@ -691,6 +691,105 @@ describe("chatStore send", () => {
       windowFableWeeklyResetsAt: null,
       windowOpusWeeklyResetsAt: null,
       windowSonnetWeeklyResetsAt: null,
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("prefers the engine-reported context percent over the token estimate", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    // Claude sizes the window without the local baseline, so its percent differs
+    // from the token estimate for the same counts. The engine number has to win.
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: {
+        current_tokens: 387_500,
+        max_context_tokens: 500_000,
+        context_window_percent: 23,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().usageLimits).toMatchObject({
+      currentTokens: 387_500,
+      maxContextTokens: 500_000,
+      contextPercent: 23,
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("estimates the context percent when the engine reports tokens without one", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: {
+        current_tokens: 30000,
+        max_context_tokens: 200000,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().usageLimits).toMatchObject({
+      currentTokens: 30000,
+      maxContextTokens: 200000,
+      contextPercent: 90,
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("keeps context tokens when a later update only carries plan windows", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: {
+        current_tokens: 387_500,
+        max_context_tokens: 500_000,
+        context_window_percent: 23,
+      },
+    });
+    streamHandler!({
+      type: "UsageLimitsUpdated",
+      usage: { five_hour_percent: 12 },
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().usageLimits).toMatchObject({
+      currentTokens: 387_500,
+      maxContextTokens: 500_000,
+      contextPercent: 23,
+      windowFiveHourPercent: 88,
     });
 
     vi.useRealTimers();

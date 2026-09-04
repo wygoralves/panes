@@ -1286,13 +1286,12 @@ function mapUsageLimitsFromEvent(event: Extract<StreamEvent, { type: "UsageLimit
     typeof maxContextTokensRaw === "number" ? Math.max(0, Math.round(maxContextTokensRaw)) : null;
   const hasContextMetrics = currentTokens !== null || maxContextTokens !== null;
 
-  let contextPercent = calculateContextPercentRemaining(currentTokens, maxContextTokens);
-  if (contextPercent === null && typeof contextPercentRaw === "number") {
-    contextPercent = Math.round(contextPercentRaw);
-  }
-  if (contextPercent !== null && !Number.isFinite(contextPercent)) {
-    contextPercent = null;
-  }
+  // Each engine owns its own context accounting, so the percent it reports wins.
+  // The token estimate is only a fallback for engines that send raw counts and no percent.
+  const contextPercent =
+    typeof contextPercentRaw === "number" && Number.isFinite(contextPercentRaw)
+      ? Math.round(contextPercentRaw)
+      : calculateContextPercentRemaining(currentTokens, maxContextTokens);
 
   const hasAnyMetric =
     hasContextMetrics ||

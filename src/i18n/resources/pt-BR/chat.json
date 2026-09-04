@@ -732,21 +732,22 @@
     }
   },
   "status": {
-    "now": "agora",
     "minutesShort": "{{count}} min",
     "hoursMinutesShort": "{{hours}} h {{minutes}} min",
     "daysHoursShort": "{{days}} d {{hours}} h",
     "context": "Contexto restante",
-    "windowFiveHoursLeft": "5h restantes",
-    "windowWeeklyLeft": "Semana restante",
-    "windowFableWeeklyLeft": "Semana Fable restante",
-    "windowOpusWeeklyLeft": "Semana Opus restante",
-    "windowSonnetWeeklyLeft": "Semana Sonnet restante",
-    "resets": "reinicia {{time}}",
+    "contextWindow": "Janela de contexto",
+    "planLimits": "Limites de uso do plano",
+    "fiveHourLimit": "Limite de 5 horas",
+    "weeklyAllModels": "Semanal · todos os modelos",
+    "weeklyModel": "Semanal · {{model}}",
+    "resetsIn": "Reinicia em {{time}}",
+    "viewDetails": "Ver detalhamento",
+    "openUsagePopover": "Uso e limites",
+    "percentLeft": "{{percent}}% restantes",
+    "ringUsage": "{{label}}: {{percent}} restantes",
     "usageLoading": "Carregando limites de uso...",
-    "usageUnavailable": "Limites de uso indisponíveis no servidor",
-    "openUsageLimits": "Abrir limites de uso",
-    "contextRingTitle": "Contexto restante: {{percent}}. Abrir limites de uso."
+    "usageUnavailable": "Limites de uso indisponíveis no servidor"
   },
   "slashCommands": {
     "panels": {

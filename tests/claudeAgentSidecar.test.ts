@@ -805,7 +805,11 @@ describe("claude-agent-sdk-server sidecar", () => {
           }),
         }),
         expect.objectContaining({
-          usage: expect.objectContaining({ contextWindowPercent: 95 }),
+          usage: expect.objectContaining({
+            currentTokens: 50_000,
+            maxContextTokens: 1_000_000,
+            contextWindowPercent: 95,
+          }),
         }),
       ]),
     );

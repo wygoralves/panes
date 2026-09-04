@@ -5898,14 +5898,6 @@ button, input, textarea, select {
   min-width: 0;
 }
 
-.chat-status-usage {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-}
-
 .chat-status-item {
   display: flex;
   align-items: center;
@@ -9243,41 +9235,167 @@ button, input, textarea, select {
   color: var(--text-1);
 }
 
-/* ── Context ring: context-left next to the send button ── */
+/* ── Composer usage meter: one bar per known limit, then the tightest percent ── */
 
-.chat-context-ring {
+.chat-usage-meter {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
+  padding: 5px 7px;
   border-radius: 99px;
   border: none;
   background: transparent;
   color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: 10px;
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-out);
 }
 
-.chat-context-ring:hover {
+.chat-usage-meter:hover {
   background: var(--wash-06);
   color: var(--text-1);
 }
 
-.chat-context-ring-track {
-  stroke: var(--wash-08);
-  fill: none;
+.chat-usage-meter-rows {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
-.chat-context-ring-value {
-  stroke: var(--accent);
-  fill: none;
-  stroke-linecap: round;
+/* One row per limit, left-aligned like the popover's own bars: the trigger
+   is that popover in miniature, each row showing the budget left. */
+.chat-usage-meter-row {
+  position: relative;
+  display: block;
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--wash-08);
+  overflow: hidden;
 }
 
-.chat-context-ring--warning .chat-context-ring-value { stroke: var(--warning); }
-.chat-context-ring--critical .chat-context-ring-value { stroke: var(--danger); }
+.chat-usage-meter-row-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  /* A drained budget keeps a readable sliver. */
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--accent-fill);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+
+.chat-usage-meter-row-fill--warning {
+  background: var(--warning);
+}
+
+.chat-usage-meter-row-fill--critical {
+  background: var(--danger);
+}
+
+
+/* ── Usage popover: context window and plan limits, anchored to the meter ── */
+
+.usage-popover {
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 360px;
+  max-width: calc(100vw - 16px);
+  padding: 12px;
+}
+
+.usage-popover-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.usage-popover-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.usage-popover-label {
+  font-size: 12px;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.usage-popover-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.usage-popover-percent {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-popover-bar {
+  height: 4px;
+  border-radius: 99px;
+  background: var(--wash-06);
+  overflow: hidden;
+}
+
+.usage-popover-bar-fill {
+  height: 100%;
+  /* Bars carry the budget left, so a drained one keeps a readable sliver. */
+  min-width: 4px;
+  border-radius: 99px;
+  background: var(--accent-fill);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+
+.usage-popover-bar-fill--warning {
+  background: var(--warning);
+}
+
+.usage-popover-bar-fill--critical {
+  background: var(--danger);
+}
+
+.usage-popover-divider {
+  height: 1px;
+  background: var(--divider);
+}
+
+.usage-popover-head {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.usage-popover-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.usage-popover-link {
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.usage-popover-link:hover {
+  background: var(--wash-06);
+  color: var(--text-1);
+}
 
 /* ── Empty thread state ── */
 
@@ -9672,70 +9790,9 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
-/* Usage segments are buttons that open the usage limits view */
-button.chat-context-section {
-  border: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  padding: 1px 5px;
-  margin: -1px -5px;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-out);
-}
-
-button.chat-context-section:hover {
-  background: var(--wash-06);
-  color: var(--text-1);
-}
-
 .chat-context-section > svg {
   flex-shrink: 0;
   opacity: 0.6;
-}
-
-.chat-context-progress {
-  width: 40px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--bg-4);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.chat-context-progress-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent-fill);
-  transition: width var(--duration-normal) var(--ease-out);
-  min-width: 0;
-}
-
-.chat-context-progress-fill-warning {
-  background: var(--warning);
-}
-
-.chat-context-progress-fill-critical {
-  background: var(--danger);
-}
-
-.chat-context-percent {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  min-width: 22px;
-  text-align: right;
-}
-
-.chat-context-reset {
-  font-size: 9px;
-  opacity: 0.6;
-  font-style: italic;
-}
-
-.chat-context-divider {
-  opacity: 0.3;
-  font-size: 8px;
 }
 
 /* ── Streaming Indicator ─────────────────────────────────────────── */
@@ -9763,7 +9820,8 @@ button.chat-context-section:hover {
 .pp-popover,
 .mp-popover,
 .oc-agent-popover,
-.codex-config-popover {
+.codex-config-popover,
+.usage-popover {
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-3);

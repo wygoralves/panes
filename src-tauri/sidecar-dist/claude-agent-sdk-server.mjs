@@ -1823,8 +1823,8 @@ function buildContextUsageSnapshot(streamEvent, model) {
   );
 
   return {
-    currentTokens: null,
-    maxContextTokens: null,
+    currentTokens,
+    maxContextTokens,
     contextWindowPercent: remainingPercent,
     fiveHourPercent: null,
     weeklyPercent: null,

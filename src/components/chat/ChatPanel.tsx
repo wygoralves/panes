@@ -70,6 +70,7 @@ import {
   resolveRelativePathWithinRoot,
   resolveThreadFileRootPath,
 } from "../../lib/fileRootUtils";
+import { shouldShowUsageTrigger } from "../../lib/usageWindows";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useWorkspacePaneStore } from "../../stores/workspacePaneStore";
 import { engineSupportsSteering } from "../../lib/engineSteering";
@@ -133,6 +134,7 @@ import {
   type CodexServiceTierValue,
 } from "./CodexConfigPicker";
 import { PermissionPicker } from "./PermissionPicker";
+import { UsagePopover } from "./UsagePopover";
 import { OpenCodeAgentPicker } from "./OpenCodeAgentPicker";
 // CodexReviewPicker and CodexThreadPicker replaced by slash commands (ChatSlashMenu + ChatCommandPanel)
 import { ChatSlashMenu, type SlashCommand } from "./ChatSlashMenu";
@@ -1137,26 +1139,6 @@ function formatMessageTimestamp(raw: string | undefined, locale: string): string
   });
 }
 
-function formatResetTime(
-  t: TFunction<"chat">,
-  isoDate: string | null,
-): string {
-  if (!isoDate) return "";
-  const date = new Date(isoDate);
-  if (Number.isNaN(date.getTime())) return "";
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
-  if (diffMs <= 0) return t("status.now");
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 60) return t("status.minutesShort", { count: diffMin });
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) {
-    return t("status.hoursMinutesShort", { hours: diffHr, minutes: diffMin % 60 });
-  }
-  const diffDays = Math.floor(diffHr / 24);
-  return t("status.daysHoursShort", { days: diffDays, hours: diffHr % 24 });
-}
-
 function estimateMessageOffset(
   messages: Message[],
   index: number,
@@ -1536,29 +1518,6 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("Failed to read image data."));
     reader.readAsDataURL(blob);
   });
-}
-
-function formatUsagePercent(percent: number | null): string {
-  if (typeof percent !== "number" || !Number.isFinite(percent)) {
-    return "--";
-  }
-  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
-}
-
-function usagePercentToWidth(percent: number | null): string {
-  if (typeof percent !== "number" || !Number.isFinite(percent)) {
-    return "0%";
-  }
-  return `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
-}
-
-function usageProgressLevelClass(percent: number | null): string {
-  if (typeof percent !== "number" || !Number.isFinite(percent)) {
-    return "";
-  }
-  if (percent <= 10) return " chat-context-progress-fill-critical";
-  if (percent <= 25) return " chat-context-progress-fill-warning";
-  return "";
 }
 
 function resolveClaudeModelFamily(model: EngineModel | null): "fable" | "opus" | "sonnet" | null {
@@ -1967,19 +1926,19 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     switch (resolveClaudeModelFamily(selectedModel)) {
       case "fable":
         return {
-          label: t("status.windowFableWeeklyLeft"),
+          label: t("status.weeklyModel", { model: "Fable" }),
           percent: usageLimits.windowFableWeeklyPercent,
           resetsAt: usageLimits.windowFableWeeklyResetsAt,
         };
       case "opus":
         return {
-          label: t("status.windowOpusWeeklyLeft"),
+          label: t("status.weeklyModel", { model: "Opus" }),
           percent: usageLimits.windowOpusWeeklyPercent,
           resetsAt: usageLimits.windowOpusWeeklyResetsAt,
         };
       case "sonnet":
         return {
-          label: t("status.windowSonnetWeeklyLeft"),
+          label: t("status.weeklyModel", { model: "Sonnet" }),
           percent: usageLimits.windowSonnetWeeklyPercent,
           resetsAt: usageLimits.windowSonnetWeeklyResetsAt,
         };
@@ -6405,40 +6364,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {!showSpecialInputComposer &&
                   (isCodexEngine || engineKind(selectedEngineId) === "claude") &&
-                  usageLimits?.contextPercent != null && (
-                  <button
-                    type="button"
-                    className={`chat-context-ring${
-                      usageLimits.contextPercent <= 10
-                        ? " chat-context-ring--critical"
-                        : usageLimits.contextPercent <= 25
-                          ? " chat-context-ring--warning"
-                          : ""
-                    }`}
-                    onClick={openUsageLimitsModal}
-                    title={t("status.contextRingTitle", {
-                      percent: formatUsagePercent(usageLimits.contextPercent),
-                    })}
-                    aria-label={t("status.contextRingTitle", {
-                      percent: formatUsagePercent(usageLimits.contextPercent),
-                    })}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 16 16" style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
-                      <circle className="chat-context-ring-track" cx="8" cy="8" r="6" strokeWidth="2" />
-                      <circle
-                        className="chat-context-ring-value"
-                        cx="8"
-                        cy="8"
-                        r="6"
-                        strokeWidth="2"
-                        strokeDasharray={2 * Math.PI * 6}
-                        strokeDashoffset={
-                          2 * Math.PI * 6 * (1 - Math.max(0, Math.min(100, usageLimits.contextPercent)) / 100)
-                        }
-                      />
-                    </svg>
-                    <span>{formatUsagePercent(usageLimits.contextPercent)}</span>
-                  </button>
+                  usageLimits &&
+                  shouldShowUsageTrigger(usageLimits) && (
+                  <UsagePopover
+                    usage={usageLimits}
+                    familyWindow={selectedClaudeWeeklyUsage}
+                    onOpenDetails={openUsageLimitsModal}
+                  />
                 )}
 
                 {streaming && !showSpecialInputComposer && (
@@ -6497,114 +6429,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             </div>
           </div>
 
-          {/* Bottom status bar with context usage */}
+          {/* Bottom status bar: branch picker, plus usage status while limits are unknown */}
           <div className="chat-status-bar">
-            {(isCodexEngine || engineKind(selectedEngineId) === "claude") && (
-              usageLimits ? (
-                <div className="chat-status-usage">
-                  {usageLimits.windowFiveHourPercent !== null && (
-                  <button
-                    type="button"
-                    className="chat-context-section"
-                    onClick={openUsageLimitsModal}
-                    title={t("status.openUsageLimits")}
-                  >
-                    <Clock size={10} />
-                    <span>{t("status.windowFiveHoursLeft")}</span>
-                    <div className="chat-context-progress">
-                      <div
-                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowFiveHourPercent)}`}
-                        style={{ width: usagePercentToWidth(usageLimits.windowFiveHourPercent) }}
-                      />
-                    </div>
-                    <span className="chat-context-percent">
-                      {formatUsagePercent(usageLimits.windowFiveHourPercent)}
-                    </span>
-                    {usageLimits.windowFiveHourResetsAt && (
-                      <span className="chat-context-reset">
-                        {t("status.resets", {
-                          time: formatResetTime(t, usageLimits.windowFiveHourResetsAt),
-                        })}
-                      </span>
-                    )}
-                  </button>
-                  )}
-
-                  {usageLimits.windowWeeklyPercent !== null && (
-                  <>
-                  {usageLimits.windowFiveHourPercent !== null && (
-                    <span className="chat-context-divider">&middot;</span>
-                  )}
-                  <button
-                    type="button"
-                    className="chat-context-section"
-                    onClick={openUsageLimitsModal}
-                    title={t("status.openUsageLimits")}
-                  >
-                    <Clock size={10} />
-                    <span>{t("status.windowWeeklyLeft")}</span>
-                    <div className="chat-context-progress">
-                      <div
-                        className={`chat-context-progress-fill${usageProgressLevelClass(usageLimits.windowWeeklyPercent)}`}
-                        style={{ width: usagePercentToWidth(usageLimits.windowWeeklyPercent) }}
-                      />
-                    </div>
-                    <span className="chat-context-percent">
-                      {formatUsagePercent(usageLimits.windowWeeklyPercent)}
-                    </span>
-                    {usageLimits.windowWeeklyResetsAt && (
-                      <span className="chat-context-reset">
-                        {t("status.resets", {
-                          time: formatResetTime(t, usageLimits.windowWeeklyResetsAt),
-                        })}
-                      </span>
-                    )}
-                  </button>
-                  </>
-                  )}
-
-                  {selectedClaudeWeeklyUsage && (
-                    <>
-                      {(usageLimits.windowFiveHourPercent !== null ||
-                        usageLimits.windowWeeklyPercent !== null) && (
-                        <span className="chat-context-divider">&middot;</span>
-                      )}
-
-                      <button
-                        type="button"
-                        className="chat-context-section"
-                        onClick={openUsageLimitsModal}
-                        title={t("status.openUsageLimits")}
-                      >
-                        <Clock size={10} />
-                        <span>{selectedClaudeWeeklyUsage.label}</span>
-                        <div className="chat-context-progress">
-                          <div
-                            className={`chat-context-progress-fill${usageProgressLevelClass(selectedClaudeWeeklyUsage.percent)}`}
-                            style={{ width: usagePercentToWidth(selectedClaudeWeeklyUsage.percent) }}
-                          />
-                        </div>
-                        <span className="chat-context-percent">
-                          {formatUsagePercent(selectedClaudeWeeklyUsage.percent)}
-                        </span>
-                        {selectedClaudeWeeklyUsage.resetsAt && (
-                          <span className="chat-context-reset">
-                            {t("status.resets", {
-                              time: formatResetTime(t, selectedClaudeWeeklyUsage.resetsAt),
-                            })}
-                          </span>
-                        )}
-                      </button>
-                    </>
-                  )}
-                </div>
-              ) : hasUserMessage ? (
+            {(isCodexEngine || engineKind(selectedEngineId) === "claude") &&
+              !usageLimits &&
+              hasUserMessage && (
                 <div className="chat-context-section">
                   <Clock size={10} />
                   <span>{t(resolveUsageStatusKey(streaming || usageLimitsLoading))}</span>
                 </div>
-              ) : null
-            )}
+              )}
 
             {/* Branch and worktree for this chat */}
             {repos.length > 0 && (
