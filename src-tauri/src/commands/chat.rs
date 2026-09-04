@@ -436,30 +436,39 @@ where
         .map_err(err_to_string)
 }
 
-#[tauri::command]
-pub async fn send_message(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    thread_id: String,
-    message: String,
+/// Everything `send_message` needs once the turn has been prepared: the thread
+/// as persisted after any model or reasoning-effort update, the engine thread
+/// it will run on, and the normalized turn input.
+struct PreparedTurn {
+    thread: ThreadDto,
+    engine_thread_id: String,
+    effective_model_id: String,
+    reasoning_effort: Option<String>,
+    attachments: Vec<TurnAttachment>,
+    input_items: Vec<TurnInputItem>,
+    plan_mode: bool,
+    turn_input: TurnInput,
+}
+
+/// Validates the request, resolves the thread's scope and sandbox, and makes
+/// sure the engine thread exists.
+///
+/// This runs with the turn already reserved in `state.turns`, so it must not
+/// leave anything registered behind: `send_message` releases the reservation
+/// on every error this returns.
+async fn prepare_send_message_turn(
+    state: &AppState,
+    thread_id: &str,
+    message: &str,
     model_id: Option<String>,
     reasoning_effort: Option<String>,
     attachments: Option<Vec<ChatAttachmentPayload>>,
     input_items: Option<Vec<ChatInputItemPayload>>,
     plan_mode: Option<bool>,
-    client_turn_id: Option<String>,
-) -> Result<String, String> {
-    let already_running = state.turns.get(&thread_id).await.is_some();
-    if already_running {
-        return Err(
-            "A turn is already running for this thread. Cancel it before sending another message."
-                .to_string(),
-        );
-    }
-
+) -> Result<PreparedTurn, String> {
     let db = state.db.clone();
     let mut thread = run_db(db.clone(), {
-        let thread_id = thread_id.clone();
+        let thread_id = thread_id.to_string();
         move |db| db::threads::get_thread(db, &thread_id)
     })
     .await?
@@ -469,10 +478,10 @@ pub async fn send_message(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let attachments = normalize_attachments(attachments)?;
-    let input_items = normalize_input_items(message.as_str(), input_items)?;
+    let input_items = normalize_input_items(message, input_items)?;
     let plan_mode = plan_mode.unwrap_or(false);
     let turn_input = TurnInput {
-        message: message.clone(),
+        message: message.to_string(),
         attachments: attachments.clone(),
         plan_mode,
         input_items: input_items.clone(),
@@ -688,7 +697,7 @@ pub async fn send_message(
             .unwrap_or_else(|| allow_network_for_trust_level(&trust_level))
     };
     let personality = if engine_kind(&thread.engine_id) == "codex"
-        && model_supports_personality(state.inner(), &thread.engine_id, &effective_model_id).await
+        && model_supports_personality(state, &thread.engine_id, &effective_model_id).await
     {
         thread_personality(thread.engine_metadata.as_ref())
     } else {
@@ -739,10 +748,35 @@ pub async fn send_message(
         thread.engine_thread_id = Some(engine_thread_id.clone());
     }
 
+    Ok(PreparedTurn {
+        thread,
+        engine_thread_id,
+        effective_model_id,
+        reasoning_effort,
+        attachments,
+        input_items,
+        plan_mode,
+        turn_input,
+    })
+}
+
+#[tauri::command]
+pub async fn send_message(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+    message: String,
+    model_id: Option<String>,
+    reasoning_effort: Option<String>,
+    attachments: Option<Vec<ChatAttachmentPayload>>,
+    input_items: Option<Vec<ChatInputItemPayload>>,
+    plan_mode: Option<bool>,
+    client_turn_id: Option<String>,
+) -> Result<String, String> {
     let cancellation = CancellationToken::new();
     if !state
         .turns
-        .try_register(&thread.id, cancellation.clone())
+        .try_register(&thread_id, cancellation.clone())
         .await
     {
         return Err(
@@ -750,6 +784,42 @@ pub async fn send_message(
                 .to_string(),
         );
     }
+
+    // The turn is reserved before anything resolves the thread's working
+    // directory, so a concurrent `remove_git_worktree` sees this thread as busy
+    // instead of deleting the worktree the turn is about to run in. Preparation
+    // lives in its own function so a single error path hands the reservation
+    // back.
+    let prepared = match prepare_send_message_turn(
+        state.inner(),
+        &thread_id,
+        message.as_str(),
+        model_id,
+        reasoning_effort,
+        attachments,
+        input_items,
+        plan_mode,
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            state.turns.finish(&thread_id).await;
+            return Err(error);
+        }
+    };
+    let PreparedTurn {
+        thread,
+        engine_thread_id,
+        effective_model_id,
+        reasoning_effort,
+        attachments,
+        input_items,
+        plan_mode,
+        turn_input,
+    } = prepared;
+
+    let db = state.db.clone();
 
     let assistant_message = match run_db(db.clone(), {
         let thread_id = thread.id.clone();
