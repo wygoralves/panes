@@ -1,5 +1,25 @@
 # Changelog
 
+## [](https://github.com/wygoralves/panes/compare/v0.65.1...vnull) (2026-09-04)
+
+### Features
+
+* **chat:** collapse the permission picker to ask, approve, full access ([330976a](https://github.com/wygoralves/panes/commit/330976a4971f6e95881035693b9d3f8e8bb5957b))
+* **chat:** move plan limits into a usage popover behind a miniature meter ([2ef4929](https://github.com/wygoralves/panes/commit/2ef49295b1d8cbb1739b41d84d47f74ff4fa5de8))
+* **chat:** queue follow-up messages and steer any engine that supports it ([ddbfc2c](https://github.com/wygoralves/panes/commit/ddbfc2c47be6ae37a3823d67e1c2cc8740acf5f6))
+* **chat:** replace the branch chip with a branch picker bound to worktrees ([a16fc01](https://github.com/wygoralves/panes/commit/a16fc0186a5c24467fa084e3fde677802eecc5c9))
+* **chat:** track subagents and keep each producer's text in one block ([2798af9](https://github.com/wygoralves/panes/commit/2798af9595728ec226537bbf16d1679f017a0dd8))
+* **git:** give threads an owned worktree with a verified lifecycle ([803acb6](https://github.com/wygoralves/panes/commit/803acb670e8209e58ef728eeb7ef33d6e320ea80))
+* **power:** make the lid-close password prompt an opt-in ([78daefb](https://github.com/wygoralves/panes/commit/78daefb14a3c875f07ff557390ed763d91483997))
+
+### Bug Fixes
+
+* **chat:** bind unscoped threads to the repo when picking a branch ([b9c8d25](https://github.com/wygoralves/panes/commit/b9c8d251a2ae15a5b00d51ab10cbe59f4ba6830a))
+* **chat:** reserve the turn before resolving its worktree ([0fc33fa](https://github.com/wygoralves/panes/commit/0fc33fafddb4e29707ee660b916930e640cba820))
+* **chat:** stop no longer leaves a thread stuck as running ([5de2ace](https://github.com/wygoralves/panes/commit/5de2ace40b65eed8ad241bd6c611fc8f3c2e106c))
+* **chat:** warn at half the budget and go red at a quarter ([e04a383](https://github.com/wygoralves/panes/commit/e04a383238e4fcae1d4d9e197a2a04e80eeb6593))
+* **git:** detach threads only after the worktree removal succeeds ([e717df4](https://github.com/wygoralves/panes/commit/e717df44219119f0b2068995b612818157a1e923))
+
 ## [](https://github.com/wygoralves/panes/compare/v0.65.0...vnull) (2026-09-03)
 
 ### Bug Fixes
