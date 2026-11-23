@@ -45,7 +45,7 @@
         "style-src": "'self' 'unsafe-inline' http://localhost:1420",
         "img-src": "'self' data: blob: https: http:",
         "font-src": "'self' data: http://localhost:1420",
-        "connect-src": "'self' ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420",
+        "connect-src": "'self' ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420 ws://localhost:1421",
         "worker-src": "'self' http://localhost:1420",
         "object-src": "'none'",
         "base-uri": "'none'",
