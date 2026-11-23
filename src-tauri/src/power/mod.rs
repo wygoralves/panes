@@ -824,18 +824,31 @@ impl KeepAwakeManager {
         // Record the intent before the privileged call, so a crash or force
         // quit while it (or its password dialog) is pending still leaves a
         // marker. Only for a flag that reads off: one already on without a
-        // marker is not ours. When the marker cannot be written, skip the
+        // marker is not ours, so it gets no marker and crash recovery never
+        // clears it. When the marker cannot be read or written, skip the
         // change rather than set a flag no later run could restore.
         let marker_path = self.closed_display_marker_path();
-        let recorded_intent = matches!(load_closed_display_marker(&marker_path), Ok(None))
-            && self.closed_display_ops.read_sleep_disabled().await == Some(false);
+        let prior_marker = match load_closed_display_marker(&marker_path) {
+            Ok(marker) => marker,
+            Err(error) => {
+                log::warn!("lid-close sleep marker is unreadable, leaving it unchanged: {error}");
+                return;
+            }
+        };
+        let flag_before = match prior_marker {
+            Some(_) => None,
+            None => self.closed_display_ops.read_sleep_disabled().await,
+        };
+        let recorded_intent = flag_before == Some(false);
         if recorded_intent && !self.save_closed_display_marker(ClosedDisplaySleepMethod::Pmset) {
             return;
         }
 
         match self.closed_display_ops.prevent(allow_password_prompt).await {
             Some(method) => {
-                self.save_closed_display_marker(method);
+                if flag_before != Some(true) {
+                    self.save_closed_display_marker(method);
+                }
                 let mut runtime = self.runtime.lock().await;
                 let still_wanted = !runtime.paused_due_to_battery
                     && runtime
@@ -3170,6 +3183,60 @@ mod tests {
         assert!(ops.prevent_calls().is_empty());
         assert_eq!(*ops.sleep_disabled.lock().unwrap(), Some(false));
         assert!(!manager.status().await.closed_display_sleep_disabled);
+        manager.disable().await.expect("disable should succeed");
+    }
+
+    /// Unix only: Windows reports a file in place of a directory as NotFound.
+    /// The flag reads as unknown, so no provisional marker write fails first.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prevent_is_skipped_when_the_marker_cannot_be_read() {
+        let parent = temp_state_dir();
+        fs::create_dir_all(&parent).expect("parent dir should exist");
+        let state_dir = parent.join("not-a-dir");
+        fs::write(&state_dir, b"").expect("file should be written");
+        let ops = FakeClosedDisplayOps::with_flag(None);
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Helper);
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 608))],
+        );
+
+        manager
+            .enable_with_config(&lid_close_config(true, false))
+            .await
+            .expect("enable should succeed");
+
+        assert!(ops.prevent_calls().is_empty());
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+        // The helper state cannot be cleared from a file either.
+        let _ = manager.disable().await;
+    }
+
+    #[tokio::test]
+    async fn flag_already_on_without_a_marker_gets_no_marker() {
+        let state_dir = temp_state_dir();
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Helper);
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 609))],
+        );
+
+        manager
+            .enable_with_config(&lid_close_config(true, false))
+            .await
+            .expect("enable should succeed");
+
+        assert_eq!(ops.prevent_calls(), vec![false]);
+        assert!(manager.status().await.closed_display_sleep_disabled);
+        assert!(!closed_display_marker_path(&state_dir).exists());
         manager.disable().await.expect("disable should succeed");
     }
 
