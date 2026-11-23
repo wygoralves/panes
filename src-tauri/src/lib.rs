@@ -73,9 +73,17 @@ pub fn run() {
     if let Err(error) = keep_awake.reclaim_stale_helpers() {
         log::warn!("failed to reclaim stale keep awake helper: {error}");
     }
+    // No window exists yet, so nothing here may raise the admin password
+    // dialog; the setup hook finishes the lid-close part once the window is up.
+    #[cfg(target_os = "macos")]
+    if let Err(error) = tauri::async_runtime::block_on(
+        keep_awake.reclaim_stale_closed_display_sleep(&app_config.power, false),
+    ) {
+        log::warn!("failed to restore stale lid-close sleep setting: {error}");
+    }
     if app_config.power.keep_awake_enabled {
         if let Err(error) =
-            tauri::async_runtime::block_on(keep_awake.enable_with_config(&app_config.power))
+            tauri::async_runtime::block_on(keep_awake.enable_at_startup(&app_config.power))
         {
             log::warn!("failed to reapply keep awake on startup: {error}");
         }
@@ -167,6 +175,16 @@ pub fn run() {
             }
             tauri::async_runtime::block_on(state.engines.set_resource_dir(resource_dir));
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
+            #[cfg(target_os = "macos")]
+            {
+                let keep_awake = state.keep_awake.clone();
+                let power_config = state.config.power.clone();
+                tauri::async_runtime::spawn(async move {
+                    keep_awake
+                        .finish_startup_closed_display_sleep(&power_config)
+                        .await;
+                });
+            }
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
