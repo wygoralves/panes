@@ -17,9 +17,6 @@ finish-args:
   - --share=ipc
   # Codex, Claude, OpenCode, and git all need outbound network access.
   - --share=network
-  # System tray icon (Cargo.toml enables the tauri "tray-icon" feature).
-  - --talk-name=org.kde.StatusNotifierWatcher
-  - --filesystem=xdg-run/tray-icon:create
   # Desktop notifications for long-running agent turns.
   - --talk-name=org.freedesktop.Notifications
   # Git operations over SSH remotes.
