@@ -35,6 +35,10 @@ struct HarnessDef {
     install_script: Option<&'static str>,
     website: &'static str,
     native: bool,
+    /// Oldest Node.js major release the npm package supports (its
+    /// `engines.node`). The npm install is offered only on a Node.js that
+    /// meets it.
+    min_node_major: Option<u32>,
 }
 
 const HARNESSES: &[HarnessDef] = &[
@@ -49,6 +53,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: None,
         website: "https://github.com/openai/codex",
         native: true,
+        min_node_major: None,
     },
     HarnessDef {
         id: "claude-code",
@@ -61,6 +66,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: Some("curl -fsSL https://claude.ai/install.sh | bash"),
         website: "https://code.claude.com/docs/en/overview",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "gemini-cli",
@@ -73,6 +79,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: None,
         website: "https://github.com/google-gemini/gemini-cli",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "antigravity",
@@ -85,6 +92,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: Some("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
         website: "https://antigravity.google",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "kiro",
@@ -97,6 +105,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: Some("curl -fsSL https://cli.kiro.dev/install | bash"),
         website: "https://kiro.dev",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "opencode",
@@ -109,6 +118,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: None,
         website: "https://opencode.ai",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "kilo-code",
@@ -121,6 +131,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: None,
         website: "https://kilo.ai",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "factory-droid",
@@ -133,6 +144,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: Some("curl -fsSL https://app.factory.ai/cli | sh"),
         website: "https://factory.com",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "cursor-cli",
@@ -147,6 +159,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: Some("curl https://cursor.com/install -fsS | bash"),
         website: "https://cursor.com/cli",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "copilot-cli",
@@ -159,6 +172,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: None,
         website: "https://github.com/github/copilot-cli",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "amp",
@@ -171,6 +185,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: Some("curl -fsSL https://ampcode.com/install.sh | bash"),
         website: "https://ampcode.com",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "qwen-code",
@@ -183,6 +198,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: None,
         website: "https://github.com/QwenLM/qwen-code",
         native: false,
+        min_node_major: Some(22),
     },
     HarnessDef {
         id: "crush",
@@ -195,6 +211,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_script: None,
         website: "https://github.com/charmbracelet/crush",
         native: false,
+        min_node_major: None,
     },
 ];
 
@@ -205,9 +222,14 @@ const HARNESSES: &[HarnessDef] = &[
 #[tauri::command]
 pub async fn check_harnesses() -> Result<HarnessReport, String> {
     let mut harnesses = Vec::new();
+    let node_major = if HARNESSES.iter().any(|def| def.min_node_major.is_some()) {
+        detect_node_major().await
+    } else {
+        None
+    };
 
     for def in HARNESSES {
-        let status = detect_harness(def).await;
+        let status = detect_harness(def, node_major).await;
         harnesses.push(status);
     }
 
@@ -241,6 +263,16 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
         .iter()
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
+
+    if let Some(min_major) = def.min_node_major {
+        if !node_meets_minimum(Some(min_major), detect_node_major().await) {
+            return Err(format!(
+                "{} needs Node.js {min_major} or later. Update Node.js and try again, \
+                 or install it manually from {}",
+                def.name, def.website
+            ));
+        }
+    }
 
     // Prefer install_script (curl-pipe installers) over install_command (npm).
     // On Windows, curl-pipe installers are not supported — fall through to
@@ -404,7 +436,7 @@ pub async fn set_harness_launch_args(
 // Detection
 // ---------------------------------------------------------------------------
 
-async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
+async fn detect_harness(def: &HarnessDef, node_major: Option<u32>) -> HarnessInfo {
     if let Some(path) = runtime_env::resolve_executable(def.command) {
         if let Some(version) = get_command_version(&path, &[def.version_flag])
             .await
@@ -418,7 +450,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
                 found: true,
                 version: Some(version),
                 path: Some(path.display().to_string()),
-                can_auto_install: harness_can_auto_install(def),
+                can_auto_install: harness_can_auto_install(def, node_major),
                 website: def.website.to_string(),
                 native: def.native,
             };
@@ -437,7 +469,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
             found: true,
             version: Some(version),
             path: Some(path),
-            can_auto_install: harness_can_auto_install(def),
+            can_auto_install: harness_can_auto_install(def, node_major),
             website: def.website.to_string(),
             native: def.native,
         };
@@ -451,7 +483,7 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         found: false,
         version: None,
         path: None,
-        can_auto_install: harness_can_auto_install(def),
+        can_auto_install: harness_can_auto_install(def, node_major),
         website: def.website.to_string(),
         native: def.native,
     }
@@ -463,7 +495,11 @@ fn version_belongs_to_harness(def: &HarnessDef, version: &str) -> bool {
     !(def.id == "copilot-cli" && version.starts_with("copilot version"))
 }
 
-fn harness_can_auto_install(def: &HarnessDef) -> bool {
+fn harness_can_auto_install(def: &HarnessDef, node_major: Option<u32>) -> bool {
+    if !node_meets_minimum(def.min_node_major, node_major) {
+        return false;
+    }
+
     #[cfg(target_os = "windows")]
     if def.install_script.is_some() {
         return def.install_command.is_some();
@@ -696,6 +732,39 @@ async fn run_harness_install_script(
 // Utility helpers (same patterns as setup.rs)
 // ---------------------------------------------------------------------------
 
+/// A Node.js that cannot be found or read does not meet a minimum.
+fn node_meets_minimum(min_major: Option<u32>, node_major: Option<u32>) -> bool {
+    match min_major {
+        None => true,
+        Some(min_major) => node_major.is_some_and(|major| major >= min_major),
+    }
+}
+
+/// Parses the major release from `node --version` output such as `v22.11.0`.
+fn parse_node_major(version: &str) -> Option<u32> {
+    version
+        .trim()
+        .trim_start_matches('v')
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
+async fn detect_node_major() -> Option<u32> {
+    let version = match runtime_env::resolve_executable("node") {
+        Some(path) => get_command_version(&path, &["--version"]).await,
+        None => None,
+    };
+    let version = match version {
+        Some(version) => Some(version),
+        None => detect_via_login_shell("node", "--version")
+            .await
+            .map(|(_, version)| version),
+    };
+    version.as_deref().and_then(parse_node_major)
+}
+
 async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new(path);
     process_utils::configure_tokio_command(&mut command);
@@ -801,6 +870,34 @@ async fn resolve_mise_path() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn harness(id: &str) -> &'static HarnessDef {
+        HARNESSES.iter().find(|def| def.id == id).unwrap()
+    }
+
+    #[test]
+    fn parses_the_node_major_release() {
+        assert_eq!(parse_node_major("v22.11.0"), Some(22));
+        assert_eq!(parse_node_major("v20.19.5\n"), Some(20));
+        assert_eq!(parse_node_major("not a version"), None);
+    }
+
+    #[test]
+    fn qwen_code_offers_npm_install_only_on_node_22_or_later() {
+        let qwen = harness("qwen-code");
+        assert!(!harness_can_auto_install(qwen, Some(20)));
+        assert!(!harness_can_auto_install(qwen, None));
+        assert!(harness_can_auto_install(qwen, Some(22)));
+        assert!(harness_can_auto_install(qwen, Some(24)));
+    }
+
+    #[test]
+    fn harnesses_without_a_node_minimum_ignore_the_node_version() {
+        // @github/copilot declares no engines; its npm loader starts a native binary.
+        let copilot = harness("copilot-cli");
+        assert!(harness_can_auto_install(copilot, Some(18)));
+        assert!(harness_can_auto_install(copilot, None));
+    }
 
     #[test]
     fn aws_copilot_is_not_detected_as_github_copilot() {
