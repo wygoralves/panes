@@ -58,9 +58,13 @@ export async function resolveUnsavedChangesPrompt(choice: UnsavedChangesChoice):
 
   if (useUnsavedChangesPromptStore.getState().isSaving) return;
   useUnsavedChangesPromptStore.setState({ isSaving: true });
+  const prompt = pendingPrompt;
   // A failed or conflicted save keeps the window open so nothing is lost.
   const saved = await useFileStore.getState().saveAllDirtyTabs();
-  settlePrompt(saved);
+  // The user may have cancelled while saving; a later prompt is not ours to settle.
+  if (pendingPrompt !== prompt) return;
+  // Edits typed while the write ran leave a tab dirty again.
+  settlePrompt(saved && !useFileStore.getState().tabs.some((tab) => tab.isDirty));
 }
 
 interface CloseRequestedTarget {
