@@ -139,10 +139,14 @@ function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
     // corrupt the file, and the backend refuses the save anyway. A lossy base
     // is display only and leaves the working file editable.
     readOnlyReason = "non-utf8";
-  } else if (!preserveDirtyContent && readOnlyReason !== "non-utf8") {
+  } else if (!preserveDirtyContent) {
     readOnlyReason = hasUniformLineEndings(compare.modifiedContent, lineEnding ?? "\n")
       ? null
       : "mixed-line-endings";
+  } else if (readOnlyReason === "non-utf8") {
+    // The compare reports lossiness itself, so a clean decode means the file
+    // is valid UTF-8 again and the old notice is stale.
+    readOnlyReason = null;
   }
 
   return {

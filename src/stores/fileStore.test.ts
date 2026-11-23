@@ -597,6 +597,24 @@ describe("fileStore", () => {
     expect(mockIpc.writeFile).not.toHaveBeenCalled();
   });
 
+  it("makes a git diff tab editable again once the file on disk is valid UTF-8", async () => {
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(
+      makeCompare({ modifiedContent: "caf�\n", modifiedIsLossyDecode: true }),
+    );
+    await useFileStore.getState().openGitDiffFile("/repo", "latin1.txt", { source: "changes" });
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    expect(useFileStore.getState().tabs[0]!.readOnlyReason).toBe("non-utf8");
+
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(
+      makeCompare({ modifiedContent: "café\n", modifiedIsLossyDecode: false }),
+    );
+    await useFileStore.getState().reloadTabFromDisk(tabId);
+
+    const reloaded = useFileStore.getState().tabs[0]!;
+    expect(reloaded.content).toBe("café\n");
+    expect(reloaded.readOnlyReason).toBeNull();
+  });
+
   it("keeps a git diff tab editable when only the base side was decoded lossily", async () => {
     mockIpc.getGitFileCompare.mockResolvedValueOnce(
       makeCompare({ baseContent: "caf\uFFFD\n", modifiedContent: "caf\u00E9\n" }),
