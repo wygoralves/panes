@@ -170,7 +170,10 @@ pub fn normalize_workspace_startup_preset(
     mut preset: WorkspaceStartupPreset,
     workspace_root: &Path,
 ) -> anyhow::Result<WorkspaceStartupPreset> {
-    let workspace_root = workspace_root.canonicalize().with_context(|| {
+    // path_utils strips the Windows \\?\ prefix std adds, so the root compares
+    // equal to the plain C:\ paths users type and that resolve_workspace_path
+    // returns.
+    let workspace_root = path_utils::canonicalize_path(workspace_root).with_context(|| {
         format!(
             "failed to resolve workspace root '{}'",
             workspace_root.display()
@@ -573,8 +576,7 @@ fn ensure_path_inside_workspace(
 
     let existing_ancestor = deepest_existing_ancestor(candidate)
         .ok_or_else(|| anyhow!("{field_name} has no existing parent inside the workspace root"))?;
-    let canonical_ancestor = existing_ancestor
-        .canonicalize()
+    let canonical_ancestor = path_utils::canonicalize_path(existing_ancestor)
         .with_context(|| format!("failed to resolve {field_name}"))?;
     anyhow::ensure!(
         canonical_ancestor.starts_with(workspace_root),
@@ -938,6 +940,25 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("terminal.groups[].sessions[].cwd"));
+    }
+
+    #[test]
+    fn absolute_cwd_inside_workspace_is_accepted_without_verbatim_prefix() {
+        let workspace_root =
+            resolve_workspace_path(workspace_root().to_string_lossy().as_ref()).unwrap();
+        let absolute_cwd = workspace_root.join("apps").join("web");
+        let mut preset = preset();
+        let session = &mut preset.terminal.as_mut().unwrap().groups[0].sessions[1];
+        session.cwd = absolute_cwd.to_string_lossy().to_string();
+        session.cwd_base = Some(WorkspacePathBase::Absolute);
+
+        let normalized = normalize_workspace_startup_preset(preset, &workspace_root).unwrap();
+
+        let stored = normalized.terminal.unwrap().groups[0].sessions[1]
+            .cwd
+            .clone();
+        assert_eq!(Path::new(&stored), absolute_cwd.as_path());
+        assert!(!stored.starts_with(r"\\?\"));
     }
 
     #[test]
