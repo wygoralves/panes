@@ -625,4 +625,57 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn flags_an_untrusted_repo_stored_with_a_trailing_separator() {
+        let db = test_db();
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        let inner_path = root.join("inner");
+        fs::create_dir_all(&inner_path).expect("failed to create inner repo path");
+        // A drive root such as D:\ always ends in a separator; a stored path
+        // can too. Either way it must still enclose the repos below it.
+        let outer_with_separator =
+            format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+
+        let outer_workspace = workspaces::upsert_workspace(&db, &outer_with_separator, Some(3))
+            .expect("failed to create outer workspace");
+        let inner_workspace =
+            workspaces::upsert_workspace(&db, inner_path.to_string_lossy().as_ref(), Some(3))
+                .expect("failed to create inner workspace");
+        let outer_repo = upsert_repo(
+            &db,
+            &outer_workspace.id,
+            "outer",
+            &outer_with_separator,
+            "main",
+            true,
+        )
+        .expect("failed to insert outer repo");
+        let inner_repo = upsert_repo(
+            &db,
+            &inner_workspace.id,
+            "inner",
+            inner_path.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert inner repo");
+        set_repo_trust_level(&db, &outer_repo.id, TrustLevelDto::Standard)
+            .expect("failed to set outer trust");
+        set_repo_trust_level(&db, &inner_repo.id, TrustLevelDto::Trusted)
+            .expect("failed to trust inner repo");
+
+        assert!(
+            untrusted_repo_encloses_path(&db, inner_path.to_string_lossy().as_ref())
+                .expect("lookup failed")
+        );
+        // The same directory written without the separator is the repo itself,
+        // not a repo inside it.
+        assert!(
+            !untrusted_repo_encloses_path(&db, root.to_string_lossy().as_ref())
+                .expect("lookup failed")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }
