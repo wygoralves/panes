@@ -44,21 +44,47 @@ pub fn platform_id() -> &'static str {
     }
 }
 
+/// File Flatpak bind-mounts at the root of every sandbox.
+const FLATPAK_INFO_PATH: &str = "/.flatpak-info";
+
 /// Whether the app is currently running inside a Flatpak sandbox.
-/// Flatpak sets `FLATPAK_ID` in every sandboxed process, so this is
-/// reliable without shelling out.
+///
+/// `FLATPAK_ID` alone is not enough: it leaks into the environment of any
+/// program started from a Flatpak app's terminal, and this answer decides
+/// where the database lives. A real sandbox is Linux, has a non-empty
+/// `FLATPAK_ID` and has `/.flatpak-info` mounted at its root.
 pub fn is_flatpak() -> bool {
-    env::var_os("FLATPAK_ID").is_some()
+    is_flatpak_for(
+        cfg!(target_os = "linux"),
+        env::var_os("FLATPAK_ID").as_deref(),
+        || Path::new(FLATPAK_INFO_PATH).is_file(),
+    )
+}
+
+fn is_flatpak_for(
+    is_linux: bool,
+    flatpak_id: Option<&OsStr>,
+    flatpak_info_exists: impl FnOnce() -> bool,
+) -> bool {
+    is_linux && non_empty_os_str(flatpak_id).is_some() && flatpak_info_exists()
 }
 
 /// Whether the built-in Tauri updater may run. A Flatpak is updated through
 /// its remote, and its /app is read-only, so self-updates cannot apply there.
 pub fn self_update_supported() -> bool {
-    !is_flatpak()
+    self_update_supported_for(is_flatpak())
+}
+
+fn self_update_supported_for(in_flatpak: bool) -> bool {
+    !in_flatpak
 }
 
 pub fn app_data_dir() -> PathBuf {
-    if is_flatpak() {
+    app_data_dir_with(is_flatpak())
+}
+
+fn app_data_dir_with(in_flatpak: bool) -> PathBuf {
+    if in_flatpak {
         return flatpak_app_data_dir_for(
             env::var_os("XDG_DATA_HOME").as_deref(),
             env::var_os("FLATPAK_ID").as_deref(),
@@ -81,10 +107,14 @@ pub fn migrate_legacy_app_data_dir() -> std::io::Result<()> {
     // Inside a Flatpak, ~/.agent-workspace is either an empty tmpfs path or,
     // when the user granted home access, the host install's live data. In
     // neither case should it be moved into the sandbox's data dir.
-    if is_flatpak() {
+    migrate_legacy_app_data_dir_with(is_flatpak())
+}
+
+fn migrate_legacy_app_data_dir_with(in_flatpak: bool) -> std::io::Result<()> {
+    if in_flatpak {
         return Ok(());
     }
-    let current = app_data_dir();
+    let current = app_data_dir_with(in_flatpak);
     migrate_legacy_app_data_dir_for(&current, legacy_app_data_dir().as_deref())
 }
 
@@ -1653,20 +1683,32 @@ mod tests {
     }
 
     #[test]
-    fn is_flatpak_reflects_flatpak_id_env_var() {
-        // FLATPAK_ID now also moves app_data_dir(), so hold the app data lock
-        // that tests resolving that dir take.
+    fn is_flatpak_needs_linux_a_flatpak_id_and_the_sandbox_marker() {
+        let id = Some(OsStr::new("com.panes.app"));
+        assert!(is_flatpak_for(true, id, || true));
+
+        assert!(!is_flatpak_for(false, id, || true));
+        assert!(!is_flatpak_for(true, None, || true));
+        assert!(!is_flatpak_for(true, Some(OsStr::new("")), || true));
+        assert!(!is_flatpak_for(true, id, || false));
+    }
+
+    #[test]
+    fn is_flatpak_ignores_an_inherited_flatpak_id_outside_a_sandbox() {
+        // A shell started from another Flatpak app's terminal carries its
+        // FLATPAK_ID; that alone must not move the database.
+        if Path::new(FLATPAK_INFO_PATH).exists() {
+            return;
+        }
         let _app_data_guard = crate::config::app_config::app_data_env_lock()
             .lock()
             .expect("app data env lock poisoned");
         let _env_guard = env_lock().lock().expect("env lock poisoned");
         let original = std::env::var_os("FLATPAK_ID");
 
-        std::env::remove_var("FLATPAK_ID");
+        std::env::set_var("FLATPAK_ID", "org.example.Ide");
         assert!(!is_flatpak());
-
-        std::env::set_var("FLATPAK_ID", "com.panes.app");
-        assert!(is_flatpak());
+        assert!(self_update_supported());
 
         match original {
             Some(value) => std::env::set_var("FLATPAK_ID", value),
@@ -1676,22 +1718,8 @@ mod tests {
 
     #[test]
     fn self_update_is_disabled_inside_flatpak() {
-        let _app_data_guard = crate::config::app_config::app_data_env_lock()
-            .lock()
-            .expect("app data env lock poisoned");
-        let _env_guard = env_lock().lock().expect("env lock poisoned");
-        let original = std::env::var_os("FLATPAK_ID");
-
-        std::env::remove_var("FLATPAK_ID");
-        assert!(self_update_supported());
-
-        std::env::set_var("FLATPAK_ID", "com.panes.app");
-        assert!(!self_update_supported());
-
-        match original {
-            Some(value) => std::env::set_var("FLATPAK_ID", value),
-            None => std::env::remove_var("FLATPAK_ID"),
-        }
+        assert!(self_update_supported_for(false));
+        assert!(!self_update_supported_for(true));
     }
 
     #[test]
@@ -1735,15 +1763,13 @@ mod tests {
         std::env::set_var("HOME", "/home/panes");
         std::env::set_var("XDG_DATA_HOME", "/home/panes/.var/app/com.panes.app/data");
 
-        std::env::remove_var("FLATPAK_ID");
-        assert_eq!(
-            app_data_dir(),
-            PathBuf::from("/home/panes/.agent-workspace")
-        );
-
         std::env::set_var("FLATPAK_ID", "com.panes.app");
         assert_eq!(
-            app_data_dir(),
+            app_data_dir_with(false),
+            PathBuf::from("/home/panes/.agent-workspace")
+        );
+        assert_eq!(
+            app_data_dir_with(true),
             PathBuf::from("/home/panes/.var/app/com.panes.app/data/panes")
         );
 
@@ -1776,7 +1802,7 @@ mod tests {
         std::env::set_var("XDG_DATA_HOME", root.join("data"));
         std::env::set_var("FLATPAK_ID", "com.panes.app");
 
-        migrate_legacy_app_data_dir().expect("migration should be a no-op");
+        migrate_legacy_app_data_dir_with(true).expect("migration should be a no-op");
         assert!(legacy.join("config.toml").exists());
         assert!(!root.join("data").join("panes").exists());
 

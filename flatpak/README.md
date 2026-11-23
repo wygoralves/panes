@@ -85,8 +85,12 @@ to `~/.var/app/com.panes.app/` on the host. Panes therefore:
 - Stores its database, `config.toml`, logs, attachments and the extracted
   Claude SDK in `$XDG_DATA_HOME/panes`
   (`~/.var/app/com.panes.app/data/panes` on the host) instead of
-  `~/.agent-workspace`, whenever `FLATPAK_ID` is set
-  (`runtime_env::app_data_dir`). It does not try to migrate a host
+  `~/.agent-workspace`, when it runs inside a Flatpak sandbox
+  (`runtime_env::app_data_dir`). Panes counts as sandboxed only on Linux,
+  with a non-empty `FLATPAK_ID` and `/.flatpak-info` present
+  (`runtime_env::is_flatpak`), so a host install started from another
+  Flatpak app's terminal, which inherits that app's `FLATPAK_ID`, keeps
+  using `~/.agent-workspace`. It does not try to migrate a host
   `~/.agent-workspace` into the sandbox.
 - Sets `CODEX_HOME` and `CLAUDE_CONFIG_DIR` in `flatpak/panes-wrapper.sh` to
   `$XDG_CONFIG_HOME/codex` and `$XDG_CONFIG_HOME/claude`
