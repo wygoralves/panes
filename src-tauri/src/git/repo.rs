@@ -17,7 +17,7 @@ use crate::models::{
 };
 use crate::path_utils;
 
-use super::cli_fallback::run_git;
+use super::cli_fallback::{run_git, run_git_read};
 
 const FILE_TREE_DEFAULT_PAGE_SIZE: usize = 2000;
 const FILE_TREE_MAX_PAGE_SIZE: usize = 5000;
@@ -134,7 +134,7 @@ pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
 }
 
 fn get_git_status_via_cli(repo_path: &str) -> anyhow::Result<GitStatusDto> {
-    let output = run_git(
+    let output = run_git_read(
         repo_path,
         &[
             "status",
@@ -335,14 +335,16 @@ pub fn get_file_diff(
     file_path: &str,
     staged: bool,
 ) -> anyhow::Result<GitDiffPreviewDto> {
-    let mut args = vec!["diff"];
+    // A repo's config or .gitattributes can name an external diff command or
+    // a textconv filter; the preview never runs either.
+    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv"];
     if staged {
         args.push("--staged");
     }
     args.push("--");
     args.push(file_path);
 
-    let raw = run_git(repo_path, &args)?;
+    let raw = run_git_read(repo_path, &args)?;
     Ok(build_diff_preview(raw))
 }
 
@@ -469,7 +471,7 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
 
 pub fn commit(repo_path: &str, message: &str) -> anyhow::Result<String> {
     run_git(repo_path, &["commit", "-m", message])?;
-    let hash = run_git(repo_path, &["rev-parse", "HEAD"])?;
+    let hash = run_git_read(repo_path, &["rev-parse", "HEAD"])?;
     Ok(hash.trim().to_string())
 }
 
@@ -545,7 +547,7 @@ pub fn list_git_branches(
         r = GIT_RECORD_SEPARATOR
     );
     let format_arg = format!("--format={format}");
-    let output = run_git(
+    let output = run_git_read(
         repo_path,
         &["for-each-ref", branch_ref, format_arg.as_str()],
     )
@@ -731,7 +733,7 @@ pub fn list_git_commits(
         r = GIT_RECORD_SEPARATOR
     );
 
-    let output = run_git(
+    let output = run_git_read(
         repo_path,
         &[
             "log",
@@ -785,7 +787,7 @@ pub fn list_git_stashes(repo_path: &str) -> anyhow::Result<Vec<GitStashDto>> {
         r = GIT_RECORD_SEPARATOR
     );
     let format_arg = format!("--format={format}");
-    let output = run_git(repo_path, &["stash", "list", format_arg.as_str()])
+    let output = run_git_read(repo_path, &["stash", "list", format_arg.as_str()])
         .context("failed to list stashes")?;
 
     let mut entries = Vec::new();
@@ -844,7 +846,16 @@ pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<Git
         !commit_hash.is_empty() && commit_hash.chars().all(|c| c.is_ascii_hexdigit()),
         "invalid commit hash"
     );
-    let raw = run_git(repo_path, &["diff-tree", "-p", commit_hash])?;
+    let raw = run_git_read(
+        repo_path,
+        &[
+            "diff-tree",
+            "-p",
+            "--no-ext-diff",
+            "--no-textconv",
+            commit_hash,
+        ],
+    )?;
     Ok(build_diff_preview(raw))
 }
 
@@ -1350,7 +1361,7 @@ fn default_remote_name(repo: &Repository) -> Option<String> {
 }
 
 fn count_head_commits(repo_path: &str) -> anyhow::Result<usize> {
-    match run_git(repo_path, &["rev-list", "--count", "HEAD"]) {
+    match run_git_read(repo_path, &["rev-list", "--count", "HEAD"]) {
         Ok(output) => Ok(output.trim().parse::<usize>().unwrap_or(0)),
         Err(error) => {
             if is_missing_head_error(&error) {
@@ -1700,10 +1711,10 @@ mod tests {
     use std::fs;
 
     use super::{
-        build_diff_preview, checkout_git_branch, discard_files, get_workspace_file_tree_page,
-        is_diff_preview_metadata_line, parse_porcelain_v1_status, run_git, search_workspace_files,
-        truncate_utf8_prefix, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
-        GIT_DIFF_PREVIEW_MAX_LINES,
+        build_diff_preview, checkout_git_branch, discard_files, get_commit_diff, get_file_diff,
+        get_git_status, get_workspace_file_tree_page, is_diff_preview_metadata_line,
+        parse_porcelain_v1_status, run_git, search_workspace_files, truncate_utf8_prefix,
+        FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::FileTreeEntryDto;
     use uuid::Uuid;
@@ -1807,6 +1818,56 @@ mod tests {
             !repo.path.join("newdir").exists(),
             "untracked directory must be removed"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_reads_do_not_run_commands_from_repo_config() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let repo = TempRepo::init();
+        repo.write(".gitattributes", "*.txt diff=conv\n");
+        repo.write("a.txt", "original\n");
+        repo.commit_all("init");
+        repo.write("b.txt", "second\n");
+        repo.commit_all("second");
+        let head = run_git(repo.path_str(), &["rev-parse", "HEAD"]).expect("rev-parse");
+        repo.write("a.txt", "original\nchanged\n");
+
+        let markers = repo.path.join("markers");
+        fs::create_dir_all(&markers).expect("create marker dir");
+        let marker = |name: &str| markers.join(name).to_string_lossy().to_string();
+        let config = [
+            (
+                "core.fsmonitor",
+                format!("touch {}; false", marker("fsmonitor")),
+            ),
+            ("diff.external", format!("touch {};:", marker("external"))),
+            (
+                "diff.conv.textconv",
+                format!("touch {}; cat", marker("textconv")),
+            ),
+        ];
+        for (key, value) in &config {
+            run_git(repo.path_str(), &["config", key, value]).expect("set config");
+        }
+        let hook = repo.path.join(".git/hooks/post-index-change");
+        fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker("hook"))).expect("write hook");
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("chmod hook");
+
+        let status = get_git_status(repo.path_str()).expect("status");
+        let diff = get_file_diff(repo.path_str(), "a.txt", false).expect("file diff");
+        let commit_diff = get_commit_diff(repo.path_str(), head.trim()).expect("commit diff");
+
+        let ran: Vec<String> = fs::read_dir(&markers)
+            .expect("read marker dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(ran.is_empty(), "repo config commands ran: {ran:?}");
+        assert!(status.files.iter().any(|file| file.path == "a.txt"));
+        assert!(diff.content.contains("+changed"));
+        assert!(commit_diff.content.contains("+second"));
     }
 
     #[test]

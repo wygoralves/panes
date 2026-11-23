@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use super::cli_fallback::run_git;
+use super::cli_fallback::{run_git, run_git_read};
 use crate::models::GitWorktreeDto;
 
 /// Directory Panes keeps its own repo-local scratch state in, worktrees included.
@@ -46,7 +46,7 @@ pub fn add_worktree(
 /// and linked-worktree admin directories, so the answer is the main repository's
 /// git dir even when `repo_path` is itself a worktree.
 pub fn git_common_dir(repo_path: &str) -> anyhow::Result<PathBuf> {
-    let output = run_git(repo_path, &["rev-parse", "--git-common-dir"])
+    let output = run_git_read(repo_path, &["rev-parse", "--git-common-dir"])
         .context("failed to resolve the git common directory")?;
     let resolved = output.trim();
     if resolved.is_empty() {
@@ -173,7 +173,7 @@ pub fn worktree_paths_match(listed_path: &str, requested_path: &str) -> bool {
 
 /// Lists all worktrees for a repository using porcelain format.
 pub fn list_worktrees(repo_path: &str) -> anyhow::Result<Vec<GitWorktreeDto>> {
-    let output = run_git(repo_path, &["worktree", "list", "--porcelain"])
+    let output = run_git_read(repo_path, &["worktree", "list", "--porcelain"])
         .context("failed to list worktrees")?;
 
     let mut worktrees = Vec::new();
