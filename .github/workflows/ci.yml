@@ -337,9 +337,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      # No "--" before --ci: pnpm hands it to release-it as-is, which then
+      # reads "--ci" as the increment and writes "vnull" release notes.
       - name: Run release-it
         if: steps.tested_commit.outputs.should_release == 'true'
-        run: pnpm release -- --ci
+        run: pnpm release --ci
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
