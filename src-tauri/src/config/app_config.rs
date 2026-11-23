@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     path::PathBuf,
     sync::{Mutex, MutexGuard, OnceLock},
 };
@@ -550,8 +551,24 @@ fn preserve_corrupt_config(path: &std::path::Path, raw: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
-    let copy_path = parent.join(format!("{prefix}{timestamp}"));
-    match fs::write(&copy_path, raw) {
+    // create_new so a second unreadable version in the same second gets its
+    // own name instead of truncating the first copy.
+    let mut copy_path = parent.join(format!("{prefix}{timestamp}"));
+    let mut attempt = 1;
+    let written = loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&copy_path)
+        {
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt < 100 => {
+                copy_path = parent.join(format!("{prefix}{timestamp}-{attempt}"));
+                attempt += 1;
+            }
+            opened => break opened.and_then(|mut file| file.write_all(raw.as_bytes())),
+        }
+    };
+    match written {
         Ok(()) => log::error!(
             "kept a copy of the unreadable config at {}",
             copy_path.display()
@@ -569,7 +586,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{AppConfig, ChatProviderInstanceConfig};
+    use super::{preserve_corrupt_config, AppConfig, ChatProviderInstanceConfig};
     use uuid::Uuid;
 
     const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
@@ -720,6 +737,30 @@ max_action_output_chars = 20000
                 broken
             );
         });
+    }
+
+    #[test]
+    fn distinct_unreadable_versions_each_keep_their_own_copy() {
+        let dir = std::env::temp_dir().join(format!("panes-corrupt-config-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("temp dir should exist");
+        let path = dir.join("config.toml");
+
+        preserve_corrupt_config(&path, "first = [");
+        preserve_corrupt_config(&path, "second = [");
+        preserve_corrupt_config(&path, "first = [");
+
+        let mut copies: Vec<String> = fs::read_dir(&dir)
+            .expect("temp dir should be readable")
+            .flatten()
+            .map(|entry| fs::read_to_string(entry.path()).expect("copy should be readable"))
+            .collect();
+        let _ = fs::remove_dir_all(&dir);
+        copies.sort();
+
+        assert_eq!(
+            copies,
+            vec!["first = [".to_string(), "second = [".to_string()]
+        );
     }
 
     #[test]
