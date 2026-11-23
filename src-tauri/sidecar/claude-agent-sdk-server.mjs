@@ -2047,7 +2047,12 @@ function denyWriteRootsForSandbox(cwd, sandboxMode, writableRoots) {
   return [...new Set([path.resolve(cwd), ...writableRoots])];
 }
 
-function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork, { cwd, permissionMode }) {
+function buildSandboxOptions(
+  sandboxMode,
+  writableRoots,
+  allowNetwork,
+  { cwd, permissionMode, sandboxAvailable },
+) {
   if (sandboxMode === "danger-full-access") {
     // Full access runs the CLI without the OS sandbox: unrestricted
     // filesystem writes, and network follows the thread's allowNetwork flag
@@ -2056,13 +2061,15 @@ function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork, { cwd, pe
   }
 
   // Auto-allowed commands skip canUseTool, so only the preset that runs
-  // without asking may use it, and only while the sandbox really confines
-  // them: the CLI fails the query instead of running them unsandboxed. The
-  // other presets send every command to approval either way.
+  // without asking may use it. The others send every command to approval.
   const autoAllow = permissionMode === "trusted";
   return {
     enabled: true,
-    failIfUnavailable: autoAllow,
+    // Where Panes found a working sandbox, every preset relies on it (auto-allow
+    // for trusted, denyWrite for read-only), so a sandbox that then fails to
+    // start fails the query. Where it found none, Panes already warned and asks
+    // before each command.
+    failIfUnavailable: sandboxAvailable,
     autoAllowBashIfSandboxed: autoAllow,
     allowUnsandboxedCommands: false,
     filesystem: {
@@ -2133,9 +2140,8 @@ async function probeSandboxAvailability() {
   return { available: true };
 }
 
-// Outside the trusted preset the Claude Code CLI runs commands unsandboxed
-// when the OS sandbox cannot start (failIfUnavailable is false there), so
-// Panes checks for it itself and asks before each command.
+// The Claude Code CLI runs commands unsandboxed when the OS sandbox cannot
+// start and failIfUnavailable is false, so Panes checks for it itself.
 function detectSandboxAvailability() {
   sandboxAvailabilityPromise ??= probeSandboxAvailability().catch(() => ({
     available: false,
@@ -2389,7 +2395,7 @@ async function handleQuery(req) {
         normalizedSandboxMode,
         normalizedWritableRoots,
         networkEnabled,
-        { cwd: sessionCwd, permissionMode },
+        { cwd: sessionCwd, permissionMode, sandboxAvailable: sandboxAvailability.available },
       ),
       settings: {
         permissions: {

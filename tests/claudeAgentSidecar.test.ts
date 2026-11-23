@@ -512,7 +512,7 @@ describe("claude-agent-sdk-server sidecar", () => {
       );
       const autoAllow = testCase.autoAllow && !sandboxUnavailable;
       expect(sandbox.autoAllowBashIfSandboxed).toBe(autoAllow);
-      expect(sandbox.failIfUnavailable).toBe(autoAllow);
+      expect(sandbox.failIfUnavailable).toBe(!sandboxUnavailable);
       const filesystem = sandbox.filesystem as Record<string, unknown>;
       if (testCase.sandboxMode === "read-only") {
         expect(filesystem.allowWrite).toEqual([]);
