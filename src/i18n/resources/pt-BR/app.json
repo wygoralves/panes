@@ -422,7 +422,9 @@
       "failedToCloseSessions_other": "Falha ao fechar {{count}} sessões de terminal",
       "someWorktreesNotRemoved": "Algumas worktrees não puderam ser removidas: {{message}}",
       "worktreeBranchesKept_one": "Worktree removida, mas o git manteve a branch {{branches}} (normalmente porque ela tem commits não mesclados)",
-      "worktreeBranchesKept_other": "Worktrees removidas, mas o git manteve {{count}} branches (normalmente porque elas têm commits não mesclados): {{branches}}"
+      "worktreeBranchesKept_other": "Worktrees removidas, mas o git manteve {{count}} branches (normalmente porque elas têm commits não mesclados): {{branches}}",
+      "worktreesKeptAfterChange_one": "Worktree {{names}} mantida: ela recebeu trabalho novo depois que você escolheu removê-la",
+      "worktreesKeptAfterChange_other": "{{count}} worktrees mantidas porque receberam trabalho novo depois que você escolheu removê-las: {{names}}"
     }
   },
   "harnesses": {

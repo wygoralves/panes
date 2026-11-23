@@ -285,11 +285,12 @@ describe("terminalStore.createMultiSessionGroup", () => {
     );
   });
 
-  it("does not force a confirmed worktree whose work grew after the confirmation", async () => {
-    // The agent committed and wrote another file while the dialog was open.
+  it("keeps a confirmed worktree whose work grew after the confirmation", async () => {
+    // The dialog named one changed file; the agent then committed it on a
+    // detached HEAD, which an unforced removal would still drop.
     mockIpc.inspectGitWorktree.mockResolvedValueOnce({
-      changedCount: 1,
-      untrackedCount: 1,
+      changedCount: 0,
+      untrackedCount: 0,
       unmergedCommitCount: 1,
     });
 
@@ -316,14 +317,30 @@ describe("terminalStore.createMultiSessionGroup", () => {
       },
     );
 
-    expect(mockIpc.removeGitWorktree).toHaveBeenCalledWith(
-      "/repo",
-      "/repo/.panes/worktrees/r1/agent-1",
-      false,
-      "panes/r1/agent-1",
-      true,
-      false,
-    );
+    expect(mockIpc.removeGitWorktree).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unconfirmed worktree that gained work before its removal", async () => {
+    mockIpc.inspectGitWorktree
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 0 })
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 1, unmergedCommitCount: 0 });
+
+    await useTerminalStore.getState().removeGroupWorktrees("ws-1", [
+      {
+        repoPath: "/repo",
+        worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+        branch: "panes/r1/agent-1",
+      },
+      {
+        repoPath: "/repo",
+        worktreePath: "/repo/.panes/worktrees/r1/agent-2",
+        branch: "panes/r1/agent-2",
+      },
+    ]);
+
+    expect(mockIpc.removeGitWorktree.mock.calls).toEqual([
+      ["/repo", "/repo/.panes/worktrees/r1/agent-1", false, "panes/r1/agent-1", true, false],
+    ]);
   });
 
   it("reports a branch kept after a forced removal as a removed worktree", async () => {
