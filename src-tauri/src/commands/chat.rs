@@ -657,16 +657,20 @@ async fn prepare_send_message_turn(
             }
 
             validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode))?;
+        }
+    }
 
-            if workspace_write_confirmation_required(
-                workspace_writable_roots.as_ref(),
-                sandbox_mode,
-                workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
-            ) {
-                return Err(
+    // Codex drops a thread's permission profile and runs on the sandbox mode,
+    // so the profile cannot waive the multi-repo write confirmation.
+    if let Some(sandbox_mode) = sandbox_mode.as_deref() {
+        if workspace_write_confirmation_required(
+            workspace_writable_roots.as_ref(),
+            sandbox_mode,
+            workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+        ) {
+            return Err(
                 "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
             );
-            }
         }
     }
 
@@ -6989,6 +6993,47 @@ mod tests {
         assert_eq!(value.get("seq").and_then(Value::as_u64), Some(first));
         assert!(current_stream_event_seq() >= first);
         assert!(next_stream_event_seq() > first);
+    }
+
+    #[tokio::test]
+    async fn permission_profile_does_not_skip_multi_repo_write_confirmation() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        let workspace = db::workspaces::list_workspaces(&state.db)
+            .expect("failed to list workspaces")
+            .into_iter()
+            .find(|workspace| workspace.id == thread.workspace_id)
+            .expect("workspace should exist");
+        for name in ["repo-a", "repo-b"] {
+            let path = std::path::Path::new(&workspace.root_path).join(name);
+            fs::create_dir_all(&path).expect("failed to create repo dir");
+            db::repos::upsert_repo(
+                &state.db,
+                &workspace.id,
+                name,
+                path.to_string_lossy().as_ref(),
+                "main",
+                true,
+            )
+            .expect("failed to create repo");
+        }
+        db::threads::update_engine_metadata(
+            &state.db,
+            &thread.id,
+            &serde_json::json!({ "permissionProfile": { "fileSystem": "write" } }),
+        )
+        .expect("failed to store permission profile");
+
+        let error = match prepare_send_message_turn(
+            &state, &thread.id, "hello", None, None, None, None, None,
+        )
+        .await
+        {
+            Ok(_) => panic!("expected the multi-repo confirmation to be required"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("requires explicit confirmation"));
     }
 
     #[tokio::test]
