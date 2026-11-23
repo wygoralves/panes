@@ -254,6 +254,11 @@ pub struct RemoveWorktreeOutcome {
 /// Once the worktree is gone, a refused branch delete is reported in the
 /// outcome instead of as an error, so callers can still treat the worktree
 /// as removed.
+///
+/// `git worktree remove` succeeds on a clean worktree even when its detached
+/// HEAD holds commits no ref reaches, and those commits go with it. Unless
+/// either force flag says the caller confirmed losing work, such a removal is
+/// refused.
 pub fn remove_worktree(
     repo_path: &str,
     worktree_path: &str,
@@ -262,6 +267,15 @@ pub fn remove_worktree(
     delete_branch: bool,
     force_branch_delete: bool,
 ) -> anyhow::Result<RemoveWorktreeOutcome> {
+    if !force && !force_branch_delete && Path::new(worktree_path).is_dir() {
+        let detached = count_commits_held_only_by_head(worktree_path)?;
+        if detached > 0 {
+            anyhow::bail!(
+                "failed to remove worktree: its detached HEAD holds {detached} commit(s) that no branch, tag or remote reaches"
+            );
+        }
+    }
+
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
@@ -810,6 +824,29 @@ mod tests {
             amended.fingerprint, confirmed.fingerprint,
             "an amended commit is not the commit the user saw"
         );
+    }
+
+    #[test]
+    fn unforced_removal_keeps_a_worktree_whose_detached_head_holds_unreachable_commits() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["checkout", "--detach"]).expect("detach");
+        commit_in(&worktree_path, "detached.txt");
+
+        remove_worktree(repo.path_str(), &worktree_path, false, None, false, false)
+            .expect_err("an unforced removal must not drop commits only HEAD reaches");
+        assert!(Path::new(&worktree_path).join("detached.txt").is_file());
+
+        remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            true,
+        )
+        .expect("confirming the commits allows the removal");
+        assert!(!Path::new(&worktree_path).exists());
     }
 
     #[test]
