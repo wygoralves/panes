@@ -170,15 +170,18 @@ pub fn normalize_workspace_startup_preset(
     mut preset: WorkspaceStartupPreset,
     workspace_root: &Path,
 ) -> anyhow::Result<WorkspaceStartupPreset> {
-    // path_utils strips the Windows \\?\ prefix std adds, so the root compares
-    // equal to the plain C:\ paths users type and that resolve_workspace_path
-    // returns.
-    let workspace_root = path_utils::canonicalize_path(workspace_root).with_context(|| {
-        format!(
-            "failed to resolve workspace root '{}'",
-            workspace_root.display()
-        )
-    })?;
+    // Strip the Windows \\?\ prefix std adds, so the root compares equal to
+    // the plain C:\ paths users type and that resolve_workspace_path returns.
+    // std canonicalize (not path_utils::canonicalize_path, which leaves
+    // Flatpak portal paths alone) so symlinks still resolve for containment.
+    let workspace_root = std::fs::canonicalize(workspace_root)
+        .map(path_utils::normalize_windows_path)
+        .with_context(|| {
+            format!(
+                "failed to resolve workspace root '{}'",
+                workspace_root.display()
+            )
+        })?;
 
     if preset.version != 1 {
         anyhow::bail!(
@@ -576,7 +579,8 @@ fn ensure_path_inside_workspace(
 
     let existing_ancestor = deepest_existing_ancestor(candidate)
         .ok_or_else(|| anyhow!("{field_name} has no existing parent inside the workspace root"))?;
-    let canonical_ancestor = path_utils::canonicalize_path(existing_ancestor)
+    let canonical_ancestor = std::fs::canonicalize(existing_ancestor)
+        .map(path_utils::normalize_windows_path)
         .with_context(|| format!("failed to resolve {field_name}"))?;
     anyhow::ensure!(
         canonical_ancestor.starts_with(workspace_root),

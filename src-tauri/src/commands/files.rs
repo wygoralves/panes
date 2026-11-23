@@ -608,9 +608,11 @@ fn resolve_editor_file_reference_impl(
             root.join(&parsed.path)
         };
         // Roots come from path_utils::canonicalize_path, which strips the
-        // Windows \\?\ prefix; resolve the candidate the same way so
-        // starts_with compares like with like.
-        let Ok(resolved) = path_utils::canonicalize_path(&candidate) else {
+        // Windows \\?\ prefix; strip it from the candidate too so starts_with
+        // compares like with like, while std still resolves symlinks.
+        let Ok(resolved) =
+            std::fs::canonicalize(&candidate).map(path_utils::normalize_windows_path)
+        else {
             continue;
         };
         if !resolved.is_file() || !resolved.starts_with(&root) {
