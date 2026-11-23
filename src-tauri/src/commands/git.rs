@@ -448,6 +448,7 @@ pub async fn inspect_git_worktree(
                 changed_count: inspection.changed_count,
                 untracked_count: inspection.untracked_count,
                 unmerged_commit_count: inspection.unmerged_commit_count,
+                fingerprint: inspection.fingerprint,
             })
             .map_err(err_to_string)
     })

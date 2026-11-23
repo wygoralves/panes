@@ -295,6 +295,11 @@ pub struct WorktreeInspection {
     /// reachable from neither the main checkout's HEAD nor the branch's
     /// upstream, so deleting them with the worktree loses them.
     pub unmerged_commit_count: usize,
+    /// Identifies the exact work counted above: the worktree HEAD, the branch
+    /// tip, the status entries, the staged blobs and the current content of
+    /// every listed path. Equal counts with a different fingerprint mean the
+    /// work was replaced, so a confirmation of the old work no longer covers it.
+    pub fingerprint: String,
 }
 
 /// Counts the uncommitted files in `worktree_path` and the commits on
@@ -306,6 +311,7 @@ pub fn inspect_worktree(
     branch_name: Option<&str>,
 ) -> anyhow::Result<WorktreeInspection> {
     let mut inspection = WorktreeInspection::default();
+    let mut fingerprint = Vec::new();
 
     if Path::new(worktree_path).is_dir() {
         let status = run_git(
@@ -319,20 +325,23 @@ pub fn inspect_worktree(
 
         // Commits made on a detached HEAD belong to no branch; removing the
         // worktree drops the only reference to them.
-        let detached = run_git(
+        inspection.unmerged_commit_count += count_commits_held_only_by_head(worktree_path)?;
+
+        let head = run_git(worktree_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+        let staged = run_git(
             worktree_path,
-            &[
-                "rev-list",
-                "--count",
-                "HEAD",
-                "--not",
-                "--branches",
-                "--remotes",
-                "--tags",
-            ],
+            &["diff", "--cached", "--raw", "--no-abbrev", "-z"],
         )
-        .context("failed to count commits held only by the worktree HEAD")?;
-        inspection.unmerged_commit_count += detached.trim().parse::<usize>().unwrap_or(0);
+        .unwrap_or_default();
+        fingerprint.extend_from_slice(format!("head\0{}\0", head.trim()).as_bytes());
+        fingerprint.extend_from_slice(b"status\0");
+        fingerprint.extend_from_slice(status.as_bytes());
+        fingerprint.extend_from_slice(b"staged\0");
+        fingerprint.extend_from_slice(staged.as_bytes());
+        for path in porcelain_paths(&status) {
+            fingerprint.extend_from_slice(format!("path\0{path}\0").as_bytes());
+            fingerprint_path(&Path::new(worktree_path).join(path), &mut fingerprint);
+        }
     }
 
     if let Some(branch) = branch_name.filter(|branch| !branch.trim().is_empty()) {
@@ -343,6 +352,8 @@ pub fn inspect_worktree(
         )
         .is_ok();
         if exists {
+            let tip = run_git(repo_path, &["rev-parse", branch_ref.as_str()]).unwrap_or_default();
+            fingerprint.extend_from_slice(format!("branch\0{}\0", tip.trim()).as_bytes());
             // Commits already on the upstream survive a local branch delete.
             // `<name>@{upstream}` only resolves with the short branch name.
             let upstream = format!("{branch}@{{upstream}}");
@@ -360,7 +371,83 @@ pub fn inspect_worktree(
         }
     }
 
+    inspection.fingerprint = git2::Oid::hash_object(git2::ObjectType::Blob, &fingerprint)
+        .context("failed to hash worktree fingerprint")?
+        .to_string();
     Ok(inspection)
+}
+
+/// Commits reachable from the worktree's HEAD but from no branch, tag or
+/// remote: the ones a detached HEAD alone keeps alive.
+fn count_commits_held_only_by_head(worktree_path: &str) -> anyhow::Result<usize> {
+    let count = run_git(
+        worktree_path,
+        &[
+            "rev-list",
+            "--count",
+            "HEAD",
+            "--not",
+            "--branches",
+            "--remotes",
+            "--tags",
+        ],
+    )
+    .context("failed to count commits held only by the worktree HEAD")?;
+    Ok(count.trim().parse::<usize>().unwrap_or(0))
+}
+
+/// Every path named in `git status --porcelain=v1 -z` output, rename and copy
+/// sources included.
+fn porcelain_paths(status: &str) -> Vec<&str> {
+    let mut paths = Vec::new();
+    let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
+    while let Some(entry) = entries.next() {
+        let code = entry.get(..2).unwrap_or("");
+        if let Some(path) = entry.get(3..) {
+            paths.push(path);
+        }
+        if code != "??" && code != "!!" && code.contains(['R', 'C']) {
+            if let Some(source) = entries.next() {
+                paths.push(source);
+            }
+        }
+    }
+    paths
+}
+
+/// Appends what is on disk at `path` to `out`: a blob id for a file, the target
+/// for a symlink, and every entry recursively for a directory (an untracked
+/// nested repository is listed as one directory).
+fn fingerprint_path(path: &Path, out: &mut Vec<u8>) {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        out.extend_from_slice(b"missing\0");
+        return;
+    };
+    if metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(path).unwrap_or_default();
+        out.extend_from_slice(format!("link\0{}\0", target.display()).as_bytes());
+    } else if metadata.is_dir() {
+        let mut children = std::fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        children.sort();
+        out.extend_from_slice(b"dir\0");
+        for child in children {
+            out.extend_from_slice(format!("{}\0", child.to_string_lossy()).as_bytes());
+            fingerprint_path(&path.join(&child), out);
+        }
+        out.extend_from_slice(b"end\0");
+    } else {
+        match git2::Oid::hash_file(git2::ObjectType::Blob, path) {
+            Ok(oid) => out.extend_from_slice(format!("file\0{oid}\0").as_bytes()),
+            Err(_) => out.extend_from_slice(b"unreadable\0"),
+        }
+    }
 }
 
 /// Splits `git status --porcelain=v1 -z` output into (changed, untracked)
@@ -644,8 +731,10 @@ mod tests {
         let worktree_path = add_panes_worktree(&repo, "agent");
 
         assert_eq!(
-            inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect"),
-            WorktreeInspection::default(),
+            counts(
+                &inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect")
+            ),
+            (0, 0, 0),
             "a fresh worktree has nothing to lose"
         );
 
@@ -657,12 +746,69 @@ mod tests {
         fs::write(Path::new(&worktree_path).join("out/two.txt"), "2\n").expect("write");
 
         assert_eq!(
-            inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect"),
-            WorktreeInspection {
-                changed_count: 1,
-                untracked_count: 2,
-                unmerged_commit_count: 2,
-            }
+            counts(
+                &inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect")
+            ),
+            (1, 2, 2)
+        );
+    }
+
+    fn counts(inspection: &WorktreeInspection) -> (usize, usize, usize) {
+        (
+            inspection.changed_count,
+            inspection.untracked_count,
+            inspection.unmerged_commit_count,
+        )
+    }
+
+    #[test]
+    fn inspect_worktree_fingerprint_changes_when_work_is_replaced_at_equal_counts() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        let file = Path::new(&worktree_path).join("a.txt");
+        let nested = Path::new(&worktree_path).join("nested/inner.txt");
+        fs::write(&file, "first edit\n").expect("modify");
+        fs::create_dir_all(nested.parent().expect("parent")).expect("mkdir");
+        run_git(&worktree_path, &["init", "nested"]).expect("nested repo");
+        fs::write(&nested, "one\n").expect("write nested");
+
+        let inspect =
+            || inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect");
+        let confirmed = inspect();
+        assert_eq!(counts(&confirmed), (1, 1, 1));
+        assert_eq!(
+            inspect().fingerprint,
+            confirmed.fingerprint,
+            "unchanged work keeps its fingerprint"
+        );
+
+        fs::write(&file, "second edit\n").expect("modify again");
+        let edited = inspect();
+        assert_eq!(counts(&edited), counts(&confirmed));
+        assert_ne!(
+            edited.fingerprint, confirmed.fingerprint,
+            "same file, new content"
+        );
+
+        fs::write(&file, "first edit\n").expect("restore");
+        fs::write(&nested, "two\n").expect("edit nested repo");
+        let nested_edit = inspect();
+        assert_eq!(counts(&nested_edit), counts(&confirmed));
+        assert_ne!(
+            nested_edit.fingerprint, confirmed.fingerprint,
+            "a nested repository counted once still changes the fingerprint"
+        );
+
+        fs::write(&nested, "one\n").expect("restore nested");
+        fs::write(Path::new(&worktree_path).join("agent.txt"), "amended\n").expect("amend file");
+        run_git(&worktree_path, &["add", "agent.txt"]).expect("stage amend");
+        run_git(&worktree_path, &["commit", "--amend", "-m", "amended"]).expect("amend");
+        let amended = inspect();
+        assert_eq!(counts(&amended), counts(&confirmed));
+        assert_ne!(
+            amended.fingerprint, confirmed.fingerprint,
+            "an amended commit is not the commit the user saw"
         );
     }
 

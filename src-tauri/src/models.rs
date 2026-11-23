@@ -853,6 +853,7 @@ pub struct GitWorktreeInspectionDto {
     pub changed_count: usize,
     pub untracked_count: usize,
     pub unmerged_commit_count: usize,
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

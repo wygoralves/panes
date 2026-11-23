@@ -936,6 +936,8 @@ export interface GitWorktreeInspection {
   changedCount: number;
   untrackedCount: number;
   unmergedCommitCount: number;
+  /** Identifies the exact files and commits counted, not just how many. */
+  fingerprint: string;
 }
 
 /** A worktree whose removal would discard uncommitted files or unmerged commits. */

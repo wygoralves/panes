@@ -743,8 +743,8 @@ const forceRollback = async (): Promise<WorktreeRemovalDecision> => ({
  * writing and committing while a confirmation is open. A worktree whose work
  * stays within what the user confirmed losing (nothing, when unconfirmed) is
  * removed, forcing only the part the user confirmed: files or commits. One that
- * gained more is kept: even an unforced removal drops commits held only by a
- * detached HEAD.
+ * gained more is kept, and so is a confirmed one whose fingerprint changed:
+ * equal counts can hide edited files or rewritten commits the user never saw.
  */
 function decideConfirmedRemoval(
   confirmed: WorktreeRemovalRisk[] | undefined,
@@ -761,7 +761,8 @@ function decideConfirmedRemoval(
       const withinConfirmed =
         current.changedCount <= (risk?.changedCount ?? 0)
         && current.untrackedCount <= (risk?.untrackedCount ?? 0)
-        && current.unmergedCommitCount <= (risk?.unmergedCommitCount ?? 0);
+        && current.unmergedCommitCount <= (risk?.unmergedCommitCount ?? 0)
+        && (!risk || current.fingerprint === risk.fingerprint);
       if (!withinConfirmed) return "keep";
       return {
         forceWorktree: (risk?.changedCount ?? 0) + (risk?.untrackedCount ?? 0) > 0,

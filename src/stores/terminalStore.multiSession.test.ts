@@ -120,6 +120,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
       changedCount: 0,
       untrackedCount: 0,
       unmergedCommitCount: 0,
+      fingerprint: "fp",
     });
     mockIpc.getRepos.mockResolvedValue([]);
     mockIpc.launchHarness.mockResolvedValue(null);
@@ -260,6 +261,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
             changedCount: 1,
             untrackedCount: 0,
             unmergedCommitCount: 0,
+            fingerprint: "fp",
           },
         ],
       },
@@ -304,6 +306,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
             changedCount: 0,
             untrackedCount: 0,
             unmergedCommitCount: 1,
+            fingerprint: "fp",
           },
         ],
       },
@@ -327,6 +330,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
       changedCount: 0,
       untrackedCount: 0,
       unmergedCommitCount: 1,
+      fingerprint: "fp",
     });
 
     await useTerminalStore.getState().removeGroupWorktrees(
@@ -347,6 +351,45 @@ describe("terminalStore.createMultiSessionGroup", () => {
             changedCount: 1,
             untrackedCount: 0,
             unmergedCommitCount: 0,
+            fingerprint: "fp",
+          },
+        ],
+      },
+    );
+
+    expect(mockIpc.removeGitWorktree).not.toHaveBeenCalled();
+  });
+
+  it("keeps a confirmed worktree whose work was replaced at equal counts", async () => {
+    // The dialog named one changed file and one commit; the agent then edited
+    // the file again and amended the commit, so the counts match but the work
+    // the user agreed to lose is gone.
+    mockIpc.inspectGitWorktree.mockResolvedValueOnce({
+      changedCount: 1,
+      untrackedCount: 0,
+      unmergedCommitCount: 1,
+      fingerprint: "after-amend",
+    });
+
+    await useTerminalStore.getState().removeGroupWorktrees(
+      "ws-1",
+      [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+      ],
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+            changedCount: 1,
+            untrackedCount: 0,
+            unmergedCommitCount: 1,
+            fingerprint: "as-confirmed",
           },
         ],
       },
@@ -357,8 +400,8 @@ describe("terminalStore.createMultiSessionGroup", () => {
 
   it("keeps an unconfirmed worktree that gained work before its removal", async () => {
     mockIpc.inspectGitWorktree
-      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 0 })
-      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 1, unmergedCommitCount: 0 });
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 0, fingerprint: "fp" })
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 1, unmergedCommitCount: 0, fingerprint: "fp" });
 
     await useTerminalStore.getState().removeGroupWorktrees("ws-1", [
       {
@@ -402,6 +445,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
               changedCount: 0,
               untrackedCount: 0,
               unmergedCommitCount: 1,
+              fingerprint: "fp",
             },
           ],
         },
@@ -432,9 +476,9 @@ describe("terminalStore.createMultiSessionGroup", () => {
 
   it("reports only worktrees with uncommitted files or unmerged commits as removal risks", async () => {
     mockIpc.inspectGitWorktree
-      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 0 })
-      .mockResolvedValueOnce({ changedCount: 2, untrackedCount: 1, unmergedCommitCount: 0 })
-      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 3 });
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 0, fingerprint: "fp" })
+      .mockResolvedValueOnce({ changedCount: 2, untrackedCount: 1, unmergedCommitCount: 0, fingerprint: "fp" })
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 3, fingerprint: "fp" });
 
     const risks = await useTerminalStore.getState().inspectWorktreesForRemoval([
       { repoPath: "/repo", worktreePath: "/repo/.panes/worktrees/r1/clean", branch: "panes/r1/clean" },
@@ -450,6 +494,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
         changedCount: 2,
         untrackedCount: 1,
         unmergedCommitCount: 0,
+        fingerprint: "fp",
       },
       {
         repoPath: "/repo",
@@ -458,6 +503,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
         changedCount: 0,
         untrackedCount: 0,
         unmergedCommitCount: 3,
+        fingerprint: "fp",
       },
     ]);
   });
@@ -1183,6 +1229,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
             changedCount: 2,
             untrackedCount: 0,
             unmergedCommitCount: 0,
+            fingerprint: "fp",
           },
         ],
         keepWorktreePaths: ["/repo/.panes/worktrees/r1/kept"],
