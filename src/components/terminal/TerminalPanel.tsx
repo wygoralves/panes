@@ -3455,7 +3455,7 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
       if (toRemove.length === 0) return;
       try {
         await removeGroupWorktrees(workspaceId, toRemove, {
-          forceWorktreePaths: forceRisky ? riskyPaths : [],
+          forceWorktrees: forceRisky ? risks : [],
         });
       } catch (error) {
         toast.error(String(error));

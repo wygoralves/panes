@@ -251,7 +251,18 @@ describe("terminalStore.createMultiSessionGroup", () => {
           branch: "panes/r1/agent-2",
         },
       ],
-      { forceWorktreePaths: ["/repo/.panes/worktrees/r1/agent-2"] },
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-2",
+            branch: "panes/r1/agent-2",
+            changedCount: 1,
+            untrackedCount: 0,
+            unmergedCommitCount: 0,
+          },
+        ],
+      },
     );
 
     expect(mockIpc.removeGitWorktree).toHaveBeenNthCalledWith(
@@ -271,6 +282,47 @@ describe("terminalStore.createMultiSessionGroup", () => {
       "panes/r1/agent-2",
       true,
       true,
+    );
+  });
+
+  it("does not force a confirmed worktree whose work grew after the confirmation", async () => {
+    // The agent committed and wrote another file while the dialog was open.
+    mockIpc.inspectGitWorktree.mockResolvedValueOnce({
+      changedCount: 1,
+      untrackedCount: 1,
+      unmergedCommitCount: 1,
+    });
+
+    await useTerminalStore.getState().removeGroupWorktrees(
+      "ws-1",
+      [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+      ],
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+            changedCount: 1,
+            untrackedCount: 0,
+            unmergedCommitCount: 0,
+          },
+        ],
+      },
+    );
+
+    expect(mockIpc.removeGitWorktree).toHaveBeenCalledWith(
+      "/repo",
+      "/repo/.panes/worktrees/r1/agent-1",
+      false,
+      "panes/r1/agent-1",
+      true,
+      false,
     );
   });
 
@@ -1005,7 +1057,16 @@ describe("terminalStore.createMultiSessionGroup", () => {
       { version: 1, defaultView: "chat", splitPanelSize: 40, terminal: null },
       {
         removeWorktrees: true,
-        forceWorktreePaths: ["/repo/.panes/worktrees/r1/dirty"],
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/dirty",
+            branch: "panes/r1/dirty",
+            changedCount: 2,
+            untrackedCount: 0,
+            unmergedCommitCount: 0,
+          },
+        ],
         keepWorktreePaths: ["/repo/.panes/worktrees/r1/kept"],
       },
     );

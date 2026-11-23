@@ -727,7 +727,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       setWorktreeRemovalRisks(null);
       void performApply(
         forceRisky
-          ? { removeWorktrees: true, forceWorktreePaths: riskyPaths }
+          ? { removeWorktrees: true, forceWorktrees: worktreeRemovalRisks ?? [] }
           : { removeWorktrees: true, keepWorktreePaths: riskyPaths },
       );
     },

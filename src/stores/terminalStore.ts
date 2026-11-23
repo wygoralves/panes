@@ -503,7 +503,7 @@ interface TerminalState {
   removeGroupWorktrees: (
     workspaceId: string,
     worktrees: WorktreeSessionInfo[],
-    options?: { forceWorktreePaths?: string[] },
+    options?: { forceWorktrees?: WorktreeRemovalRisk[] },
   ) => Promise<void>;
 }
 
@@ -676,8 +676,8 @@ function inferWorktreeConfig(group: TerminalGroup): WorkspaceStartupWorktreeConf
 
 export interface WorkspaceWorktreeRemovalOptions {
   removeWorktrees?: boolean;
-  /** Worktrees the user confirmed may lose uncommitted files or unmerged commits. */
-  forceWorktreePaths?: string[];
+  /** Worktrees the user confirmed may lose the work their inspection named. */
+  forceWorktrees?: WorktreeRemovalRisk[];
   /** Worktrees the user chose to keep after seeing what removing them would lose. */
   keepWorktreePaths?: string[];
 }
@@ -697,12 +697,12 @@ interface WorktreeRemovalResult {
  */
 async function removeWorktreesSequential(
   worktrees: WorktreeSessionInfo[],
-  force: (worktree: WorktreeSessionInfo) => boolean,
+  force: (worktree: WorktreeSessionInfo) => Promise<boolean>,
 ): Promise<WorktreeRemovalResult> {
   const failures: string[] = [];
   const keptBranches: string[] = [];
   for (const worktree of worktrees) {
-    const forced = force(worktree);
+    const forced = await force(worktree);
     try {
       const result = await ipc.removeGitWorktree(
         worktree.repoPath,
@@ -726,11 +726,36 @@ async function removeWorktreesSequential(
   return { failures, keptBranches };
 }
 
-const forceRollback = () => true;
+const forceRollback = async () => true;
 
-function forcePaths(paths: string[] | undefined): (worktree: WorktreeSessionInfo) => boolean {
-  const forced = new Set(paths ?? []);
-  return (worktree) => forced.has(worktree.worktreePath);
+/**
+ * Forces a worktree only when the user confirmed losing its work and that work
+ * has not grown since: agents can keep writing and committing while the
+ * confirmation is open. Anything new falls back to an unforced removal, which
+ * git refuses.
+ */
+function forceConfirmed(
+  confirmed: WorktreeRemovalRisk[] | undefined,
+): (worktree: WorktreeSessionInfo) => Promise<boolean> {
+  const byPath = new Map((confirmed ?? []).map((risk) => [risk.worktreePath, risk]));
+  return async (worktree) => {
+    const risk = byPath.get(worktree.worktreePath);
+    if (!risk) return false;
+    try {
+      const current = await ipc.inspectGitWorktree(
+        worktree.repoPath,
+        worktree.worktreePath,
+        worktree.branch,
+      );
+      return (
+        current.changedCount <= risk.changedCount
+        && current.untrackedCount <= risk.untrackedCount
+        && current.unmergedCommitCount <= risk.unmergedCommitCount
+      );
+    } catch {
+      return false;
+    }
+  };
 }
 
 function warnKeptBranches(keptBranches: string[]) {
@@ -1406,7 +1431,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (worktrees.length > 0) {
         const { failures, keptBranches } = await removeWorktreesSequential(
           worktrees,
-          forcePaths(options?.forceWorktreePaths),
+          forceConfirmed(options?.forceWorktrees),
         );
         if (failures.length > 0) {
           toast.warning(
@@ -2134,7 +2159,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     const { failures, keptBranches } = await removeWorktreesSequential(
       worktrees,
-      forcePaths(options?.forceWorktreePaths),
+      forceConfirmed(options?.forceWorktrees),
     );
     warnKeptBranches(keptBranches);
     if (failures.length === 0) return;
