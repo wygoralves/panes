@@ -2170,8 +2170,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           risks.push({ ...worktree, ...inspection });
         }
       } catch {
-        // An uninspectable worktree is still removed without force, so git
-        // refuses it if it holds uncommitted work.
+        // An uninspectable worktree is not listed; the same check runs again
+        // right before removal and keeps it if it still fails.
       }
     }
     return risks;
