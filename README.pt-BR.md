@@ -104,6 +104,27 @@ Baixe o instalador `*-setup.exe` mais recente em [GitHub Releases](https://githu
 
 Neste release para Windows, o escopo validado cobre instalador, updater, inicialização do app e compatibilidade do runtime empacotado. Isso ainda não garante validação completa de ponta a ponta do Codex e do Claude dentro do fluxo de chat do app, então ainda pode haver arestas nessa parte.
 
+### Instalar no Linux
+
+Baixe o `.AppImage` ou o `.deb` mais recente em [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
+
+Para AppImage:
+
+```bash
+chmod +x Panes*.AppImage
+./Panes*.AppImage
+```
+
+Para sistemas da família Debian:
+
+```bash
+sudo apt install ./Panes*_amd64.deb
+```
+
+Os dois caminhos de instalação por download direto no Linux recebem as próximas versões pelo updater embutido do app. As atualizações do AppImage substituem o bundle do app diretamente. As atualizações do `.deb` reinstalam o pacote Debian assinado e podem pedir privilégios de administrador durante a instalação.
+
+O Panes ainda não publica um repositório APT, então o caminho de instalação suportado em sistemas da família Debian é o download direto do `.deb` acima.
+
 ### Instalar e Rodar a partir do código-fonte
 
 ```bash
