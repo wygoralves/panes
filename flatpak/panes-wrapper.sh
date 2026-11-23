@@ -9,4 +9,12 @@ fi
 
 export SHELL="${SHELL:-/usr/bin/bash}"
 
+# $HOME is a tmpfs inside the sandbox, so ~/.codex, ~/.claude and
+# ~/.claude.json would be lost on exit. Point both CLIs at the persistent
+# XDG config dir (~/.var/app/com.panes.app/config on the host). Values the
+# user already set, and per-instance homes configured in Panes, still win.
+export CODEX_HOME="${CODEX_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/codex}"
+export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/claude}"
+mkdir -p "$CODEX_HOME" "$CLAUDE_CONFIG_DIR" || true
+
 exec /app/bin/Panes "$@"
