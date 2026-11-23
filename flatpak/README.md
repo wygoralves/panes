@@ -1,11 +1,12 @@
 # Flatpak packaging (experimental)
 
 Status: this manifest builds Panes from source and installs it into a Flatpak
-sandbox with no host filesystem access. It has been reviewed and written
-against the current source tree, but has not been built or run on a real
-Linux machine as part of this change (it was authored on macOS). Treat it as
-a draft that needs a Linux verification pass before it is offered as a
-distribution channel. See "What still needs verifying" below.
+sandbox with no host filesystem access. The `Flatpak` GitHub Actions workflow
+(`.github/workflows/flatpak.yml`) builds it with `flatpak-builder` on pull
+requests that touch the manifest, this folder or the sidecar packing script,
+and can be run by hand; it uploads the `.flatpak` bundle as an artifact. The
+app has still not been run and exercised on a real Linux desktop, so treat it
+as a draft until it has. See "What still needs verifying" below.
 
 Credit: this manifest, the `mise` based tool install approach, and the
 document-portal path fix in `src-tauri/src/path_utils.rs` are based on the
@@ -70,8 +71,44 @@ help with. This manifest does not request `--filesystem=host` or
 
 Every other permission in `finish-args` is commented in the manifest with
 why it is requested (display sockets, `--device=dri` for GPU accelerated
-rendering, `--share=network` for git/agent traffic, the tray icon
-talk-names, notifications, and `--socket=ssh-auth` for git-over-SSH).
+rendering, `--share=network` for git/agent traffic, notifications, and
+`--socket=ssh-auth` for git-over-SSH). Panes never creates a tray icon, so
+the tauri `tray-icon` feature and the tray permissions that came with it have
+been removed.
+
+## What persists across restarts
+
+Inside the sandbox `$HOME` is a tmpfs: anything written to a plain dotfile
+there is gone when Panes exits. Only the XDG base directories are redirected
+to `~/.var/app/com.panes.app/` on the host. Panes therefore:
+
+- Stores its database, `config.toml`, logs, attachments and the extracted
+  Claude SDK in `$XDG_DATA_HOME/panes`
+  (`~/.var/app/com.panes.app/data/panes` on the host) instead of
+  `~/.agent-workspace`, whenever `FLATPAK_ID` is set
+  (`runtime_env::app_data_dir`). It does not try to migrate a host
+  `~/.agent-workspace` into the sandbox.
+- Sets `CODEX_HOME` and `CLAUDE_CONFIG_DIR` in `flatpak/panes-wrapper.sh` to
+  `$XDG_CONFIG_HOME/codex` and `$XDG_CONFIG_HOME/claude`
+  (`~/.var/app/com.panes.app/config/{codex,claude}` on the host), unless they
+  are already set. A per-instance home configured in Panes still wins.
+
+Host `~/.codex`, `~/.claude` and `~/.claude.json` are not shared with the
+sandbox, so a one-time `codex login` and Claude login inside a Panes terminal
+is needed after installing the Flatpak.
+
+Harness CLIs installed through mise live in `$XDG_DATA_HOME/mise` and
+persist. The Claude Code harness still prefers its curl installer, which
+writes to `~/.local/bin` and `~/.local/share/claude`; those are on the tmpfs,
+so a Claude Code CLI installed that way does not survive a restart. Routing
+it through mise inside a Flatpak is a known follow-up.
+
+## Updates
+
+The Tauri self-updater is not registered inside a Flatpak
+(`runtime_env::self_update_supported`), because `/app` is read-only and the
+updater would try to replace the binary with an AppImage. Updates come from
+the Flatpak remote the app was installed from.
 
 ### Known gap: chat attachment drag-and-drop bypasses the portal
 
@@ -125,10 +162,12 @@ whether their install scripts write somewhere usable inside `/app` or
 
 ## Known open question: Codex auth inside the sandbox
 
-jgillich reported `codex` returning 401 Unauthorized inside his Flatpak
-build even with `~/.codex` mounted. This has not been reproduced or root
-caused as part of this change (no Linux environment was available). Two
-plausible causes, unverified:
+Without the persistence above, a Codex login made inside the sandbox was
+lost on every restart, which on its own produces unauthenticated requests.
+That does not explain jgillich's report, though: he saw `codex` return 401
+Unauthorized inside his Flatpak build even with `~/.codex` bind-mounted by
+hand. That report has not been reproduced or root caused (no Linux
+environment was available). Two plausible causes, unverified:
 
 - Codex's login flow may rely on a system keyring or a `xdg-desktop-portal`
   Secret Service interaction that this manifest does not grant
@@ -142,7 +181,17 @@ considered resolved; the maintainer or jgillich are best placed to do that.
 
 ## What still needs verifying on Linux
 
-- The manifest builds and `flatpak-builder` succeeds (untested here).
+- The manifest build is covered by the `Flatpak` workflow, but nothing has
+  yet launched the resulting bundle on a Linux desktop.
+- Data and logins persist: add a workspace, send a Codex turn, log in to
+  `codex` and `claude` in a Panes terminal, quit and relaunch, and confirm
+  the workspace and thread are listed,
+  `~/.var/app/com.panes.app/data/panes/workspaces.db` exists on the host,
+  and a Codex turn succeeds without logging in again.
+- The Claude engine sidecar loads: start a Claude thread and confirm the
+  log has no "Failed to load bundled @anthropic-ai/claude-agent-sdk" error
+  and the SDK is extracted under `~/.var/app/com.panes.app/data/panes`.
+- No update prompt appears inside the Flatpak.
 - The `org.gnome.Platform//50` runtime is still current on Flathub at build
   time; verify with `flatpak remote-info` and bump if a newer runtime has
   since become the recommended baseline (see the runtime version note under
@@ -155,10 +204,15 @@ considered resolved; the maintainer or jgillich are best placed to do that.
   all inside the sandbox.
 - The Codex auth issue above.
 - The chat attachment drag-and-drop gap above.
-- Terminal PTY behavior, clipboard, and tray icon integration inside the
-  sandbox, which the original issue thread flagged as rough even before the
-  mise/permissions changes in this PR.
-- `flatpak/com.panes.app.desktop` does not set `StartupWMClass`. Panes'
+- Terminal PTY behavior and clipboard inside the sandbox, which the
+  original issue thread flagged as rough even before the mise/permissions
+  changes.
+- Window matching on X11. On Wayland, GTK reports the window's app id as
+  `com.panes.app` (tauri's `identifier` with `enableGTKAppId`), which is the
+  desktop file id here, so the dock should match it without help (the deb
+  ships a hidden `com.panes.app.desktop` alias for the same reason). Neither
+  has been confirmed on a running desktop.
+  `flatpak/com.panes.app.desktop` does not set `StartupWMClass`. Panes'
   AppImage desktop-entry generator (`src-tauri/src/linux_appimage.rs`)
   deliberately omits it too, and its test suite asserts that omission, which
   reads as a signal that the runtime `WM_CLASS` Tauri/wry sets on Linux does
@@ -173,3 +227,30 @@ considered resolved; the maintainer or jgillich are best placed to do that.
   `scripts/generate-update-manifest.mjs` or the release workflow. It needs
   to be bumped by hand on every release until (or unless) someone wires it
   into the existing release automation.
+
+## Flathub readiness (not done)
+
+The manifest is meant for local builds and the CI artifact. Submitting it to
+Flathub still needs:
+
+- Offline sources. Flathub builds have no network access, so
+  `--share=network` in `build-options.build-args` has to go. Generate
+  `cargo-sources.json` from `src-tauri/Cargo.lock` with
+  `flatpak-cargo-generator.py`, generate node sources from `pnpm-lock.yaml`
+  with `flatpak-node-generator`, set `CARGO_NET_OFFLINE=true`, and replace
+  `cargo install mise` with a source build that has its own generated cargo
+  sources.
+- Everything built from source: the prebuilt nodejs.org tarballs have to be
+  replaced, for example by copying the SDK extension's node into `/app`.
+- Node 20 is past end of life. Move to the `node22` or `node24` SDK
+  extension (check that it has a branch for the runtime's base) and current
+  LTS tarballs.
+- An app ID Flathub accepts. `com.panes.app` ends in the generic `.app`, and
+  a code-hosting ID would be `io.github.wygoralves.Panes`. Renaming it means
+  renaming the desktop, metainfo and icon files, changes the data directory
+  (`~/.var/app/<id>`) for existing local installs, and needs the GTK app ID
+  (the tauri `identifier`, used as the Wayland app id) to match the new
+  desktop file.
+- Screenshots and branding colors in the metainfo, a `<releases>` block kept
+  in sync by the release automation, and a clean run of
+  `flatpak-builder-lint` for both the manifest and the appstream data.
