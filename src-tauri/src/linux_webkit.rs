@@ -22,6 +22,22 @@ const SYSTEM_WAYLAND_CLIENT_CANDIDATES: &[&str] = &[
     "/lib/libwayland-client.so",
 ];
 
+/// WebKit workaround variables Panes set on itself at startup. They are meant
+/// for this process's webview only, so child processes drop them again.
+#[cfg(target_os = "linux")]
+static PANES_SET_WEBKIT_ENV_VARS: std::sync::Mutex<Vec<&'static str>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Names of the WebKit workaround variables Panes set itself (as opposed to
+/// ones the user configured before launch).
+#[cfg(target_os = "linux")]
+pub fn webkit_env_vars_set_by_panes() -> Vec<&'static str> {
+    PANES_SET_WEBKIT_ENV_VARS
+        .lock()
+        .map(|vars| vars.clone())
+        .unwrap_or_default()
+}
+
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WebkitDisplayEnv<'a> {
@@ -212,11 +228,17 @@ pub fn apply_webkit_display_workarounds() {
     // stacks, leaving a blank window with EGL display errors (for example
     // "Could not create default EGL display: EGL_BAD_PARAMETER"). Apply
     // conservative defaults unless the user already configured an override.
+    let mut panes_set_vars = Vec::new();
     if plan.disable_dmabuf_renderer {
         env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        panes_set_vars.push("WEBKIT_DISABLE_DMABUF_RENDERER");
     }
     if plan.disable_compositing_mode {
         env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        panes_set_vars.push("WEBKIT_DISABLE_COMPOSITING_MODE");
+    }
+    if let Ok(mut vars) = PANES_SET_WEBKIT_ENV_VARS.lock() {
+        *vars = panes_set_vars;
     }
 
     if plan_has_work(&plan) {
