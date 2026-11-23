@@ -367,7 +367,7 @@ impl ClaudeTransport {
         let mut command = Command::new(&node);
         process_utils::configure_tokio_command(&mut command);
         runtime_env::apply_missing_login_shell_env(&mut command).await;
-        if let Some(augmented_path) = executable_augmented_path(&node) {
+        if let Some(augmented_path) = executable_augmented_path(&node).await {
             command.env("PATH", augmented_path);
         }
         if let Some(module_specifier) = sdk_module_specifier {
@@ -1520,13 +1520,14 @@ fn trim_sidecar_event_for_buffer(mut event: SidecarEvent) -> SidecarEvent {
     event
 }
 
-fn executable_augmented_path(executable: &Path) -> Option<OsString> {
-    runtime_env::augmented_path_with_prepend(
+async fn executable_augmented_path(executable: &Path) -> Option<OsString> {
+    runtime_env::engine_path_with_prepend(
         executable
             .parent()
             .into_iter()
             .map(|value| value.to_path_buf()),
     )
+    .await
 }
 
 fn paths_match(left: &Path, right: &Path) -> bool {

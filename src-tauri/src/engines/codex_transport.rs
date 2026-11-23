@@ -51,7 +51,7 @@ impl CodexTransport {
         let mut command = Command::new(codex_executable);
         process_utils::configure_tokio_command(&mut command);
         runtime_env::apply_missing_login_shell_env(&mut command).await;
-        if let Some(augmented_path) = codex_augmented_path(codex_executable) {
+        if let Some(augmented_path) = codex_augmented_path(codex_executable).await {
             command.env("PATH", augmented_path);
         }
         for (key, value) in instance.process_env("codex") {
@@ -384,8 +384,8 @@ fn method_signature(method: &str) -> String {
         .collect()
 }
 
-fn codex_augmented_path(executable: &str) -> Option<OsString> {
-    runtime_env::augmented_path_with_prepend([Path::new(executable).parent()?.to_path_buf()])
+async fn codex_augmented_path(executable: &str) -> Option<OsString> {
+    runtime_env::engine_path_with_prepend([Path::new(executable).parent()?.to_path_buf()]).await
 }
 
 #[cfg(test)]

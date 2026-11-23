@@ -87,6 +87,52 @@ where
     join_paths(entries)
 }
 
+/// PATH for engine processes (Codex, the Claude sidecar). On macOS a Finder or
+/// Dock launch inherits launchd's minimal PATH, so the login shell's PATH
+/// (pyenv, rbenv, conda, Go, Nix and custom entries) is merged in after the
+/// prepended directories. The probe is cached; when it fails or times out this
+/// is the same as `augmented_path_with_prepend`.
+pub async fn engine_path_with_prepend<I>(prepend: I) -> Option<OsString>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    #[cfg(target_os = "macos")]
+    {
+        let login_path = login_shell_environment().await.get(OsStr::new("PATH"));
+        join_paths(merge_engine_path_entries(
+            prepend,
+            login_path.map(OsString::as_os_str),
+            augmented_path_entries(),
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        augmented_path_with_prepend(prepend)
+    }
+}
+
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn merge_engine_path_entries<I>(
+    prepend: I,
+    login_path: Option<&OsStr>,
+    augmented: Vec<PathBuf>,
+) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let mut entries: Vec<PathBuf> = prepend
+        .into_iter()
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect();
+    if let Some(login_path) = login_path {
+        // Relative entries (".", "bin") would resolve against each engine's cwd.
+        entries.extend(env::split_paths(login_path).filter(|path| path.is_absolute()));
+    }
+    entries.extend(augmented);
+    dedupe_paths(entries)
+}
+
 pub fn augmented_path_entries() -> Vec<PathBuf> {
     let home = home_dir();
     let local_app_data = local_app_data_dir();
@@ -424,6 +470,8 @@ fn augmented_path_entries_for(
         entries.push(PathBuf::from("/usr/local/bin"));
         entries.push(PathBuf::from("/usr/local/sbin"));
         entries.push(PathBuf::from("/opt/local/bin"));
+        entries.push(PathBuf::from("/nix/var/nix/profiles/default/bin"));
+        entries.push(PathBuf::from("/run/current-system/sw/bin"));
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -495,6 +543,7 @@ fn augmented_path_entries_for(
         #[cfg(target_os = "macos")]
         {
             entries.push(home.join("Library/pnpm"));
+            entries.push(home.join(".nix-profile/bin"));
         }
     }
 
@@ -1338,6 +1387,58 @@ mod tests {
         assert!(shells.contains(&temp_dir.join("sh")));
 
         std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn engine_path_merges_login_shell_path_after_prepend() {
+        let entries = merge_engine_path_entries(
+            [PathBuf::from("/opt/codex/bin")],
+            Some(OsStr::new(
+                "/Users/panes/.pyenv/shims:relative/bin:/usr/bin:/Users/panes/go/bin",
+            )),
+            vec![
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+            ],
+        );
+
+        assert_eq!(
+            entries,
+            vec![
+                PathBuf::from("/opt/codex/bin"),
+                PathBuf::from("/Users/panes/.pyenv/shims"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/Users/panes/go/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn engine_path_without_login_shell_path_matches_augmented_order() {
+        let entries = merge_engine_path_entries(
+            [PathBuf::from("/opt/codex/bin")],
+            None,
+            vec![PathBuf::from("/usr/bin"), PathBuf::from("/opt/codex/bin")],
+        );
+
+        assert_eq!(
+            entries,
+            vec![PathBuf::from("/opt/codex/bin"), PathBuf::from("/usr/bin")]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_augmented_path_includes_nix_profiles() {
+        let home = Path::new("/Users/panes");
+        let entries =
+            augmented_path_entries_for(Some(home), Some(OsStr::new("/usr/bin")), None, None);
+
+        assert!(entries.contains(&PathBuf::from("/nix/var/nix/profiles/default/bin")));
+        assert!(entries.contains(&PathBuf::from("/run/current-system/sw/bin")));
+        assert!(entries.contains(&home.join(".nix-profile/bin")));
     }
 
     #[test]

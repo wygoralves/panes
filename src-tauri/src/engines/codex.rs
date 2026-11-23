@@ -3875,20 +3875,21 @@ fn app_path_preview(path: Option<&str>) -> String {
         .to_string()
 }
 
-fn codex_augmented_path(executable: &Path) -> Option<OsString> {
-    runtime_env::augmented_path_with_prepend(
+async fn codex_augmented_path(executable: &Path) -> Option<OsString> {
+    runtime_env::engine_path_with_prepend(
         executable
             .parent()
             .into_iter()
             .map(|value| value.to_path_buf()),
     )
+    .await
 }
 
 async fn codex_command(executable: &Path) -> Command {
     let mut command = Command::new(executable);
     process_utils::configure_tokio_command(&mut command);
     runtime_env::apply_missing_login_shell_env(&mut command).await;
-    if let Some(augmented_path) = codex_augmented_path(executable) {
+    if let Some(augmented_path) = codex_augmented_path(executable).await {
         command.env("PATH", augmented_path);
     }
     command
