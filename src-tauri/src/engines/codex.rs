@@ -3806,21 +3806,22 @@ fn codex_fix_commands(
 /// (launchd's PATH for a Finder launch) after Codex's own directory. The value
 /// runs through the user's login shell, so it is single-quoted, which is
 /// literal in sh, zsh, bash, fish and PowerShell as long as it holds no quote
-/// (PowerShell also ends a string at typographic single quotes) or backslash:
-/// an inherited entry with one is dropped, and a Codex directory with one gets
-/// no fix. Parsed with macOS rules whatever the host.
+/// (PowerShell also ends a string at typographic single quotes) or backslash.
+/// When any entry holds one there is no fix, since dropping the entry would
+/// remove it from every later GUI app. Parsed with macOS rules on any host.
 fn launchctl_set_path_fix(bin_dir: &Path, app_path: Option<&str>) -> Option<String> {
     let literal =
         |entry: &str| !entry.contains(['\'', '\\', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}']);
     let bin_dir = bin_dir.display().to_string();
-    if !literal(&bin_dir) {
-        return None;
-    }
     let system = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-    let inherited = app_path
+    let inherited: Vec<&str> = app_path
         .into_iter()
         .flat_map(|value| value.split(':'))
-        .filter(|entry| entry.starts_with('/') && literal(entry));
+        .filter(|entry| entry.starts_with('/'))
+        .collect();
+    if !literal(&bin_dir) || !inherited.iter().all(|entry| literal(entry)) {
+        return None;
+    }
     let mut path: Vec<&str> = Vec::new();
     for entry in std::iter::once(bin_dir.as_str())
         .chain(system.split(':'))
@@ -9018,18 +9019,17 @@ mod tests {
 
     #[test]
     fn codex_fix_commands_for_macos_keep_homebrew_and_quote_the_codex_dir() {
-        let resolution = |codex: &str| CodexExecutableResolution {
+        let resolution = |codex: &str, app_path: &str| CodexExecutableResolution {
             executable: None,
             source: "unavailable",
-            app_path: Some(
-                "/usr/bin:/Users/panes/.cargo/bin:relative/bin:/Users/it's/bin:/bin".to_string(),
-            ),
+            app_path: Some(app_path.to_string()),
             login_shell_executable: Some(std::path::PathBuf::from(codex)),
         };
+        let app_path = "/usr/bin:/Users/panes/.cargo/bin:relative/bin:/bin";
 
         let fixes = codex_fix_commands_for_platform(
             "macos",
-            &resolution("/Users/panes/$(touch x) `id`/bin/codex"),
+            &resolution("/Users/panes/$(touch x) `id`/bin/codex", app_path),
             None,
         );
         assert_eq!(
@@ -9040,15 +9040,18 @@ mod tests {
             ]
         );
 
-        let fixes =
-            codex_fix_commands_for_platform("macos", &resolution("/Users/it's/bin/codex"), None);
-        assert_eq!(
-            fixes,
-            vec![
-                "/bin/zsh -lic 'command -v codex && codex --version'".to_string(),
-                "open -a Panes".to_string(),
-            ]
-        );
+        let diagnostic = vec![
+            "/bin/zsh -lic 'command -v codex && codex --version'".to_string(),
+            "open -a Panes".to_string(),
+        ];
+        for (codex, app_path) in [
+            ("/Users/it's/bin/codex", app_path),
+            ("/opt/codex/bin/codex", "/usr/bin:/Users/it's/bin:/bin"),
+        ] {
+            let fixes =
+                codex_fix_commands_for_platform("macos", &resolution(codex, app_path), None);
+            assert_eq!(fixes, diagnostic, "{codex} with PATH {app_path}");
+        }
     }
 
     #[test]
