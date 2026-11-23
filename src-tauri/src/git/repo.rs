@@ -508,9 +508,10 @@ pub fn soft_reset_last_commit(repo_path: &str) -> anyhow::Result<()> {
 }
 
 /// Repo config keys that make fetch, pull or push run a program: an ssh or
-/// proxy command, an upload or receive pack path, a credential helper, or an
-/// askpass or signing program.
-const NETWORK_COMMAND_CONFIG_KEYS: &str = r"^(core\.(sshcommand|gitproxy|askpass)|remote\..+\.(uploadpack|receivepack)|credential\.(.+\.)?helper|gpg\.(.+\.)?program)$";
+/// proxy command, an upload or receive pack path, a credential helper, an
+/// askpass or signing program, or an alias git falls back to when a
+/// `<helper>::` url names a remote helper that is not installed.
+const NETWORK_COMMAND_CONFIG_KEYS: &str = r"^(core\.(sshcommand|gitproxy|askpass)|remote\..+\.(uploadpack|receivepack)|credential\.(.+\.)?helper|gpg\.(.+\.)?program|alias\.remote-.+)$";
 
 /// Overrides for every network command on a repo that is not trusted. The
 /// `ext::` transport runs a command named in the url, which a repo's url
@@ -2344,6 +2345,26 @@ mod tests {
         let _ = get_file_diff(repo.path_str(), "a.txt", false);
 
         assert!(!marker.exists(), "the filter driver ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_refuses_a_remote_helper_alias_unless_trusted() {
+        let repo = TempRepo::init();
+        let marker = repo.path.join(".git/alias-ran");
+        let alias = format!("!touch {}", marker.display());
+        for (key, value) in [
+            ("remote.origin.url", "panes-missing-helper::x"),
+            ("alias.remote-panes-missing-helper", alias.as_str()),
+        ] {
+            run_git(repo.path_str(), &["config", key, value]).expect("config");
+        }
+
+        let error = fetch_repo(repo.path_str(), &TrustLevelDto::Standard)
+            .expect_err("fetch must be refused");
+
+        assert!(error.to_string().contains("alias.remote-"), "{error}");
+        assert!(!marker.exists(), "the alias ran");
     }
 
     #[cfg(unix)]
