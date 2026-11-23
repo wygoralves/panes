@@ -518,7 +518,7 @@ fn is_network_command_config_key(key: &str) -> bool {
             | Some(("remote", Some(_), "uploadpack" | "receivepack"))
             | Some(("credential", _, "helper"))
             | Some(("gpg", _, "program"))
-    ) || matches!(split_config_key(key), Some(("alias", None, name)) if name.starts_with("remote-"))
+    ) || key.starts_with("alias.remote-")
 }
 
 /// Overrides for every network command on a repo that is not trusted. The
@@ -1851,9 +1851,10 @@ mod tests {
     use super::{
         build_diff_preview, checkout_git_branch, create_git_branch, discard_files, fetch_repo,
         get_commit_diff, get_file_diff, get_git_status, get_workspace_file_tree_page,
-        is_diff_preview_metadata_line, list_git_commits, parse_porcelain_v1_status,
-        rename_git_branch, run_git, search_workspace_files, stage_files, truncate_utf8_prefix,
-        unstage_files, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
+        is_diff_preview_metadata_line, is_network_command_config_key, list_git_commits,
+        parse_porcelain_v1_status, rename_git_branch, run_git, search_workspace_files, stage_files,
+        truncate_utf8_prefix, unstage_files, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
+        GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::{FileTreeEntryDto, TrustLevelDto};
     use uuid::Uuid;
@@ -2510,6 +2511,23 @@ mod tests {
         let _ = get_commit_diff(clone.to_str().unwrap(), head.trim());
 
         assert!(!marker.exists(), "a background read ran a remote helper");
+    }
+
+    #[test]
+    fn network_command_keys_include_dotted_remote_helper_aliases() {
+        for key in [
+            "core.sshcommand",
+            "remote.origin.uploadpack",
+            "credential.https://example.com.helper",
+            "gpg.ssh.program",
+            "alias.remote-example",
+            "alias.remote-example.v2",
+        ] {
+            assert!(is_network_command_config_key(key), "{key}");
+        }
+        for key in ["remote.origin.url", "alias.co", "core.editor"] {
+            assert!(!is_network_command_config_key(key), "{key}");
+        }
     }
 
     #[test]
