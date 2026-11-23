@@ -83,7 +83,8 @@ To use a prebuilt release:
 | Requirement | Version |
 |---|---|
 | Codex CLI | Required for the Codex chat engine; setup can install it via npm |
-| Node.js | 20.5+, required for the Claude chat engine |
+| Node.js | 20.5+, required for the Claude chat engine; setup also checks for Node.js before enabling the Codex chat engine |
+| Claude sign-in | A Claude Code login or `ANTHROPIC_API_KEY`, required for the Claude chat engine |
 | OpenCode CLI | `opencode` on your `PATH`, required for the OpenCode chat engine |
 | Git | Recommended, for the git panel |
 
