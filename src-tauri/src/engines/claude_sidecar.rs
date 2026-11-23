@@ -373,6 +373,10 @@ impl ClaudeTransport {
         if let Some(module_specifier) = sdk_module_specifier {
             command.env("CLAUDE_AGENT_SDK_MODULE", module_specifier);
         }
+        // The sidecar reads this variable directly. Drop an inherited one, which
+        // the resolver may have rejected (such as an npm shim), before the
+        // provider env and the resolved executable below set it on purpose.
+        command.env_remove("PANES_CLAUDE_CODE_EXECUTABLE");
         for (key, value) in instance.process_env("claude") {
             command.env(key, value);
         }
@@ -390,10 +394,6 @@ impl ClaudeTransport {
             command.env("PANES_CLAUDE_CODE_EXECUTABLE", claude_executable);
         } else {
             log::info!("claude sidecar: system Claude Code not found, using bundled runtime");
-            // The sidecar reads this variable directly; drop an inherited one
-            // the resolver rejected (such as an npm shim) so the turn uses the
-            // bundled runtime the health check reports.
-            command.env_remove("PANES_CLAUDE_CODE_EXECUTABLE");
         }
         let mut child = command
             .arg(&sidecar_path)
