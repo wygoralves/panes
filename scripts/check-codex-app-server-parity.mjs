@@ -144,18 +144,15 @@ function assertPermissionProfileShape(schemaRoot, file) {
   }
 }
 
-function assertRootNotificationMethods(schemaRoot, expectedMethods) {
-  const schema = loadJson(requireRootFile(schemaRoot, "ServerNotification.json"));
-  const notificationMethods = new Set(
+function assertSchemaMethods(schemaRoot, file, expectedMethods) {
+  const schema = loadJson(requireRootFile(schemaRoot, file));
+  const methods = new Set(
     (schema.oneOf ?? [])
       .flatMap((variant) => variant.properties?.method?.enum ?? [])
       .filter((method) => typeof method === "string"),
   );
   for (const method of expectedMethods) {
-    assert(
-      notificationMethods.has(method),
-      `ServerNotification.json is missing notification method ${method}`,
-    );
+    assert(methods.has(method), `${file} is missing method ${method}`);
   }
 }
 
@@ -193,6 +190,7 @@ try {
     "../PermissionsRequestApprovalResponse.json",
     "../ServerRequest.json",
     "../ServerNotification.json",
+    "../ClientRequest.json",
     "ThreadTurnsListParams.json",
     "ThreadTurnsListResponse.json",
     "ThreadStartParams.json",
@@ -264,9 +262,15 @@ try {
   }
 
   // The schema files keep the guardian name; the wire methods do not.
-  assertRootNotificationMethods(schemaRoot, [
+  assertSchemaMethods(schemaRoot, "ServerNotification.json", [
     "item/autoApprovalReview/started",
     "item/autoApprovalReview/completed",
+  ]);
+
+  assertSchemaMethods(schemaRoot, "ClientRequest.json", [
+    "thread/turns/list",
+    "thread/revert",
+    "command/exec",
   ]);
 
   assertRootRequestMethods(schemaRoot, [
