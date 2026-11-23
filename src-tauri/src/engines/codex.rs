@@ -3801,6 +3801,17 @@ fn codex_fix_commands(
     codex_fix_commands_for_platform(runtime_env::platform_id(), resolution, execution_error)
 }
 
+/// `launchctl setenv PATH` replaces the PATH every later GUI app inherits, so
+/// keep Homebrew and the system directories after Codex's own directory. The
+/// directory is single-quoted because this string runs through `$SHELL -lc`.
+fn launchctl_set_path_fix(bin_dir: &Path) -> String {
+    let path = format!(
+        "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        bin_dir.display()
+    );
+    format!("launchctl setenv PATH '{}'", path.replace('\'', r#"'\''"#))
+}
+
 fn codex_fix_commands_for_platform(
     platform: &str,
     resolution: &CodexExecutableResolution,
@@ -3811,10 +3822,7 @@ fn codex_fix_commands_for_platform(
         if resolution.executable.is_none() {
             if let Some(shell_path) = &resolution.login_shell_executable {
                 if let Some(bin_dir) = shell_path.parent() {
-                    fixes.push(format!(
-                        "launchctl setenv PATH \"{}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
-                        bin_dir.display()
-                    ));
+                    fixes.push(launchctl_set_path_fix(bin_dir));
                     fixes.push("open -a Panes".to_string());
                 }
             } else {
@@ -3824,10 +3832,7 @@ fn codex_fix_commands_for_platform(
         } else if execution_error.is_some() {
             if let Some(executable) = resolution.executable.as_ref() {
                 if let Some(bin_dir) = executable.parent() {
-                    fixes.push(format!(
-                        "launchctl setenv PATH \"{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
-                        bin_dir.display()
-                    ));
+                    fixes.push(launchctl_set_path_fix(bin_dir));
                 }
             }
             fixes.push(
@@ -8984,6 +8989,28 @@ mod tests {
 
         assert!(details.contains("%APPDATA%\\npm"));
         assert!(details.contains("App PATH"));
+    }
+
+    #[test]
+    fn codex_fix_commands_for_macos_keep_homebrew_and_quote_the_codex_dir() {
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &CodexExecutableResolution {
+                executable: None,
+                source: "unavailable",
+                app_path: Some("/usr/bin:/bin".to_string()),
+                login_shell_executable: Some(std::path::PathBuf::from(
+                    "/Users/panes/it's $(touch x)/bin/codex",
+                )),
+            },
+            None,
+        );
+
+        assert_eq!(
+            fixes[0],
+            r#"launchctl setenv PATH '/Users/panes/it'\''s $(touch x)/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'"#
+        );
+        assert_eq!(fixes[1], "open -a Panes");
     }
 
     #[test]
