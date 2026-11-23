@@ -32,6 +32,7 @@ import type {
   GitStash,
   GitRemote,
   GitWorktree,
+  GitWorktreeInspection,
   GitWorktreeRemoval,
   EngineHealth,
   EngineInfo,
@@ -575,6 +576,12 @@ export const ipc = {
       branchName: branchName ?? null,
       deleteBranch: deleteBranch ?? false,
       forceBranchDelete: forceBranchDelete ?? false,
+    }),
+  inspectGitWorktree: (repoPath: string, worktreePath: string, branchName?: string | null) =>
+    invoke<GitWorktreeInspection>("inspect_git_worktree", {
+      repoPath,
+      worktreePath,
+      branchName: branchName ?? null,
     }),
   pruneGitWorktrees: (repoPath: string) =>
     invoke<void>("prune_git_worktrees", { repoPath }),

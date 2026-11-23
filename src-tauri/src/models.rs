@@ -849,6 +849,14 @@ pub struct GitWorktreeRemovalDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitWorktreeInspectionDto {
+    pub changed_count: usize,
+    pub untracked_count: usize,
+    pub unmerged_commit_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileTreeEntryDto {
     pub path: String,
     pub is_dir: bool,

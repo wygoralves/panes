@@ -283,6 +283,83 @@ pub fn remove_worktree(
     Ok(outcome)
 }
 
+/// Work that removing a worktree and its branch without force would refuse to
+/// throw away.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorktreeInspection {
+    /// Tracked files with staged or unstaged changes.
+    pub changed_count: usize,
+    /// Untracked files (ignored files are not counted; git removes them).
+    pub untracked_count: usize,
+    /// Commits on the branch that are not reachable from the main checkout's
+    /// HEAD, which is what `git branch -d` checks.
+    pub unmerged_commit_count: usize,
+}
+
+/// Counts the uncommitted files in `worktree_path` and the commits on
+/// `branch_name` that `git branch -d` would refuse to drop. A worktree
+/// directory that no longer exists has no files to lose.
+pub fn inspect_worktree(
+    repo_path: &str,
+    worktree_path: &str,
+    branch_name: Option<&str>,
+) -> anyhow::Result<WorktreeInspection> {
+    let mut inspection = WorktreeInspection::default();
+
+    if Path::new(worktree_path).is_dir() {
+        let status = run_git(
+            worktree_path,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .context("failed to read worktree status")?;
+        let (changed, untracked) = count_porcelain_entries(&status);
+        inspection.changed_count = changed;
+        inspection.untracked_count = untracked;
+    }
+
+    if let Some(branch) = branch_name.filter(|branch| !branch.trim().is_empty()) {
+        let branch_ref = format!("refs/heads/{branch}");
+        let exists = run_git(
+            repo_path,
+            &["rev-parse", "--verify", "--quiet", branch_ref.as_str()],
+        )
+        .is_ok();
+        if exists {
+            let count = run_git(
+                repo_path,
+                &["rev-list", "--count", branch_ref.as_str(), "--not", "HEAD"],
+            )
+            .context("failed to count unmerged commits")?;
+            inspection.unmerged_commit_count = count.trim().parse().unwrap_or(0);
+        }
+    }
+
+    Ok(inspection)
+}
+
+/// Splits `git status --porcelain=v1 -z` output into (changed, untracked)
+/// counts. Renames and copies carry their source path as an extra entry.
+fn count_porcelain_entries(status: &str) -> (usize, usize) {
+    let mut changed = 0;
+    let mut untracked = 0;
+    let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
+    while let Some(entry) = entries.next() {
+        let code = entry.get(..2).unwrap_or("");
+        if code == "??" {
+            untracked += 1;
+            continue;
+        }
+        if code == "!!" {
+            continue;
+        }
+        changed += 1;
+        if code.contains(['R', 'C']) {
+            entries.next();
+        }
+    }
+    (changed, untracked)
+}
+
 /// Prunes stale worktree admin files for worktrees whose directories no longer exist.
 pub fn prune_worktrees(repo_path: &str) -> anyhow::Result<()> {
     run_git(repo_path, &["worktree", "prune"]).context("failed to prune worktrees")?;
@@ -533,6 +610,42 @@ mod tests {
 
         assert_eq!(outcome, RemoveWorktreeOutcome::default());
         assert!(!branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn inspect_worktree_counts_changed_untracked_and_unmerged_work() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+
+        assert_eq!(
+            inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect"),
+            WorktreeInspection::default(),
+            "a fresh worktree has nothing to lose"
+        );
+
+        commit_in(&worktree_path, "agent.txt");
+        commit_in(&worktree_path, "agent2.txt");
+        fs::write(Path::new(&worktree_path).join("a.txt"), "changed\n").expect("modify");
+        fs::create_dir_all(Path::new(&worktree_path).join("out")).expect("mkdir");
+        fs::write(Path::new(&worktree_path).join("out/one.txt"), "1\n").expect("write");
+        fs::write(Path::new(&worktree_path).join("out/two.txt"), "2\n").expect("write");
+
+        assert_eq!(
+            inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect"),
+            WorktreeInspection {
+                changed_count: 1,
+                untracked_count: 2,
+                unmerged_commit_count: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn count_porcelain_entries_skips_rename_sources() {
+        assert_eq!(
+            count_porcelain_entries("R  new.txt\0old.txt\0 M a.txt\0?? b.txt\0"),
+            (2, 1)
+        );
     }
 
     #[test]

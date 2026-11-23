@@ -173,7 +173,7 @@
     "confirm": {
       "replaceCurrentSessions": "Replace current terminal sessions?",
       "runningTerminalsClosed": "All running terminals will be closed.",
-      "keepOrRemoveWorktrees": "You can choose to keep or remove existing worktrees.",
+      "keepOrRemoveWorktrees": "You can choose to keep or remove existing worktrees. Worktrees with uncommitted files or unmerged commits are listed before they are deleted.",
       "cancel": "Cancel",
       "keepWorktrees": "Keep worktrees",
       "removeWorktrees": "Remove worktrees",

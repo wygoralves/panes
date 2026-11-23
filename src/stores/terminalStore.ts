@@ -11,6 +11,7 @@ import type {
   TerminalNotification,
   TerminalSession,
   TerminalSessionRuntimeMeta,
+  WorktreeRemovalRisk,
   WorktreeSessionInfo,
   WorkspaceStartupGroup,
   WorkspaceStartupPreset,
@@ -459,7 +460,7 @@ interface TerminalState {
   applyWorkspaceStartupPresetNow: (
     workspaceId: string,
     preset: WorkspaceStartupPreset,
-    options?: { removeWorktrees?: boolean },
+    options?: WorkspaceWorktreeRemovalOptions,
   ) => Promise<boolean>;
   closeSession: (workspaceId: string, sessionId: string) => Promise<void>;
   setActiveSession: (workspaceId: string, sessionId: string) => void;
@@ -497,7 +498,13 @@ interface TerminalState {
     rows?: number,
   ) => Promise<{ groupId: string; sessionIds: string[] } | null>;
   getGroupWorktrees: (workspaceId: string, groupId: string) => WorktreeSessionInfo[];
-  removeGroupWorktrees: (workspaceId: string, worktrees: WorktreeSessionInfo[]) => Promise<void>;
+  getWorkspaceWorktrees: (workspaceId: string) => WorktreeSessionInfo[];
+  inspectWorktreesForRemoval: (worktrees: WorktreeSessionInfo[]) => Promise<WorktreeRemovalRisk[]>;
+  removeGroupWorktrees: (
+    workspaceId: string,
+    worktrees: WorktreeSessionInfo[],
+    options?: { forceWorktreePaths?: string[] },
+  ) => Promise<void>;
 }
 
 function defaultWorkspaceState(): WorkspaceTerminalState {
@@ -667,23 +674,73 @@ function inferWorktreeConfig(group: TerminalGroup): WorkspaceStartupWorktreeConf
   };
 }
 
-async function removeWorktreesSequential(worktrees: WorktreeSessionInfo[]): Promise<string[]> {
+export interface WorkspaceWorktreeRemovalOptions {
+  removeWorktrees?: boolean;
+  /** Worktrees the user confirmed may lose uncommitted files or unmerged commits. */
+  forceWorktreePaths?: string[];
+  /** Worktrees the user chose to keep after seeing what removing them would lose. */
+  keepWorktreePaths?: string[];
+}
+
+interface WorktreeRemovalResult {
+  failures: string[];
+  /** Branches git refused to delete after their worktree was removed. */
+  keptBranches: string[];
+}
+
+/**
+ * Removes worktrees one at a time. `force` decides per worktree whether git may
+ * discard uncommitted files (`--force`) and unmerged commits (`branch -D`).
+ * Only rollbacks of worktrees the same launch just created, and worktrees the
+ * user explicitly confirmed, are forced; everything else relies on git's own
+ * refusals so agent work is never thrown away silently.
+ */
+async function removeWorktreesSequential(
+  worktrees: WorktreeSessionInfo[],
+  force: (worktree: WorktreeSessionInfo) => boolean,
+): Promise<WorktreeRemovalResult> {
   const failures: string[] = [];
+  const keptBranches: string[] = [];
   for (const worktree of worktrees) {
+    const forced = force(worktree);
     try {
-      await ipc.removeGitWorktree(
+      const result = await ipc.removeGitWorktree(
         worktree.repoPath,
         worktree.worktreePath,
-        true,
+        forced,
         worktree.branch,
         true,
-        true,
+        forced,
       );
+      if (result?.branchDeleteError) {
+        if (forced) {
+          failures.push(`${worktree.branch || worktree.worktreePath}: ${result.branchDeleteError}`);
+        } else {
+          keptBranches.push(worktree.branch || worktree.worktreePath);
+        }
+      }
     } catch (error) {
       failures.push(`${worktree.branch || worktree.worktreePath}: ${String(error)}`);
     }
   }
-  return failures;
+  return { failures, keptBranches };
+}
+
+const forceRollback = () => true;
+
+function forcePaths(paths: string[] | undefined): (worktree: WorktreeSessionInfo) => boolean {
+  const forced = new Set(paths ?? []);
+  return (worktree) => forced.has(worktree.worktreePath);
+}
+
+function warnKeptBranches(keptBranches: string[]) {
+  if (keptBranches.length === 0) return;
+  toast.warning(
+    t("app:terminal.toasts.worktreeBranchesKept", {
+      count: keptBranches.length,
+      branches: keptBranches.join(", "),
+    }),
+  );
 }
 
 async function closeSessionsSequential(workspaceId: string, sessionIds: string[]): Promise<void> {
@@ -1066,7 +1123,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
 
         if (worktreeSetupFailed) {
-          await removeWorktreesSequential(createdWorktrees);
+          await removeWorktreesSequential(createdWorktrees, forceRollback);
           Object.keys(worktreesByLogicalSessionId).forEach((sessionId) => {
             delete worktreesByLogicalSessionId[sessionId];
           });
@@ -1144,6 +1201,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             Object.values(worktreesByLogicalSessionId).filter(
               (worktree): worktree is WorktreeSessionInfo => worktree !== null,
             ),
+            forceRollback,
           );
         }
         continue;
@@ -1323,9 +1381,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   applyWorkspaceStartupPresetNow: async (workspaceId, preset, options) => {
     const workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
+    const keptWorktreePaths = new Set(options?.keepWorktreePaths ?? []);
     const worktrees =
       options?.removeWorktrees
-        ? workspace.groups.flatMap((group) => getGroupWorktreesFromMeta(group))
+        ? workspace.groups
+            .flatMap((group) => getGroupWorktreesFromMeta(group))
+            .filter((worktree) => !keptWorktreePaths.has(worktree.worktreePath))
         : [];
     const nextPendingPreset = pendingStartupPresetFor(preset);
     const shouldBootstrapTerminal =
@@ -1343,12 +1404,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     try {
       await ipc.terminalCloseWorkspaceSessions(workspaceId);
       if (worktrees.length > 0) {
-        const failures = await removeWorktreesSequential(worktrees);
+        const { failures, keptBranches } = await removeWorktreesSequential(
+          worktrees,
+          forcePaths(options?.forceWorktreePaths),
+        );
         if (failures.length > 0) {
           toast.warning(
             t("app:terminal.toasts.someWorktreesNotRemoved", { message: failures[0] }),
           );
         }
+        warnKeptBranches(keptBranches);
       }
       localStorage.setItem(LAYOUT_MODE_STORAGE_KEY(workspaceId), preset.defaultView);
       set((state) => ({
@@ -2011,7 +2076,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       // Clean up any worktrees created before the failure
       if (createdWorktrees.length > 0) {
-        const cleanupFailures = await removeWorktreesSequential(createdWorktrees);
+        const { failures: cleanupFailures } = await removeWorktreesSequential(
+          createdWorktrees,
+          forceRollback,
+        );
         if (cleanupFailures.length > 0) {
           message = `${message}. Cleanup failed for ${cleanupFailures.length} worktree(s): ${cleanupFailures.join("; ")}`;
         }
@@ -2032,10 +2100,43 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return group ? getGroupWorktreesFromMeta(group) : [];
   },
 
-  removeGroupWorktrees: async (workspaceId, worktrees) => {
+  getWorkspaceWorktrees: (workspaceId) => {
+    const workspace = get().workspaces[workspaceId] ?? defaultWorkspaceState();
+    return workspace.groups.flatMap((group) => getGroupWorktreesFromMeta(group));
+  },
+
+  inspectWorktreesForRemoval: async (worktrees) => {
+    const risks: WorktreeRemovalRisk[] = [];
+    for (const worktree of worktrees) {
+      try {
+        const inspection = await ipc.inspectGitWorktree(
+          worktree.repoPath,
+          worktree.worktreePath,
+          worktree.branch,
+        );
+        if (
+          inspection.changedCount > 0
+          || inspection.untrackedCount > 0
+          || inspection.unmergedCommitCount > 0
+        ) {
+          risks.push({ ...worktree, ...inspection });
+        }
+      } catch {
+        // An uninspectable worktree is still removed without force, so git
+        // refuses it if it holds uncommitted work.
+      }
+    }
+    return risks;
+  },
+
+  removeGroupWorktrees: async (workspaceId, worktrees, options) => {
     if (worktrees.length === 0) return;
 
-    const failures = await removeWorktreesSequential(worktrees);
+    const { failures, keptBranches } = await removeWorktreesSequential(
+      worktrees,
+      forcePaths(options?.forceWorktreePaths),
+    );
+    warnKeptBranches(keptBranches);
     if (failures.length === 0) return;
 
     const message = `Failed to remove ${failures.length} worktree(s): ${failures.join("; ")}`;

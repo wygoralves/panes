@@ -8,6 +8,7 @@ import { toast } from "../../stores/toastStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
 import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { WorktreeRemovalRiskDialog } from "./WorktreeRemovalRiskDialog";
 import { ToggleOptionCard } from "../shared/ToggleOptionCard";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard, readTextFromClipboard } from "../../lib/clipboard";
@@ -62,6 +63,8 @@ import type {
   TerminalNotification,
   TerminalRendererDiagnostics,
   WorkspaceStartupWorktreeConfig,
+  WorktreeRemovalRisk,
+  WorktreeSessionInfo,
 } from "../../types";
 
 interface TerminalPanelProps {
@@ -3034,9 +3037,14 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
   const createMultiSessionGroup = useTerminalStore((state) => state.createMultiSessionGroup);
   const getGroupWorktrees = useTerminalStore((state) => state.getGroupWorktrees);
   const removeGroupWorktrees = useTerminalStore((state) => state.removeGroupWorktrees);
+  const inspectWorktreesForRemoval = useTerminalStore((state) => state.inspectWorktreesForRemoval);
   const repos = useWorkspaceStore((state) => state.repos);
 
   const [worktreeCloseGroupId, setWorktreeCloseGroupId] = useState<string | null>(null);
+  const [pendingWorktreeRemoval, setPendingWorktreeRemoval] = useState<{
+    worktrees: WorktreeSessionInfo[];
+    risks: WorktreeRemovalRisk[];
+  } | null>(null);
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   // Only one tab can be renamed at a time, so a single ref is safe despite being inside .map()
@@ -3408,15 +3416,53 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
       }
 
       if (worktrees.length > 0) {
-        try {
-          await removeGroupWorktrees(workspaceId, worktrees);
-        } catch (error) {
-          toast.error(String(error));
+        // The sessions are closed, so nothing writes to the worktrees anymore.
+        // Any holding uncommitted files or unmerged commits need a second,
+        // explicit confirmation before they are forced out.
+        const risks = await inspectWorktreesForRemoval(worktrees);
+        if (risks.length > 0) {
+          setPendingWorktreeRemoval({ worktrees, risks });
+        } else {
+          try {
+            await removeGroupWorktrees(workspaceId, worktrees);
+          } catch (error) {
+            toast.error(String(error));
+          }
         }
       }
     }
     setWorktreeCloseGroupId(null);
-  }, [worktreeCloseGroupId, groups, getGroupWorktrees, removeGroupWorktrees, closeSession, t, workspaceId]);
+  }, [
+    worktreeCloseGroupId,
+    groups,
+    getGroupWorktrees,
+    inspectWorktreesForRemoval,
+    removeGroupWorktrees,
+    closeSession,
+    t,
+    workspaceId,
+  ]);
+
+  const finishPendingWorktreeRemoval = useCallback(
+    async (forceRisky: boolean) => {
+      if (!pendingWorktreeRemoval) return;
+      const { worktrees, risks } = pendingWorktreeRemoval;
+      setPendingWorktreeRemoval(null);
+      const riskyPaths = risks.map((risk) => risk.worktreePath);
+      const toRemove = forceRisky
+        ? worktrees
+        : worktrees.filter((worktree) => !riskyPaths.includes(worktree.worktreePath));
+      if (toRemove.length === 0) return;
+      try {
+        await removeGroupWorktrees(workspaceId, toRemove, {
+          forceWorktreePaths: forceRisky ? riskyPaths : [],
+        });
+      } catch (error) {
+        toast.error(String(error));
+      }
+    },
+    [pendingWorktreeRemoval, removeGroupWorktrees, workspaceId],
+  );
 
   const handleWorktreeCloseCancel = useCallback(async () => {
     if (!worktreeCloseGroupId) return;
@@ -4498,6 +4544,12 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
         onConfirm={handleWorktreeCloseConfirm}
         onCancel={handleWorktreeCloseCancel}
         onDismiss={dismissWorktreeCloseDialog}
+      />
+
+      <WorktreeRemovalRiskDialog
+        risks={pendingWorktreeRemoval?.risks ?? null}
+        onForceRemove={() => void finishPendingWorktreeRemoval(true)}
+        onKeep={() => void finishPendingWorktreeRemoval(false)}
       />
     </div>
   );

@@ -8,8 +8,8 @@ use crate::{
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
         GitCompareSourceDto, GitDiffPreviewDto, GitFileCompareDto, GitInitRepoStatusDto,
-        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, GitWorktreeRemovalDto,
-        ThreadStatusDto,
+        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, GitWorktreeInspectionDto,
+        GitWorktreeRemovalDto, ThreadStatusDto,
     },
     state::AppState,
 };
@@ -433,6 +433,26 @@ pub async fn remove_git_worktree(
         force_branch_delete.unwrap_or(false),
     )
     .await
+}
+
+#[tauri::command]
+pub async fn inspect_git_worktree(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    worktree_path: String,
+    branch_name: Option<String>,
+) -> Result<GitWorktreeInspectionDto, String> {
+    tokio::task::spawn_blocking(move || {
+        worktree::inspect_worktree(&repo_path, &worktree_path, branch_name.as_deref())
+            .map(|inspection| GitWorktreeInspectionDto {
+                changed_count: inspection.changed_count,
+                untracked_count: inspection.untracked_count,
+                unmerged_commit_count: inspection.unmerged_commit_count,
+            })
+            .map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Marker the frontend matches on so it can render localized copy for the one

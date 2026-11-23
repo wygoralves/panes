@@ -173,7 +173,7 @@
     "confirm": {
       "replaceCurrentSessions": "Substituir as sessões atuais do terminal?",
       "runningTerminalsClosed": "Todos os terminais em execução serão fechados.",
-      "keepOrRemoveWorktrees": "Você pode escolher manter ou remover as worktrees existentes.",
+      "keepOrRemoveWorktrees": "Você pode escolher manter ou remover as worktrees existentes. Worktrees com arquivos não commitados ou commits não mesclados são listadas antes de serem excluídas.",
       "cancel": "Cancelar",
       "keepWorktrees": "Manter worktrees",
       "removeWorktrees": "Remover worktrees",

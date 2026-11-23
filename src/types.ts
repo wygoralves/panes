@@ -932,6 +932,15 @@ export interface GitWorktreeRemoval {
   branchDeleteError: string | null;
 }
 
+export interface GitWorktreeInspection {
+  changedCount: number;
+  untrackedCount: number;
+  unmergedCommitCount: number;
+}
+
+/** A worktree whose removal would discard uncommitted files or unmerged commits. */
+export interface WorktreeRemovalRisk extends WorktreeSessionInfo, GitWorktreeInspection {}
+
 export interface FileTreeEntry {
   path: string;
   isDir: boolean;
