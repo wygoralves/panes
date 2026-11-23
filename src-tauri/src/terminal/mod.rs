@@ -1434,7 +1434,7 @@ impl TerminalSessionHandle {
 /// `exit` ends the session like on other platforms.
 #[cfg(target_os = "windows")]
 fn spawn_conpty_exit_waiter(session: &Arc<TerminalSessionHandle>) {
-    use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE};
+    use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Threading::{
         OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
     };
@@ -1461,9 +1461,15 @@ fn spawn_conpty_exit_waiter(session: &Arc<TerminalSessionHandle>) {
     thread::spawn(move || {
         let process = process as HANDLE;
         // SAFETY: `process` is a handle this thread owns; it is closed once.
-        unsafe {
-            WaitForSingleObject(process, INFINITE);
+        let exited = unsafe {
+            let wait = WaitForSingleObject(process, INFINITE);
             CloseHandle(process);
+            wait == WAIT_OBJECT_0
+        };
+        // A failed wait says nothing about the shell; closing the console
+        // then would end a live terminal.
+        if !exited {
+            return;
         }
         if let Some(session) = session.upgrade() {
             session.release_pty();
