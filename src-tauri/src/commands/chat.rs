@@ -240,6 +240,17 @@ struct ChatTurnFinishedEvent {
     preview: Option<String>,
 }
 
+/// Sent once a finished turn's final write is stored and the thread is
+/// released, before the slower title and notification work, so queued
+/// messages drain without waiting on the engine.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatTurnReleasedEvent {
+    thread_id: String,
+    message_id: String,
+    status: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatApprovalRequestedEvent {
@@ -2398,6 +2409,9 @@ async fn run_turn(
         }
     }
 
+    // The title asks the engine and may wait on it, so the release goes first.
+    emit_chat_turn_released(&app, &thread.id, &assistant_message_id, &message_status);
+
     let _ =
         maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await;
 
@@ -3052,6 +3066,13 @@ async fn run_codex_review_turn(
             log::warn!("failed to bump review thread counters: {error}");
         }
     }
+
+    emit_chat_turn_released(
+        &app,
+        &review_thread.id,
+        &assistant_message_id,
+        &message_status,
+    );
 
     let latest_review_thread = run_db(state.db.clone(), {
         let review_thread_id = review_thread.id.clone();
@@ -3840,16 +3861,33 @@ fn emit_chat_turn_finished(
         workspace_id: thread.workspace_id.clone(),
         engine_id: thread.engine_id.clone(),
         thread_title: thread.title.clone(),
-        status: match status {
-            MessageStatusDto::Completed => "completed",
-            MessageStatusDto::Interrupted => "interrupted",
-            MessageStatusDto::Error => "error",
-            MessageStatusDto::Streaming => "completed",
-        }
-        .to_string(),
+        status: turn_finished_status(status).to_string(),
         preview: chat_notification_preview(blocks),
     };
     let _ = app.emit("chat-turn-finished", event);
+}
+
+fn emit_chat_turn_released(
+    app: &tauri::AppHandle,
+    thread_id: &str,
+    assistant_message_id: &str,
+    status: &MessageStatusDto,
+) {
+    let event = ChatTurnReleasedEvent {
+        thread_id: thread_id.to_string(),
+        message_id: assistant_message_id.to_string(),
+        status: turn_finished_status(status).to_string(),
+    };
+    let _ = app.emit("chat-turn-released", event);
+}
+
+fn turn_finished_status(status: &MessageStatusDto) -> &'static str {
+    match status {
+        MessageStatusDto::Completed => "completed",
+        MessageStatusDto::Interrupted => "interrupted",
+        MessageStatusDto::Error => "error",
+        MessageStatusDto::Streaming => "completed",
+    }
 }
 
 fn build_final_thread_event(

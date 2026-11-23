@@ -1,6 +1,6 @@
 import { engineKind } from "../lib/engineKind";
 import { create } from "zustand";
-import { ipc, listenChatTurnFinished, listenThreadEvents } from "../lib/ipc";
+import { ipc, listenChatTurnReleased, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
 import { useThreadStore } from "./threadStore";
 import { useThreadReadStore } from "./threadReadStore";
@@ -108,8 +108,8 @@ const STREAM_EVENT_BATCH_WINDOW_MS = 16;
 const STREAM_EVENT_QUEUE_FLUSH_THRESHOLD = 500;
 
 /**
- * Queued messages drain on `chat-turn-finished`, which the backend emits only
- * after it released the turn. The stream's TurnCompleted arrives earlier, and
+ * Queued messages drain on `chat-turn-released`, which the backend emits only
+ * after it released the turn, ahead of the title and notification work. The stream's TurnCompleted arrives earlier, and
  * a send at that point is refused because the turn is still registered. One
  * listener serves every thread, visible or in the background.
  */
@@ -136,7 +136,7 @@ function ensureTurnFinishedQueueListener() {
   if (turnFinishedQueueListener) {
     return;
   }
-  turnFinishedQueueListener = listenChatTurnFinished((event) => {
+  turnFinishedQueueListener = listenChatTurnReleased((event) => {
     const status: TurnCompletionStatus =
       event.status === "completed"
         ? "completed"

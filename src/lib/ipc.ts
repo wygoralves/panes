@@ -714,6 +714,14 @@ export interface ChatTurnFinishedEvent {
   preview?: string | null;
 }
 
+/** The backend released a finished turn's thread; title and notification come later. */
+export interface ChatTurnReleasedEvent {
+  threadId: string;
+  /** The assistant message the turn wrote. */
+  messageId?: string;
+  status: "completed" | "interrupted" | "error";
+}
+
 export async function listenThreadUpdated(
   onEvent: (event: ThreadUpdatedEvent) => void
 ): Promise<UnlistenFn> {
@@ -724,6 +732,12 @@ export async function listenChatTurnFinished(
   onEvent: (event: ChatTurnFinishedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<ChatTurnFinishedEvent>("chat-turn-finished", ({ payload }) => onEvent(payload));
+}
+
+export async function listenChatTurnReleased(
+  onEvent: (event: ChatTurnReleasedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<ChatTurnReleasedEvent>("chat-turn-released", ({ payload }) => onEvent(payload));
 }
 
 export interface ChatApprovalRequestedEvent {

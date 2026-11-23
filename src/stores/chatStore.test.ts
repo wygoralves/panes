@@ -23,7 +23,7 @@ const mockListenThreadEvents = vi.hoisted(() => vi.fn());
 const turnFinishedHandlers = vi.hoisted(
   () => [] as Array<(event: { threadId: string; status: string; messageId?: string }) => void>,
 );
-const mockListenChatTurnFinished = vi.hoisted(() =>
+const mockListenChatTurnReleased = vi.hoisted(() =>
   vi.fn(async (onEvent: (event: { threadId: string; status: string; messageId?: string }) => void) => {
     turnFinishedHandlers.push(onEvent);
     return () => {};
@@ -34,7 +34,7 @@ const mockRecordPerfMetric = vi.hoisted(() => vi.fn());
 vi.mock("../lib/ipc", () => ({
   ipc: mockIpc,
   listenThreadEvents: mockListenThreadEvents,
-  listenChatTurnFinished: mockListenChatTurnFinished,
+  listenChatTurnReleased: mockListenChatTurnReleased,
 }));
 
 vi.mock("../lib/perfTelemetry", () => ({
@@ -2999,7 +2999,7 @@ describe("chatStore drainQueue", () => {
     expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toBeUndefined();
   });
 
-  it("drains on chat-turn-finished, not on the stream's TurnCompleted", async () => {
+  it("drains on chat-turn-released, not on the stream's TurnCompleted", async () => {
     let streamHandler: ((event: StreamEvent) => void) | null = null;
     mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
       streamHandler = onEvent;
