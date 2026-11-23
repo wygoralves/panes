@@ -1680,10 +1680,15 @@ pub async fn get_thread_messages_window(
     if cursor.is_none() {
         // The stored blocks of a running turn trail its stream; have the turn
         // store them first so the window covers every event emitted so far.
-        state
+        if !state
             .turns
             .request_stream_snapshot(&thread_id, STREAM_SNAPSHOT_MAX_WAIT)
-            .await;
+            .await
+        {
+            log::warn!(
+                "running turn of thread {thread_id} did not store its blocks within {STREAM_SNAPSHOT_MAX_WAIT:?}; the window may miss recent stream events"
+            );
+        }
     }
 
     run_db(state.db.clone(), move |db| {
@@ -1872,6 +1877,9 @@ async fn run_turn(
     let approval_event_topic = format!("approval-request-{}", thread.id);
     let mut pending_event: Option<EngineEvent> = None;
     let snapshot_sync = state.turns.snapshot_sync(&thread.id).await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.start_serving();
+    }
 
     let initial_turn_started_event = EngineEvent::TurnStarted { client_turn_id };
     let initial_progress = process_stream_event(
@@ -1930,8 +1938,10 @@ async fn run_turn(
             StreamInput::Received(received) => received,
             StreamInput::SnapshotRequested => {
                 // A view is binding to this thread mid-turn: store what the
-                // stream has so far, so its snapshot covers every event it
-                // could not hear. The next events draw higher numbers.
+                // stream has so far, with the current sequence even if no
+                // block changed, so its snapshot covers every event it could
+                // not hear. The next events draw higher numbers.
+                blocks_dirty = true;
                 flush_stream_state(
                     &state,
                     &thread,
@@ -2217,6 +2227,30 @@ async fn run_turn(
             force_persist,
         )
         .await;
+    }
+
+    // The stream is over: store it now and stop answering snapshot requests,
+    // so a view opening the thread during teardown reads everything at once.
+    flush_stream_state(
+        &state,
+        &thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        true,
+    )
+    .await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.stop_serving();
     }
 
     // A stopped turn waits a bounded time for the engine task, then aborts it:
@@ -2487,6 +2521,9 @@ async fn run_codex_review_turn(
     let approval_event_topic = format!("approval-request-{}", review_thread.id);
     let mut pending_event: Option<EngineEvent> = None;
     let snapshot_sync = state.turns.snapshot_sync(&review_thread.id).await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.start_serving();
+    }
 
     let initial_turn_started_event = EngineEvent::TurnStarted {
         client_turn_id: None,
@@ -2551,8 +2588,10 @@ async fn run_codex_review_turn(
             StreamInput::Received(received) => received,
             StreamInput::SnapshotRequested => {
                 // A view is binding to this thread mid-turn: store what the
-                // stream has so far, so its snapshot covers every event it
-                // could not hear. The next events draw higher numbers.
+                // stream has so far, with the current sequence even if no
+                // block changed, so its snapshot covers every event it could
+                // not hear. The next events draw higher numbers.
+                blocks_dirty = true;
                 flush_stream_state(
                     &state,
                     &review_thread,
@@ -2838,6 +2877,30 @@ async fn run_codex_review_turn(
             force_persist,
         )
         .await;
+    }
+
+    // The stream is over: store it now and stop answering snapshot requests,
+    // so a view opening the thread during teardown reads everything at once.
+    flush_stream_state(
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        true,
+    )
+    .await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.stop_serving();
     }
 
     // A stopped turn waits a bounded time for the engine task, then aborts it:
@@ -3793,7 +3856,7 @@ fn build_final_thread_event(
 /// before the turn is closed without it.
 const TURN_CANCEL_GRACE: Duration = Duration::from_secs(10);
 /// How long opening a thread waits for its running turn to store its blocks.
-const STREAM_SNAPSHOT_MAX_WAIT: Duration = Duration::from_millis(500);
+const STREAM_SNAPSHOT_MAX_WAIT: Duration = Duration::from_secs(2);
 
 /// The next engine event, or `None` once the channel closes. After Stop the
 /// wait is bounded: an engine that never answers the interrupt (a killed
@@ -4165,6 +4228,8 @@ fn apply_event_to_blocks(
             });
             progress.blocks_changed = true;
             if !recoverable {
+                // This forced write ends the message: settle what it left open.
+                finalize_running_blocks(blocks, &TurnCompletionStatus::Failed);
                 progress.message_status = Some(MessageStatusDto::Error);
                 progress.thread_status = Some(ThreadStatusDto::Error);
                 progress.force_persist = true;
@@ -7209,6 +7274,32 @@ mod tests {
         );
 
         assert!(progress.force_persist && progress.blocks_changed);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Action { status, .. } if status == "error"
+        ));
+
+        let mut blocks = vec![ContentBlock::Action {
+            action_id: "act-2".to_string(),
+            engine_action_id: None,
+            action_type: "command".to_string(),
+            summary: "ls".to_string(),
+            details: empty_raw_value(),
+            output_chunks: Vec::new(),
+            status: "running".to_string(),
+            result: None,
+            agent_id: None,
+        }];
+        apply_event_to_blocks(
+            &mut blocks,
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            &EngineEvent::Error {
+                message: "boom".to_string(),
+                recoverable: false,
+            },
+            1_000,
+        );
         assert!(matches!(
             &blocks[0],
             ContentBlock::Action { status, .. } if status == "error"

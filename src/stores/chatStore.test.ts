@@ -2153,6 +2153,157 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the previous reply's coverage when the next turn has stored nothing yet", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      streamHandler!({ type: "TurnCompleted", status: "completed", seq: 9 } as StreamEvent);
+      streamHandler!({ type: "TurnStarted", seq: 10 } as StreamEvent);
+      streamHandler!({ type: "TextDelta", content: "Next", seq: 11 } as StreamEvent);
+      return {
+        messages: [
+          {
+            id: "assistant-a",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "completed",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "First" }],
+            createdAt: new Date().toISOString(),
+            streamSeq: 9,
+          },
+          {
+            id: "assistant-b",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [],
+            createdAt: new Date().toISOString(),
+            streamSeq: 0,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+
+    const state = useChatStore.getState();
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[1]).toMatchObject({ id: "assistant-b", status: "streaming" });
+    expect(state.messages[1]?.blocks).toMatchObject([{ type: "text", content: "Next" }]);
+    expect(state.streaming).toBe(true);
+
+    vi.useRealTimers();
+  });
+
+  it("applies buffered turn states in the order they arrived", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      streamHandler!({ type: "ApprovalResolved", approval_id: "approval-a" } as StreamEvent);
+      streamHandler!({
+        type: "ApprovalRequested",
+        approval_id: "approval-b",
+        action_type: "command",
+        summary: "Run",
+        details: {},
+        seq: 4,
+      } as StreamEvent);
+      return {
+        messages: [
+          {
+            id: "assistant-live",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [
+              {
+                type: "approval",
+                approvalId: "approval-b",
+                actionType: "command",
+                summary: "Run",
+                details: {},
+                status: "pending",
+              },
+            ],
+            createdAt: new Date().toISOString(),
+            streamSeq: 5,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().status).toBe("awaiting_approval");
+
+    vi.useRealTimers();
+  });
+
+  it("ends a turn that finished before the view subscribed once the backend releases it", async () => {
+    mockListenThreadEvents.mockImplementationOnce(async () => () => {});
+    useThreadStore.setState({
+      threads: [
+        {
+          id: "thread-1",
+          workspaceId: "workspace-1",
+          repoId: null,
+          engineId: "claude",
+          modelId: "fable",
+          engineThreadId: "engine-thread-1",
+          engineMetadata: {},
+          title: "Running thread",
+          status: "streaming",
+          messageCount: 1,
+          totalTokens: 0,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+          settledAt: null,
+        },
+      ],
+    });
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "assistant-done",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "completed",
+          schemaVersion: 1,
+          blocks: [{ type: "text", content: "Done" }],
+          createdAt: new Date().toISOString(),
+          streamSeq: 9,
+        },
+      ],
+      nextCursor: null,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    expect(useChatStore.getState().streaming).toBe(true);
+
+    for (const handler of turnFinishedHandlers) {
+      handler({ threadId: "thread-1", status: "completed" });
+    }
+
+    expect(useChatStore.getState()).toMatchObject({ streaming: false, status: "completed" });
+  });
+
   it("settles open approvals, actions and subagents when the user stops the turn", async () => {
     mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
     useChatStore.setState({

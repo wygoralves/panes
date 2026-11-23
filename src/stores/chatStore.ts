@@ -126,11 +126,32 @@ function ensureTurnFinishedQueueListener() {
         : event.status === "interrupted"
           ? "interrupted"
           : "failed";
+    releaseFinishedTurnInView(event.threadId, status);
     void useChatStore.getState().drainQueue(event.threadId, status);
   }).catch((error) => {
     turnFinishedQueueListener = null;
     console.warn("Failed to listen for finished chat turns:", error);
   });
+}
+
+/**
+ * The backend released the thread's turn. A view that bound after the stream
+ * already ended never saw its TurnCompleted and may still read as streaming;
+ * its latest reply then is no longer streaming. A reply that is streaming
+ * belongs to a newer turn and keeps the view as it is.
+ */
+function releaseFinishedTurnInView(threadId: string, status: TurnCompletionStatus) {
+  const state = useChatStore.getState();
+  if (state.threadId !== threadId || !state.streaming) {
+    return;
+  }
+  const latestAssistant = [...state.messages].reverse().find((message) => message.role === "assistant");
+  if (latestAssistant?.status === "streaming") {
+    return;
+  }
+  useChatStore.setState(
+    applyRuntimeStateFromEvent(state.status, state.streaming, { type: "TurnCompleted", status }),
+  );
 }
 
 /** Sequence number a backend stream event carries; absent on events emitted outside a turn. */
@@ -140,18 +161,18 @@ function streamEventSeq(event: StreamEvent): number | null {
 }
 
 /**
- * Stream sequence the latest assistant reply of a loaded snapshot covers. Only
- * that reply can still be streaming; older ones may carry numbers from an
- * earlier run.
+ * Stream sequence the latest stored assistant reply of a loaded snapshot
+ * covers. Older replies may carry numbers from an earlier run, and a reply
+ * whose turn has not stored anything yet (sequence 0) covers nothing, so the
+ * reply before it still decides.
  */
 function snapshotStreamSeq(messages: Message[]): number | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (message.role !== "assistant") {
-      continue;
-    }
     const seq = message.streamSeq;
-    return typeof seq === "number" && seq > 0 ? seq : null;
+    if (message.role === "assistant" && typeof seq === "number" && seq > 0) {
+      return seq;
+    }
   }
   return null;
 }
@@ -2330,7 +2351,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const seq = streamEventSeq(event);
           if (seq !== null && coveredSeq !== null && seq <= coveredSeq) {
             // The snapshot holds this event's blocks but not the turn state it
-            // implies, such as a TurnCompleted that ended the turn.
+            // implies, such as a TurnCompleted that ended the turn. Earlier
+            // events still queued apply first so states keep their order.
+            flushQueuedStreamEvents();
             set((state) =>
               state.threadId === threadId
                 ? applyRuntimeStateFromEvent(state.status, state.streaming, event)
@@ -2372,7 +2395,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      const threadStatus = activeThread?.status ?? "idle";
+      // The thread list may have heard the turn end while the window loaded.
+      const threadStatus =
+        useThreadStore.getState().threads.find((thread) => thread.id === threadId)?.status ??
+        activeThread?.status ??
+        "idle";
       const currentState = get();
       if (currentState.threadId === threadId && currentState.streaming) {
         if (currentState.unlisten) {
@@ -2706,7 +2733,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       set({ status: "idle", streaming: false, messages: nextMessages });
     } catch (error) {
-      set({ error: String(error) });
+      if (get().threadId === threadId) {
+        set({ error: String(error) });
+      }
     }
   },
   drainQueue: async (threadId, status) => {

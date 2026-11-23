@@ -61,6 +61,9 @@ impl ActiveTurn {
 pub struct StreamSnapshotSync {
     requested: Notify,
     flushed: Notify,
+    /// True while the turn loop streams and answers requests. Before it starts
+    /// nothing was emitted, and it stores everything before it stops.
+    serving: AtomicBool,
 }
 
 impl StreamSnapshotSync {
@@ -70,6 +73,16 @@ impl StreamSnapshotSync {
 
     pub fn mark_flushed(&self) {
         self.flushed.notify_waiters();
+    }
+
+    pub fn start_serving(&self) {
+        self.serving.store(true, Ordering::SeqCst);
+    }
+
+    /// Called once the turn stored everything it streamed.
+    pub fn stop_serving(&self) {
+        self.serving.store(false, Ordering::SeqCst);
+        self.mark_flushed();
     }
 }
 
@@ -154,21 +167,20 @@ impl TurnManager {
     }
 
     /// Asks the running turn of `thread_id` to store its blocks and waits for
-    /// that write, at most `max_wait`. Returns at once when no turn runs.
-    pub async fn request_stream_snapshot(&self, thread_id: &str, max_wait: Duration) {
+    /// that write, at most `max_wait`. Returns false only when the wait ran
+    /// out; with no streaming turn the stored blocks are already complete.
+    pub async fn request_stream_snapshot(&self, thread_id: &str, max_wait: Duration) -> bool {
         let Some(sync) = self.snapshot_sync(thread_id).await else {
-            return;
+            return true;
         };
         let flushed = sync.flushed.notified();
         tokio::pin!(flushed);
         flushed.as_mut().enable();
-        match self.snapshot_sync(thread_id).await {
-            Some(current) if Arc::ptr_eq(&current, &sync) => {}
-            // The turn finished, after its final write, before we subscribed.
-            _ => return,
+        if !sync.serving.load(Ordering::SeqCst) {
+            return true;
         }
         sync.requested.notify_one();
-        let _ = tokio::time::timeout(max_wait, flushed).await;
+        tokio::time::timeout(max_wait, flushed).await.is_ok()
     }
 
     pub async fn finish(&self, thread_id: &str) {
@@ -254,16 +266,37 @@ mod tests {
 
         assert!(turns.try_register("thread", CancellationToken::new()).await);
         let sync = turns.snapshot_sync("thread").await.expect("sync exists");
+        // A turn whose loop has not started has emitted nothing yet.
+        assert!(
+            turns
+                .request_stream_snapshot("thread", Duration::from_secs(5))
+                .await
+        );
+        sync.start_serving();
         let turn_loop = tokio::spawn(async move {
             sync.requested().await;
             sync.mark_flushed();
         });
         let started = tokio::time::Instant::now();
-        turns
-            .request_stream_snapshot("thread", Duration::from_secs(5))
-            .await;
+        assert!(
+            turns
+                .request_stream_snapshot("thread", Duration::from_secs(5))
+                .await
+        );
         assert!(started.elapsed() < Duration::from_secs(1));
         turn_loop.await.expect("turn loop task panicked");
+
+        // Once the loop stored everything and stopped, nothing is awaited.
+        turns
+            .snapshot_sync("thread")
+            .await
+            .expect("sync exists")
+            .stop_serving();
+        assert!(
+            turns
+                .request_stream_snapshot("thread", Duration::from_secs(5))
+                .await
+        );
     }
 
     #[tokio::test]
