@@ -77,6 +77,14 @@ jobs:
       - name: Rust check
         working-directory: src-tauri
         run: cargo check
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      # Reports lints without failing the job: the tree still carries style
+      # warnings. Deny-by-default lints still fail it.
+      - name: Rust clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets
 
   macos_compat:
     runs-on: macos-15
@@ -100,6 +108,9 @@ jobs:
       - name: Rust check for Intel macOS target
         working-directory: src-tauri
         run: cargo check --target x86_64-apple-darwin
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
 
   windows_compat:
     runs-on: windows-latest
@@ -123,30 +134,9 @@ jobs:
       - name: Rust check on Windows
         working-directory: src-tauri
         run: cargo check
-      - name: Windows runtime env tests
+      - name: Rust tests on Windows
         working-directory: src-tauri
-        run: cargo test runtime_env --lib
-      - name: Windows app config tests
-        working-directory: src-tauri
-        run: cargo test app_config --lib
-      - name: Windows file command tests
-        working-directory: src-tauri
-        run: cargo test commands::files::tests --lib
-      - name: Windows keep awake tests
-        working-directory: src-tauri
-        run: cargo test commands::power::tests --lib
-      - name: Windows keep awake backend tests
-        working-directory: src-tauri
-        run: cargo test power::tests --lib
-      - name: Windows terminal tests
-        working-directory: src-tauri
-        run: cargo test terminal::tests --lib
-      - name: Windows Codex engine tests
-        working-directory: src-tauri
-        run: cargo test codex::tests --lib
-      - name: Windows Claude sidecar tests
-        working-directory: src-tauri
-        run: cargo test claude_sidecar::tests --lib
+        run: cargo test --lib
 
   windows_bundle_check:
     runs-on: windows-latest
