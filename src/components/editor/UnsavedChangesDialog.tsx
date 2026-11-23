@@ -18,6 +18,8 @@ export function UnsavedChangesDialog() {
       confirmLabel={t("editor.unsavedOnExit.discard")}
       cancelLabel={t("editor.unsavedOnExit.cancel")}
       secondaryLabel={t("editor.unsavedOnExit.saveAll")}
+      // Return saves; discarding takes a deliberate click.
+      initialFocus="secondary"
       onSecondary={() => {
         if (!isSaving) void resolveUnsavedChangesPrompt("save-all");
       }}
