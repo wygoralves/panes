@@ -690,7 +690,8 @@ interface WorktreeRemovalResult {
   keptWorktrees: string[];
 }
 
-type WorktreeRemovalDecision = "force" | "remove" | "keep";
+/** Whether git may discard uncommitted files and unmerged commits, or "keep". */
+type WorktreeRemovalDecision = { forceWorktree: boolean; forceBranch: boolean } | "keep";
 
 /**
  * Removes worktrees one at a time. `decide` picks per worktree whether git may
@@ -712,15 +713,14 @@ async function removeWorktreesSequential(
       keptWorktrees.push(worktree.branch || worktree.worktreePath);
       continue;
     }
-    const forced = decision === "force";
     try {
       const result = await ipc.removeGitWorktree(
         worktree.repoPath,
         worktree.worktreePath,
-        forced,
+        decision.forceWorktree,
         worktree.branch,
         true,
-        forced,
+        decision.forceBranch,
       );
       // The directory is gone either way; only the branch survived.
       if (result?.branchDeleteError) {
@@ -733,14 +733,18 @@ async function removeWorktreesSequential(
   return { failures, keptBranches, keptWorktrees };
 }
 
-const forceRollback = async (): Promise<WorktreeRemovalDecision> => "force";
+const forceRollback = async (): Promise<WorktreeRemovalDecision> => ({
+  forceWorktree: true,
+  forceBranch: true,
+});
 
 /**
  * Re-inspects each worktree right before it is removed, because agents can keep
  * writing and committing while a confirmation is open. A worktree whose work
  * stays within what the user confirmed losing (nothing, when unconfirmed) is
- * removed, forced only when confirmed. One that gained more is kept: even an
- * unforced removal drops commits held only by a detached HEAD.
+ * removed, forcing only the part the user confirmed: files or commits. One that
+ * gained more is kept: even an unforced removal drops commits held only by a
+ * detached HEAD.
  */
 function decideConfirmedRemoval(
   confirmed: WorktreeRemovalRisk[] | undefined,
@@ -759,7 +763,10 @@ function decideConfirmedRemoval(
         && current.untrackedCount <= (risk?.untrackedCount ?? 0)
         && current.unmergedCommitCount <= (risk?.unmergedCommitCount ?? 0);
       if (!withinConfirmed) return "keep";
-      return risk ? "force" : "remove";
+      return {
+        forceWorktree: (risk?.changedCount ?? 0) + (risk?.untrackedCount ?? 0) > 0,
+        forceBranch: (risk?.unmergedCommitCount ?? 0) > 0,
+      };
     } catch {
       return "keep";
     }

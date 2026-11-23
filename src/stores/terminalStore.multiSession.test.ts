@@ -281,6 +281,41 @@ describe("terminalStore.createMultiSessionGroup", () => {
       true,
       "panes/r1/agent-2",
       true,
+      false,
+    );
+  });
+
+  it("forces only the part of a worktree the user confirmed losing", async () => {
+    await useTerminalStore.getState().removeGroupWorktrees(
+      "ws-1",
+      [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+      ],
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+            changedCount: 0,
+            untrackedCount: 0,
+            unmergedCommitCount: 1,
+          },
+        ],
+      },
+    );
+
+    // Confirming one commit allows `branch -D` but not `worktree remove --force`.
+    expect(mockIpc.removeGitWorktree).toHaveBeenCalledWith(
+      "/repo",
+      "/repo/.panes/worktrees/r1/agent-1",
+      false,
+      "panes/r1/agent-1",
+      true,
       true,
     );
   });
@@ -366,14 +401,14 @@ describe("terminalStore.createMultiSessionGroup", () => {
               branch: "panes/r1/agent-1",
               changedCount: 0,
               untrackedCount: 0,
-              unmergedCommitCount: 0,
+              unmergedCommitCount: 1,
             },
           ],
         },
       ),
     ).resolves.toBeUndefined();
 
-    expect(mockIpc.removeGitWorktree.mock.calls[0]?.[2]).toBe(true);
+    expect(mockIpc.removeGitWorktree.mock.calls[0]?.[5]).toBe(true);
     expect(useTerminalStore.getState().workspaces["ws-1"]?.error).toBeUndefined();
   });
 
@@ -1157,7 +1192,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
     expect(applied).toBe(true);
     expect(mockIpc.removeGitWorktree.mock.calls).toEqual([
       ["/repo", "/repo/.panes/worktrees/r1/clean", false, "panes/r1/clean", true, false],
-      ["/repo", "/repo/.panes/worktrees/r1/dirty", true, "panes/r1/dirty", true, true],
+      ["/repo", "/repo/.panes/worktrees/r1/dirty", true, "panes/r1/dirty", true, false],
     ]);
   });
 
