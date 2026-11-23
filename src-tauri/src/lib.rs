@@ -4,7 +4,9 @@ mod db;
 mod engines;
 mod fs_ops;
 mod git;
-#[cfg(any(target_os = "linux", test))]
+// The tests also run on macOS: the integration logic is plain POSIX paths
+// and PATH lookups. Windows paths and PATHEXT lookups do not apply to it.
+#[cfg(any(target_os = "linux", all(test, unix)))]
 mod linux_appimage;
 mod linux_webkit;
 mod locale;
