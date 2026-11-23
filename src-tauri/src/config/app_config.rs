@@ -424,13 +424,27 @@ impl AppConfig {
         let path = Self::path();
 
         if !path.exists() {
+            restore_interrupted_windows_save(&path);
+        }
+
+        if !path.exists() {
             let config = Self::default();
             config.save_unlocked()?;
             return Ok(config);
         }
 
         let raw = fs::read_to_string(&path)?;
-        let config = toml::from_str::<Self>(&raw).unwrap_or_default();
+        let config = match toml::from_str::<Self>(&raw) {
+            Ok(config) => config,
+            Err(error) => {
+                // Keep starting with defaults (an Err here would abort startup),
+                // but copy the unreadable file aside first: the next save
+                // overwrites config.toml.
+                log::error!("failed to parse {}: {error}", path.display());
+                preserve_corrupt_config(&path, &raw);
+                Self::default()
+            }
+        };
         Ok(config)
     }
 
@@ -482,35 +496,71 @@ pub(crate) fn app_data_env_lock() -> &'static Mutex<()> {
 }
 
 fn replace_file(temp_path: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        // Windows does not support atomic rename-over-existing. Use a backup
-        // strategy: rename the existing file to .bak, rename the new file into
-        // place, then remove .bak.  A crash between steps 1 and 2 leaves the
-        // .bak file as a recoverable copy.
-        if path.exists() {
-            let backup = path.with_extension("toml.bak");
-            // Clean up any stale backup from a prior interrupted save.
-            let _ = fs::remove_file(&backup);
-            match fs::rename(path, &backup) {
-                Ok(()) => {
-                    if let Err(error) = fs::rename(temp_path, path) {
-                        // Restore the backup so the original config is preserved.
-                        let _ = fs::rename(&backup, path);
-                        return Err(error);
-                    }
-                    let _ = fs::remove_file(&backup);
-                    return Ok(());
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    // File vanished between exists() and rename — proceed.
-                }
-                Err(error) => return Err(error),
-            }
-        }
+    // std::fs::rename replaces an existing destination on every platform
+    // (MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows), so config.toml
+    // is never missing mid-save.
+    fs::rename(temp_path, path)
+}
+
+/// Older Windows builds saved by renaming config.toml to config.toml.bak
+/// before moving the new file in. A crash between the two renames left only
+/// the backup; put it back instead of starting from defaults.
+fn restore_interrupted_windows_save(path: &std::path::Path) {
+    let backup = path.with_extension("toml.bak");
+    if !backup.is_file() {
+        return;
+    }
+    match fs::rename(&backup, path) {
+        Ok(()) => log::warn!(
+            "restored {} from an interrupted save backup",
+            path.display()
+        ),
+        Err(error) => log::error!(
+            "failed to restore {} from {}: {error}",
+            path.display(),
+            backup.display()
+        ),
+    }
+}
+
+/// Copies an unparseable config file to `config.toml.corrupt-<unix-seconds>`
+/// unless a copy with the same contents already exists, so repeated saves do
+/// not pile up identical copies.
+fn preserve_corrupt_config(path: &std::path::Path, raw: &str) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let prefix = format!("{file_name}.corrupt-");
+    let already_preserved = fs::read_dir(parent)
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                entry.file_name().to_string_lossy().starts_with(&prefix)
+                    && fs::read_to_string(entry.path()).is_ok_and(|existing| existing == raw)
+            })
+        })
+        .unwrap_or(false);
+    if already_preserved {
+        return;
     }
 
-    fs::rename(temp_path, path)
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let copy_path = parent.join(format!("{prefix}{timestamp}"));
+    match fs::write(&copy_path, raw) {
+        Ok(()) => log::error!(
+            "kept a copy of the unreadable config at {}",
+            copy_path.display()
+        ),
+        Err(error) => log::error!(
+            "failed to keep a copy of the unreadable config at {}: {error}",
+            copy_path.display()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -635,6 +685,59 @@ max_action_output_chars = 20000
             let saved = AppConfig::load_or_create().expect("config should reload after overwrite");
             assert_eq!(saved.general.locale.as_deref(), Some("pt-BR"));
             assert!(saved.power.keep_awake_enabled);
+        });
+    }
+
+    #[test]
+    fn unparseable_config_is_copied_aside_before_the_next_save() {
+        with_temp_app_data_env(|| {
+            let path = AppConfig::path();
+            fs::create_dir_all(path.parent().expect("config has a parent"))
+                .expect("config dir should exist");
+            let broken = "[power]\nbattery_threshold = 300\n";
+            fs::write(&path, broken).expect("broken config should be written");
+
+            AppConfig::mutate(|config| {
+                config.general.locale = Some("en".to_string());
+                Ok(())
+            })
+            .expect("mutate should still succeed");
+            AppConfig::mutate(|_| Ok(())).expect("second mutate should succeed");
+
+            let corrupt_copies: Vec<_> = fs::read_dir(path.parent().unwrap())
+                .expect("config dir should be readable")
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("config.toml.corrupt-")
+                })
+                .collect();
+            assert_eq!(corrupt_copies.len(), 1);
+            assert_eq!(
+                fs::read_to_string(corrupt_copies[0].path()).expect("copy should be readable"),
+                broken
+            );
+        });
+    }
+
+    #[test]
+    fn backup_from_an_interrupted_save_is_restored() {
+        with_temp_app_data_env(|| {
+            let path = AppConfig::path();
+            fs::create_dir_all(path.parent().expect("config has a parent"))
+                .expect("config dir should exist");
+            let mut config = AppConfig::default();
+            config.general.locale = Some("pt-BR".to_string());
+            let raw = toml::to_string_pretty(&config).expect("config should serialize");
+            fs::write(path.with_extension("toml.bak"), raw).expect("backup should be written");
+
+            let loaded = AppConfig::load_or_create().expect("config should load");
+
+            assert_eq!(loaded.general.locale.as_deref(), Some("pt-BR"));
+            assert!(path.is_file());
+            assert!(!path.with_extension("toml.bak").exists());
         });
     }
 
