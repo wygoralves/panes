@@ -37,10 +37,11 @@ const markdownWorkerCallbacks = new Map<
 
 // Admits web, mail, phone and file links, fragments, relative paths and the
 // local file references the linkifier emits (`src/a.ts:12`, `README.md:4`,
-// `C:\repo\a.ts`, `\\server\share`). Any other scheme, and protocol-relative
-// `//host` links, are dropped.
-const MARKDOWN_ALLOWED_URI_RE =
-  /^(?!\/[\\/]|\\\/)(?:(?:https?|mailto|tel|file):|[a-z]:[\\/]|[^a-z]|[a-z][a-z0-9+.-]*(?:[^a-z0-9+.:-]|$)|[a-z0-9+-]*\.[a-z0-9+.-]*:\d)/i;
+// `Makefile:12`, `C:\repo\a.ts`, `\\server\share`). Any other scheme, and
+// protocol-relative `//host` links, are dropped. A bare `name:line[:col]` can
+// only evaluate a number even if a browser reads `name` as a scheme.
+export const MARKDOWN_ALLOWED_URI_RE =
+  /^(?!\/[\\/]|\\\/)(?:(?:https?|mailto|tel|file):|[a-z]:[\\/]|[^a-z]|[a-z][a-z0-9+.-]*(?:[^a-z0-9+.:-]|$)|[a-z0-9+-]*\.[a-z0-9+.-]*:\d|[a-z][a-z0-9+.-]*:\d+(?::\d+)?$)/i;
 
 // The markdown parser already encodes raw HTML. This is the last barrier
 // before the HTML reaches the DOM, so a parser bug cannot run script.
