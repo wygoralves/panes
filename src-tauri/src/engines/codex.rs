@@ -334,145 +334,38 @@ impl Engine for CodexEngine {
         &self.name
     }
 
+    /// Offline fallback used only when `model/list` fails. Mirrors the
+    /// non-hidden entries of the Codex 0.170 catalog.
     fn models(&self) -> Vec<ModelInfo> {
         vec![
-            ModelInfo {
-                id: "gpt-5.4".to_string(),
-                display_name: "gpt-5.4".to_string(),
-                description: "Latest frontier agentic coding model.".to_string(),
-                hidden: false,
-                is_default: true,
-                upgrade: None,
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: true,
-                default_reasoning_effort: "medium".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Fast responses with lighter reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balances speed and reasoning depth for everyday tasks"
-                            .to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Greater reasoning depth for complex problems".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "xhigh".to_string(),
-                        description: "Extra high reasoning depth for complex problems".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "gpt-5.3-codex".to_string(),
-                display_name: "gpt-5.3-codex".to_string(),
-                description: "Frontier Codex-optimized agentic coding model.".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: Some("gpt-5.4".to_string()),
-                availability_nux: None,
-                upgrade_info: Some(ModelUpgradeInfo {
-                    model: "gpt-5.4".to_string(),
-                    upgrade_copy: None,
-                    model_link: None,
-                    migration_markdown: None,
-                }),
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: true,
-                default_reasoning_effort: "medium".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Fast responses with lighter reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balanced speed and reasoning depth".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Greater reasoning depth for complex problems".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "xhigh".to_string(),
-                        description: "Extra high reasoning depth for complex problems".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "gpt-5.3-codex-spark".to_string(),
-                display_name: "GPT-5.3-Codex-Spark".to_string(),
-                description: "Ultra-fast coding model.".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: None,
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string()],
-                attachment_modalities: vec!["text".to_string()],
-                limits: None,
-                supports_personality: true,
-                default_reasoning_effort: "high".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Fast responses with lighter reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balances speed and reasoning depth for everyday tasks"
-                            .to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Greater reasoning depth for complex problems".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "xhigh".to_string(),
-                        description: "Extra high reasoning depth for complex problems".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "gpt-5.1-codex-mini".to_string(),
-                display_name: "gpt-5.1-codex-mini".to_string(),
-                description: "Optimized for codex. Cheaper, faster, but less capable.".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: Some("gpt-5.4".to_string()),
-                availability_nux: None,
-                upgrade_info: Some(ModelUpgradeInfo {
-                    model: "gpt-5.4".to_string(),
-                    upgrade_copy: None,
-                    model_link: None,
-                    migration_markdown: None,
-                }),
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: false,
-                default_reasoning_effort: "medium".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Dynamically adjusts reasoning based on the task".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Maximizes reasoning depth for complex or ambiguous problems"
-                            .to_string(),
-                    },
-                ],
-            },
+            static_codex_model(
+                "gpt-6.2-sol",
+                "GPT-6.2-Sol",
+                "Fast, go-to model for coding and everyday work.",
+                true,
+                "low",
+            ),
+            static_codex_model(
+                "gpt-6.2-astra",
+                "GPT-6.2-Astra",
+                "Our most capable model for complex coding and professional work.",
+                false,
+                "low",
+            ),
+            static_codex_model(
+                "gpt-6.1-sol",
+                "GPT-6.1-Sol",
+                "Previous generation model for coding and everyday work.",
+                false,
+                "low",
+            ),
+            static_codex_model(
+                "gpt-6-luna",
+                "GPT-6-Luna",
+                "Fast and affordable model for easier tasks.",
+                false,
+                "medium",
+            ),
         ]
     }
 
@@ -4972,6 +4865,43 @@ fn external_sandbox_opt_in(value: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+fn static_codex_model(
+    id: &str,
+    display_name: &str,
+    description: &str,
+    is_default: bool,
+    default_reasoning_effort: &str,
+) -> ModelInfo {
+    let effort = |reasoning_effort: &str, description: &str| ReasoningEffortOption {
+        reasoning_effort: reasoning_effort.to_string(),
+        description: description.to_string(),
+    };
+    ModelInfo {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        description: description.to_string(),
+        hidden: false,
+        is_default,
+        upgrade: None,
+        availability_nux: None,
+        upgrade_info: None,
+        input_modalities: vec!["text".to_string(), "image".to_string()],
+        attachment_modalities: vec!["text".to_string(), "image".to_string()],
+        limits: None,
+        supports_personality: false,
+        default_reasoning_effort: default_reasoning_effort.to_string(),
+        supported_reasoning_efforts: vec![
+            effort("low", "Fast responses with lighter reasoning"),
+            effort(
+                "medium",
+                "Balances speed and reasoning depth for everyday tasks",
+            ),
+            effort("high", "Greater reasoning depth for complex problems"),
+            effort("xhigh", "Extra high reasoning depth for complex problems"),
+        ],
+    }
+}
+
 /// True when `thread/resume` failed because Codex has no such thread (for
 /// example its rollout file is gone), as opposed to a transient failure.
 fn is_missing_thread_error(error: &str) -> bool {
@@ -8603,6 +8533,20 @@ mod tests {
         ));
         assert!(!is_missing_thread_error("401 Unauthorized"));
         assert!(!is_missing_thread_error("codex app-server exited"));
+    }
+
+    #[test]
+    fn static_model_catalog_defaults_to_a_current_codex_model() {
+        let models = CodexEngine::default().models();
+        let defaults = models
+            .iter()
+            .filter(|model| model.is_default)
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(defaults, vec!["gpt-6.2-sol"]);
+        assert!(models.iter().all(|model| !model.id.starts_with("gpt-5")));
+        assert!(models.iter().all(|model| model.upgrade.is_none()));
     }
 
     #[test]

@@ -235,7 +235,7 @@ impl Default for GeneralConfig {
         Self {
             theme: "dark".to_string(),
             default_engine: "codex".to_string(),
-            default_model: "gpt-5.4".to_string(),
+            default_model: "gpt-6.2-sol".to_string(),
             locale: None,
             terminal_accelerated_rendering: None,
             terminal_font_size: None,
