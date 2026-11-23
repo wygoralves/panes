@@ -126,13 +126,28 @@ pub async fn soft_reset_last_commit(
 }
 
 /// The trust level of the repo that holds `repo_path`. A path Panes does not
-/// know (for example a worktree outside the repo) counts as standard.
+/// know (for example a worktree outside the repo) counts as standard, and so
+/// does another repository nested inside a trusted one: trust covers the
+/// repository the user marked and its worktrees, which share its config.
 fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustLevelDto> {
-    Ok(
-        db::repos::find_deepest_repo_containing_path(db, repo_path, None)?
-            .map(|repo| repo.trust_level)
-            .unwrap_or(TrustLevelDto::Standard),
-    )
+    let Some(repo) = db::repos::find_deepest_repo_containing_path(db, repo_path, None)? else {
+        return Ok(TrustLevelDto::Standard);
+    };
+    if matches!(repo.trust_level, TrustLevelDto::Trusted)
+        && !same_git_common_dir(repo_path, &repo.path)
+    {
+        return Ok(TrustLevelDto::Standard);
+    }
+    Ok(repo.trust_level)
+}
+
+fn same_git_common_dir(a: &str, b: &str) -> bool {
+    let resolve = |path: &str| {
+        worktree::git_common_dir(path)
+            .ok()
+            .and_then(|dir| dir.canonicalize().ok())
+    };
+    matches!((resolve(a), resolve(b)), (Some(a), Some(b)) if a == b)
 }
 
 #[tauri::command]
@@ -769,6 +784,43 @@ mod tests {
                 let _ = fs::remove_dir_all(root);
             }
         }
+    }
+
+    #[test]
+    fn a_repo_nested_in_a_trusted_repo_is_not_trusted() {
+        let repo = TestRepo::init();
+        // Registered paths are canonical, as the workspace scan stores them.
+        let root = repo.path.canonicalize().expect("canonical repo path");
+        let registered = crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "repo",
+            root.to_str().unwrap(),
+            "main",
+            true,
+        )
+        .expect("register repo");
+        crate::db::repos::set_repo_trust_level(
+            &repo.state.db,
+            &registered.id,
+            TrustLevelDto::Trusted,
+        )
+        .expect("trust repo");
+        let worktree = repo.add_worktree("feature");
+        let nested = root.join("vendor/nested");
+        fs::create_dir_all(&nested).expect("create nested repo dir");
+        run_git(nested.to_str().unwrap(), &["init", "-q"]).expect("init nested repo");
+
+        let trust = |path: &str| repo_trust_level(&repo.state.db, path).expect("trust level");
+        assert!(matches!(
+            trust(root.to_str().unwrap()),
+            TrustLevelDto::Trusted
+        ));
+        assert!(matches!(trust(&worktree), TrustLevelDto::Trusted));
+        assert!(matches!(
+            trust(nested.to_str().unwrap()),
+            TrustLevelDto::Standard
+        ));
     }
 
     #[tokio::test]
