@@ -605,6 +605,15 @@ async fn prepare_send_message_turn(
         .as_ref()
         .map(|repo| repo.trust_level.clone())
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
+    let project_settings_trusted = run_db(db.clone(), {
+        let trust_level = trust_level.clone();
+        let cwd = match &scope {
+            ThreadScope::Repo { repo_path } => repo_path.clone(),
+            ThreadScope::Workspace { root_path, .. } => root_path.clone(),
+        };
+        move |db| project_settings_trusted_for_cwd(db, &trust_level, &cwd)
+    })
+    .await?;
     let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
         state.engines.codex_uses_external_sandbox().await
     } else {
@@ -730,7 +739,7 @@ async fn prepare_send_message_turn(
         personality,
         output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
         opencode_agent: thread_opencode_agent(thread.engine_metadata.as_ref()),
-        project_settings_trusted: matches!(trust_level, TrustLevelDto::Trusted),
+        project_settings_trusted,
     };
 
     let engine_thread_id = state
@@ -4485,6 +4494,20 @@ fn workspace_write_opt_in_enabled(metadata: Option<&Value>) -> bool {
         .unwrap_or(false)
 }
 
+/// Claude reads `.mcp.json` from its cwd and every directory above it, so a
+/// Trusted repo's project settings load only when no untrusted repo encloses
+/// that cwd.
+fn project_settings_trusted_for_cwd(
+    db: &crate::db::Database,
+    trust_level: &TrustLevelDto,
+    cwd: &str,
+) -> anyhow::Result<bool> {
+    if !matches!(trust_level, TrustLevelDto::Trusted) {
+        return Ok(false);
+    }
+    Ok(!db::repos::untrusted_repo_encloses_path(db, cwd)?)
+}
+
 fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
     if repos
         .iter()
@@ -4993,6 +5016,58 @@ mod tests {
             "Thread",
         )
         .expect("failed to create thread")
+    }
+
+    #[test]
+    fn trusted_repo_inside_an_untrusted_repo_keeps_project_settings_off() {
+        let state = test_app_state();
+        let outer = std::env::temp_dir().join(format!("panes-chat-outer-{}", Uuid::new_v4()));
+        let inner = outer.join("sub/inner");
+        fs::create_dir_all(&inner).expect("failed to create inner repo");
+        let workspace =
+            db::workspaces::upsert_workspace(&state.db, outer.to_string_lossy().as_ref(), Some(3))
+                .expect("failed to create workspace");
+        let outer_repo = db::repos::upsert_repo(
+            &state.db,
+            &workspace.id,
+            "outer",
+            outer.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert outer repo");
+        let inner_repo = db::repos::upsert_repo(
+            &state.db,
+            &workspace.id,
+            "inner",
+            inner.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert inner repo");
+        db::repos::set_repo_trust_level(&state.db, &inner_repo.id, TrustLevelDto::Trusted)
+            .expect("failed to trust inner repo");
+        let inner_cwd = inner.to_string_lossy().to_string();
+
+        db::repos::set_repo_trust_level(&state.db, &outer_repo.id, TrustLevelDto::Restricted)
+            .expect("failed to restrict outer repo");
+        assert!(
+            !project_settings_trusted_for_cwd(&state.db, &TrustLevelDto::Trusted, &inner_cwd)
+                .expect("trust lookup failed")
+        );
+
+        db::repos::set_repo_trust_level(&state.db, &outer_repo.id, TrustLevelDto::Trusted)
+            .expect("failed to trust outer repo");
+        assert!(
+            project_settings_trusted_for_cwd(&state.db, &TrustLevelDto::Trusted, &inner_cwd)
+                .expect("trust lookup failed")
+        );
+        assert!(
+            !project_settings_trusted_for_cwd(&state.db, &TrustLevelDto::Standard, &inner_cwd)
+                .expect("trust lookup failed")
+        );
+
+        let _ = fs::remove_dir_all(&outer);
     }
 
     fn attachment_validation_catalog(attachment_modalities: Vec<&str>) -> Vec<EngineInfoDto> {
