@@ -173,6 +173,20 @@ impl SharedTerminalOutput {
         self.ready.notify_one();
         (trimmed, total_bytes)
     }
+
+    /// Tells the emitter no more output is coming. `done` is set under the
+    /// buffer lock because the emitter checks it and then waits on `ready`
+    /// while holding that lock; a store and notify outside the lock can land
+    /// between the two and leave the emitter asleep, so the reader never joins it.
+    fn finish(&self) {
+        let state = self
+            .buffer
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        self.done.store(true, Ordering::Relaxed);
+        drop(state);
+        self.ready.notify_one();
+    }
 }
 
 fn take_string_head(value: &mut String, max_bytes: usize) -> String {
@@ -900,8 +914,7 @@ impl TerminalManager {
                 }
             }
 
-            shared.done.store(true, Ordering::Relaxed);
-            shared.ready.notify_one();
+            shared.finish();
             let _ = emitter.join();
             if let Some(probe) = foreground_probe {
                 probe.thread().unpark();
