@@ -402,7 +402,7 @@ impl AppConfig {
 
     pub fn load_or_create() -> anyhow::Result<Self> {
         let _guard = lock_config()?;
-        Self::load_or_create_unlocked()
+        Self::load_or_create_unlocked(false)
     }
 
     #[allow(dead_code)]
@@ -413,13 +413,16 @@ impl AppConfig {
 
     pub fn mutate<T>(f: impl FnOnce(&mut Self) -> anyhow::Result<T>) -> anyhow::Result<T> {
         let _guard = lock_config()?;
-        let mut config = Self::load_or_create_unlocked()?;
+        let mut config = Self::load_or_create_unlocked(true)?;
         let result = f(&mut config)?;
         config.save_unlocked()?;
         Ok(result)
     }
 
-    fn load_or_create_unlocked() -> anyhow::Result<Self> {
+    /// `refuse_unpreserved` is for callers that save afterwards: they get an
+    /// error instead of defaults when an unreadable config.toml could not be
+    /// copied aside, so the save cannot destroy the only copy.
+    fn load_or_create_unlocked(refuse_unpreserved: bool) -> anyhow::Result<Self> {
         runtime_env::migrate_legacy_app_data_dir()
             .context("failed to migrate legacy app data dir")?;
         let path = Self::path();
@@ -456,7 +459,12 @@ impl AppConfig {
                     path.display(),
                     line.map_or_else(|| "unknown".to_string(), |line| line.to_string())
                 );
-                preserve_corrupt_config(&path, &raw);
+                if !preserve_corrupt_config(&path, &raw) && refuse_unpreserved {
+                    anyhow::bail!(
+                        "{} could not be parsed or copied aside; not overwriting it",
+                        path.display()
+                    );
+                }
                 Self::default()
             }
         };
@@ -540,13 +548,13 @@ fn restore_interrupted_windows_save(path: &std::path::Path) {
 
 /// Copies an unparseable config file to `config.toml.corrupt-<unix-seconds>`
 /// unless a copy with the same contents already exists, so repeated saves do
-/// not pile up identical copies.
-fn preserve_corrupt_config(path: &std::path::Path, raw: &str) {
+/// not pile up identical copies. Returns whether a copy exists afterwards.
+fn preserve_corrupt_config(path: &std::path::Path, raw: &str) -> bool {
     let Some(parent) = path.parent() else {
-        return;
+        return false;
     };
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-        return;
+        return false;
     };
     let prefix = format!("{file_name}.corrupt-");
     let already_preserved = fs::read_dir(parent)
@@ -558,7 +566,7 @@ fn preserve_corrupt_config(path: &std::path::Path, raw: &str) {
         })
         .unwrap_or(false);
     if already_preserved {
-        return;
+        return true;
     }
 
     let timestamp = std::time::SystemTime::now()
@@ -583,14 +591,20 @@ fn preserve_corrupt_config(path: &std::path::Path, raw: &str) {
         }
     };
     match written {
-        Ok(()) => log::error!(
-            "kept a copy of the unreadable config at {}",
-            copy_path.display()
-        ),
-        Err(error) => log::error!(
-            "failed to keep a copy of the unreadable config at {}: {error}",
-            copy_path.display()
-        ),
+        Ok(()) => {
+            log::error!(
+                "kept a copy of the unreadable config at {}",
+                copy_path.display()
+            );
+            true
+        }
+        Err(error) => {
+            log::error!(
+                "failed to keep a copy of the unreadable config at {}: {error}",
+                copy_path.display()
+            );
+            false
+        }
     }
 }
 
@@ -802,6 +816,43 @@ max_action_output_chars = 20000
             assert_eq!(copies.len(), 1);
             assert_eq!(
                 fs::read_to_string(copies[0].path()).expect("copy should be readable"),
+                broken
+            );
+        });
+    }
+
+    #[test]
+    fn mutation_refuses_to_overwrite_an_unreadable_config_it_could_not_copy() {
+        with_temp_app_data_env(|| {
+            let path = AppConfig::path();
+            let dir = path.parent().expect("config has a parent").to_path_buf();
+            fs::create_dir_all(&dir).expect("config dir should exist");
+            let broken = "[power]\nbattery_threshold = 300\n";
+            fs::write(&path, broken).expect("broken config should be written");
+            // Occupy every copy name for the next few seconds so the copy fails.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_secs();
+            for second in now..now + 3 {
+                fs::create_dir(dir.join(format!("config.toml.corrupt-{second}")))
+                    .expect("blocker should be created");
+                for attempt in 1..100 {
+                    fs::create_dir(dir.join(format!("config.toml.corrupt-{second}-{attempt}")))
+                        .expect("blocker should be created");
+                }
+            }
+
+            let loaded = AppConfig::load_or_create().expect("startup still gets defaults");
+            let mutated = AppConfig::mutate(|config| {
+                config.general.locale = Some("en".to_string());
+                Ok(())
+            });
+
+            assert_eq!(loaded.general.locale, None);
+            assert!(mutated.is_err());
+            assert_eq!(
+                fs::read_to_string(&path).expect("config should be readable"),
                 broken
             );
         });
