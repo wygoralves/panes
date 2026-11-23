@@ -57,9 +57,15 @@ pub fn run_git(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
 /// Runs a git command that only reads the repo (status, diff, log, ...).
 /// Panes runs these in the background, without a click, for every repo it
 /// shows. `--no-optional-locks` keeps `git status` from rewriting the index,
-/// which would otherwise run the repo's `post-index-change` hook.
+/// which would otherwise run the repo's `post-index-change` hook. Signature
+/// checks would run the repo's `gpg.program`, and a lazy fetch in a partial
+/// clone would reach the network without the checks fetch gets.
 pub fn run_git_read(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
+    let filter_overrides = repo_filter_overrides(repo_path)?;
     let output = git_command(repo_path)
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .args(["-c", "log.showSignature=false"])
+        .args(&filter_overrides)
         .arg("--no-optional-locks")
         .args(args)
         .output()
@@ -175,6 +181,31 @@ pub fn repo_scoped_config_keys(repo_path: &str, key_regex: &str) -> anyhow::Resu
         }
     }
     Ok(keys)
+}
+
+/// `-c` overrides that empty every filter driver the repo's own config
+/// defines. Git runs a driver's clean command whenever it hashes a working
+/// tree file (status on a touched file, diff), and its smudge command on
+/// checkout. Drivers from the user's global config, such as git-lfs, stay.
+fn repo_filter_overrides(repo_path: &str) -> anyhow::Result<Vec<String>> {
+    let keys = repo_scoped_config_keys(repo_path, r"^filter\..+\.(clean|smudge|process)$")
+        .context("failed to check the repository git config")?;
+    let mut drivers: Vec<&str> = keys
+        .iter()
+        .filter_map(|key| key.strip_prefix("filter.")?.rsplit_once('.'))
+        .map(|(driver, _)| driver)
+        .collect();
+    drivers.sort_unstable();
+    drivers.dedup();
+
+    let mut overrides = Vec::new();
+    for driver in drivers {
+        for setting in ["clean=", "smudge=", "process=", "required=false"] {
+            overrides.push("-c".to_string());
+            overrides.push(format!("filter.{driver}.{setting}"));
+        }
+    }
+    Ok(overrides)
 }
 
 /// A `-c` value that turns off every hook for one git call, including the

@@ -138,6 +138,8 @@ pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
 }
 
 fn get_git_status_via_cli(repo_path: &str) -> anyhow::Result<GitStatusDto> {
+    // Checking a submodule's contents runs `git status` inside it, under the
+    // submodule's own config, so only its checked-out commit is compared.
     let output = run_git_read(
         repo_path,
         &[
@@ -146,6 +148,7 @@ fn get_git_status_via_cli(repo_path: &str) -> anyhow::Result<GitStatusDto> {
             "-b",
             "-z",
             "--untracked-files=normal",
+            "--ignore-submodules=dirty",
         ],
     )
     .context("failed to read git status via cli")?;
@@ -346,6 +349,7 @@ pub fn get_file_diff(
         "diff",
         "--no-ext-diff",
         "--no-textconv",
+        "--ignore-submodules=dirty",
     ];
     if staged {
         args.push("--staged");
@@ -1816,9 +1820,9 @@ mod tests {
     use super::{
         build_diff_preview, checkout_git_branch, create_git_branch, discard_files, fetch_repo,
         get_commit_diff, get_file_diff, get_git_status, get_workspace_file_tree_page,
-        is_diff_preview_metadata_line, parse_porcelain_v1_status, rename_git_branch, run_git,
-        search_workspace_files, stage_files, truncate_utf8_prefix, unstage_files, FileTreeCache,
-        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
+        is_diff_preview_metadata_line, list_git_commits, parse_porcelain_v1_status,
+        rename_git_branch, run_git, search_workspace_files, stage_files, truncate_utf8_prefix,
+        unstage_files, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::{FileTreeEntryDto, TrustLevelDto};
     use uuid::Uuid;
@@ -2129,6 +2133,165 @@ mod tests {
         assert!(status.files.iter().any(|file| file.path == "a.txt"));
         assert!(diff.content.contains("+changed"));
         assert!(commit_diff.content.contains("+second"));
+    }
+
+    #[cfg(unix)]
+    fn write_script(path: &std::path::Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod script");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_reads_do_not_run_filters_or_signature_programs() {
+        let repo = TempRepo::init();
+        let markers = repo.path.join(".git/markers");
+        fs::create_dir_all(&markers).expect("create marker dir");
+        let signer = repo.path.join(".git/sign.sh");
+        write_script(
+            &signer,
+            "echo '[GNUPG:] SIG_CREATED D 1 8 00 0 0' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nx\\n-----END PGP SIGNATURE-----\\n'",
+        );
+        let verifier = repo.path.join(".git/verify.sh");
+        write_script(
+            &verifier,
+            &format!("touch {}/gpg\nexit 1", markers.display()),
+        );
+
+        repo.write(".gitattributes", "*.txt filter=x\n");
+        repo.write("a.txt", "original\n");
+        run_git(repo.path_str(), &["add", "-A"]).expect("git add");
+        let gpg = format!("gpg.program={}", signer.display());
+        run_git(
+            repo.path_str(),
+            &["-c", &gpg, "commit", "-q", "-S", "-m", "signed"],
+        )
+        .expect("signed commit");
+
+        let clean = format!("touch {}/clean; cat", markers.display());
+        let verify = verifier.display().to_string();
+        for (key, value) in [
+            ("filter.x.clean", clean.as_str()),
+            ("filter.x.required", "true"),
+            ("gpg.program", verify.as_str()),
+            ("log.showSignature", "true"),
+        ] {
+            run_git(repo.path_str(), &["config", key, value]).expect("set config");
+        }
+        // Same content, new timestamps: git has to hash the file to tell.
+        repo.write("a.txt", "original\n");
+
+        let status = get_git_status(repo.path_str()).expect("status");
+        get_file_diff(repo.path_str(), "a.txt", false).expect("file diff");
+        let commits = list_git_commits(repo.path_str(), 0, 10).expect("log");
+
+        let ran: Vec<String> = fs::read_dir(&markers)
+            .expect("read marker dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(ran.is_empty(), "repo config commands ran: {ran:?}");
+        assert!(status.files.is_empty(), "{:?}", status.files);
+        assert_eq!(commits.entries.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn status_does_not_run_a_submodule_config_command() {
+        let repo = TempRepo::init();
+        // The submodule's source lives under .git so it is not a change.
+        let source = repo.path.join(".git/sub-source");
+        fs::create_dir_all(&source).expect("create submodule source");
+        fs::write(source.join(".gitattributes"), "*.txt filter=x\n").expect("attributes");
+        fs::write(source.join("a.txt"), "a\n").expect("write file");
+        let source_str = source.to_str().unwrap();
+        for args in [
+            &["init", "-q", "--initial-branch=main"][..],
+            &["add", "-A"],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "-m",
+                "sub",
+            ],
+        ] {
+            run_git(source_str, args).expect("prepare submodule source");
+        }
+        run_git(
+            repo.path_str(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                source_str,
+                "sub",
+            ],
+        )
+        .expect("add submodule");
+        repo.commit_all("add submodule");
+
+        let marker = repo.path.join(".git/clean-ran");
+        let clean = format!("touch {}; cat", marker.display());
+        run_git(
+            repo.path.join("sub").to_str().unwrap(),
+            &["config", "filter.x.clean", &clean],
+        )
+        .expect("set submodule filter");
+        repo.write("sub/a.txt", "a\n");
+
+        get_git_status(repo.path_str()).expect("status");
+
+        assert!(!marker.exists(), "the submodule's clean filter ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_diff_does_not_lazy_fetch_in_a_partial_clone() {
+        let (repo, remote) = repo_with_file_remote();
+        repo.write("b.txt", "b\n");
+        repo.commit_all("second");
+        run_git(repo.path_str(), &["push", "-q", "origin", "main"]).expect("push");
+        let head = run_git(repo.path_str(), &["rev-parse", "HEAD"]).expect("rev-parse");
+        run_git(
+            remote.to_str().unwrap(),
+            &["config", "uploadpack.allowFilter", "true"],
+        )
+        .expect("allow filter");
+        let clone = repo.path.join("partial");
+        let url = format!("file://{}", remote.display());
+        run_git(
+            repo.path_str(),
+            &[
+                "clone",
+                "-q",
+                "--no-checkout",
+                "--filter=blob:none",
+                &url,
+                clone.to_str().unwrap(),
+            ],
+        )
+        .expect("partial clone");
+        let marker = repo.path.join("uploadpack-ran");
+        let uploadpack = format!("touch {}; git-upload-pack", marker.display());
+        run_git(
+            clone.to_str().unwrap(),
+            &["config", "remote.origin.uploadpack", &uploadpack],
+        )
+        .expect("set uploadpack");
+
+        let _ = get_commit_diff(clone.to_str().unwrap(), head.trim());
+
+        assert!(
+            !marker.exists(),
+            "a background read fetched from the remote"
+        );
     }
 
     #[test]
