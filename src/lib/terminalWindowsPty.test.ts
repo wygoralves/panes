@@ -1,3 +1,4 @@
+import { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 import { readTerminalWindowsPty, resolveTerminalWindowsPty } from "./terminalWindowsPty";
 
@@ -18,10 +19,37 @@ describe("resolveTerminalWindowsPty", () => {
     expect(resolveTerminalWindowsPty("13.0.0")).toEqual({ backend: "conpty", buildNumber: 22000 });
   });
 
-  it("leaves the build unknown on Windows 10 or when the version is missing", () => {
-    expect(resolveTerminalWindowsPty("10.0.0")).toEqual({ backend: "conpty" });
-    expect(resolveTerminalWindowsPty("")).toEqual({ backend: "conpty" });
-    expect(resolveTerminalWindowsPty(undefined)).toEqual({ backend: "conpty" });
+  it("reports a pre-reflow ConPTY build on Windows 10 or when the version is missing", () => {
+    for (const platformVersion of ["10.0.0", "", undefined]) {
+      expect(resolveTerminalWindowsPty(platformVersion)).toEqual({
+        backend: "conpty",
+        buildNumber: 19045,
+      });
+    }
+  });
+});
+
+describe("xterm with the resolved windowsPty", () => {
+  async function rowsAfterWidening(platformVersion: string | undefined): Promise<string[]> {
+    const terminal = new Terminal({
+      cols: 5,
+      rows: 4,
+      windowsPty: resolveTerminalWindowsPty(platformVersion),
+    });
+    await new Promise<void>((resolve) => terminal.write("abcdefghij\r\n", resolve));
+    terminal.resize(10, 4);
+    const buffer = terminal.buffer.active;
+    const rows = [0, 1].map((row) => buffer.getLine(row)?.translateToString(true) ?? "");
+    terminal.dispose();
+    return rows;
+  }
+
+  it("leaves wrapped rows to ConPTY on Windows 10", async () => {
+    await expect(rowsAfterWidening("10.0.0")).resolves.toEqual(["abcde", "fghij"]);
+  });
+
+  it("reflows wrapped rows itself on Windows 11", async () => {
+    await expect(rowsAfterWidening("15.0.0")).resolves.toEqual(["abcdefghij", ""]);
   });
 });
 
@@ -33,10 +61,11 @@ describe("readTerminalWindowsPty", () => {
     });
   });
 
-  it("falls back to ConPTY without a build when client hints are unavailable", async () => {
-    await expect(readTerminalWindowsPty({} as Navigator)).resolves.toEqual({ backend: "conpty" });
+  it("falls back to a pre-reflow ConPTY build when client hints are unavailable", async () => {
+    const fallback = { backend: "conpty", buildNumber: 19045 };
+    await expect(readTerminalWindowsPty({} as Navigator)).resolves.toEqual(fallback);
     await expect(
       readTerminalWindowsPty(navigatorWithPlatformVersion(new Error("denied"))),
-    ).resolves.toEqual({ backend: "conpty" });
+    ).resolves.toEqual(fallback);
   });
 });
