@@ -868,6 +868,7 @@ mod tests {
         assert_eq!(blocks[1]["status"], "error");
         assert_eq!(blocks[2]["status"], "interrupted");
         assert!(blocks[2].get("progress").is_none());
+        assert!(blocks[2].get("durationMs").is_none());
     }
 
     #[test]

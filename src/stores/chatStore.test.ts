@@ -2208,6 +2208,63 @@ describe("chatStore send", () => {
     ]);
   });
 
+  it("keeps a subagent-only reply on Stop and leaves another thread alone", async () => {
+    const runningSubagent = {
+      type: "subagent" as const,
+      agentId: "agent-1",
+      description: "explore",
+      status: "running" as const,
+      startedAt: Date.now() - 1000,
+    };
+    const assistantWith = (threadId: string) => ({
+      id: `assistant-${threadId}`,
+      threadId,
+      role: "assistant" as const,
+      status: "streaming" as const,
+      schemaVersion: 1,
+      blocks: [runningSubagent],
+      createdAt: new Date().toISOString(),
+      hydration: "full" as const,
+      hasDeferredContent: false,
+    });
+
+    mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
+    useChatStore.setState({
+      threadId: "thread-1",
+      status: "streaming",
+      streaming: true,
+      messages: [assistantWith("thread-1")],
+    });
+    await useChatStore.getState().cancel();
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
+      { type: "subagent", status: "interrupted" },
+    ]);
+
+    let releaseStop: () => void = () => {};
+    mockIpc.cancelTurn.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (releaseStop = resolve)),
+    );
+    useChatStore.setState({
+      threadId: "thread-1",
+      status: "streaming",
+      streaming: true,
+      messages: [assistantWith("thread-1")],
+    });
+    const stopping = useChatStore.getState().cancel();
+    useChatStore.setState({
+      threadId: "thread-2",
+      status: "streaming",
+      streaming: true,
+      messages: [assistantWith("thread-2")],
+    });
+    releaseStop();
+    await stopping;
+
+    const state = useChatStore.getState();
+    expect(state.streaming).toBe(true);
+    expect(state.messages[0]?.blocks).toMatchObject([{ type: "subagent", status: "running" }]);
+  });
+
   it("returns failure and rolls back when an approval response is rejected", async () => {
     mockIpc.respondApproval.mockRejectedValueOnce(new Error("approval failed"));
     useChatStore.setState({

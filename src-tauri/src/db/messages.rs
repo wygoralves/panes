@@ -1131,11 +1131,6 @@ fn finalize_running_blocks_json(blocks: &mut Value) -> bool {
     let Some(items) = blocks.as_array_mut() else {
         return false;
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0);
-
     let mut changed = false;
     for block in items.iter_mut() {
         let Some(object) = block.as_object_mut() else {
@@ -1152,13 +1147,9 @@ fn finalize_running_blocks_json(blocks: &mut Value) -> bool {
                     "status".to_string(),
                     Value::String("interrupted".to_string()),
                 );
+                // The stop time is unknown after a restart, so no duration is
+                // made up for it.
                 object.remove("progress");
-                if let Some(started_at) = object.get("startedAt").and_then(Value::as_u64) {
-                    object.insert(
-                        "durationMs".to_string(),
-                        Value::from(now.saturating_sub(started_at)),
-                    );
-                }
                 changed = true;
             }
             _ => {}

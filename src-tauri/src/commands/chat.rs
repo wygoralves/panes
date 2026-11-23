@@ -3862,7 +3862,14 @@ fn apply_event_to_blocks(
             progress.force_persist = true;
             // A subagent still running when the turn ends shares the turn's
             // fate; nothing will complete it later.
-            progress.blocks_changed = finalize_running_subagent_blocks(blocks, status);
+            // A turn that did not complete leaves its running actions open
+            // too; settle them in this forced write so a crash before the
+            // epilogue cannot leave them running.
+            progress.blocks_changed = if matches!(status, TurnCompletionStatus::Completed) {
+                finalize_running_subagent_blocks(blocks, status)
+            } else {
+                finalize_running_blocks(blocks, status)
+            };
             match status {
                 TurnCompletionStatus::Completed => {
                     progress.message_status = Some(MessageStatusDto::Completed);
@@ -7143,6 +7150,37 @@ mod tests {
             })
             .collect();
         assert_eq!(statuses, vec!["error", "done", "interrupted"]);
+    }
+
+    #[test]
+    fn interrupted_completion_settles_running_actions_in_its_forced_write() {
+        let mut blocks = vec![ContentBlock::Action {
+            action_id: "act-1".to_string(),
+            engine_action_id: None,
+            action_type: "command".to_string(),
+            summary: "ls".to_string(),
+            details: empty_raw_value(),
+            output_chunks: Vec::new(),
+            status: "running".to_string(),
+            result: None,
+            agent_id: None,
+        }];
+        let progress = apply_event_to_blocks(
+            &mut blocks,
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            &EngineEvent::TurnCompleted {
+                token_usage: None,
+                status: TurnCompletionStatus::Interrupted,
+            },
+            1_000,
+        );
+
+        assert!(progress.force_persist && progress.blocks_changed);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Action { status, .. } if status == "error"
+        ));
     }
 
     #[test]

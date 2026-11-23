@@ -2673,13 +2673,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Stop means stop: whatever was waiting behind this turn is dropped.
       useChatQueueStore.getState().clear(threadId);
       pendingTurnMetaByThread.delete(threadId);
+      if (get().threadId !== threadId) {
+        // The view moved to another thread while Stop was in flight; the
+        // stopped one reloads with its settled blocks when reopened.
+        return;
+      }
       // Remove the trailing assistant message if it has no meaningful content
       // (e.g. only thinking blocks with no text, or completely empty)
       const messages = get().messages;
       const last = messages[messages.length - 1];
       const lastHasContent = last?.role === "assistant" && (last.blocks ?? []).some((b) => {
         if (b.type === "text") return Boolean(b.content?.trim());
-        if (b.type === "action" || b.type === "diff" || b.type === "code" || b.type === "approval") return true;
+        if (
+          b.type === "action" ||
+          b.type === "diff" ||
+          b.type === "code" ||
+          b.type === "approval" ||
+          b.type === "subagent"
+        ) {
+          return true;
+        }
         return false;
       });
       let nextMessages = last?.role === "assistant" && !lastHasContent
