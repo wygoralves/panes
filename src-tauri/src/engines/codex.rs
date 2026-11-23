@@ -167,6 +167,14 @@ struct CodexState {
     runtime_model_cache: Option<Vec<ModelInfo>>,
     sandbox_probe_completed: bool,
     force_external_sandbox: bool,
+    /// Set once Panes' own workspaceWrite command probe has passed on this
+    /// transport, so it does not run again before every turn.
+    workspace_probe_passed: bool,
+    /// Why a startup probe moved Codex to external sandbox mode. Only Panes'
+    /// own probes set this; command output from a turn never does.
+    sandbox_fallback_reason: Option<String>,
+    /// Threads that were already told about the sandbox fallback.
+    sandbox_fallback_notified_threads: HashSet<String>,
     protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
     runtime_monitor_transport_tag: Option<usize>,
 }
@@ -498,17 +506,27 @@ impl Engine for CodexEngine {
 
         let transport = self.ensure_ready_transport().await?;
 
-        if !force_external_sandbox
-            && self
+        if !force_external_sandbox && !self.workspace_probe_passed().await {
+            if self
                 .detect_workspace_write_sandbox_failure(transport.as_ref(), &cwd, &sandbox)
                 .await
-        {
-            force_external_sandbox = true;
-            self.set_force_external_sandbox(true).await;
-            log::warn!("forcing external sandbox mode after workspaceWrite command probe failed");
-            sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
-            sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
-            requested_runtime.sandbox_policy = sandbox_policy.clone();
+            {
+                force_external_sandbox = true;
+                self.fall_back_to_external_sandbox(
+                    "the Codex workspace-write sandbox probe failed on this machine",
+                )
+                .await;
+                log::warn!(
+                    "forcing external sandbox mode after workspaceWrite command probe failed"
+                );
+                sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
+                sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+                requested_runtime.sandbox_policy = sandbox_policy.clone();
+            } else if sandbox.sandbox_mode.as_deref() != Some("danger-full-access") {
+                // A full-access thread does not exercise the OS sandbox, so
+                // only a sandboxed probe may skip later probes.
+                self.mark_workspace_probe_passed().await;
+            }
         }
 
         if let Some(existing_thread_id) = resume_engine_thread_id {
@@ -628,6 +646,12 @@ impl Engine for CodexEngine {
             .resolve_turn_plan_mode_activation(runtime.as_ref(), &input)
             .await;
         validate_turn_attachments(&input.attachments).await?;
+        if let Some(notice) = self
+            .take_sandbox_fallback_notice(&thread_id, runtime.as_ref())
+            .await
+        {
+            event_tx.send(notice).await.ok();
+        }
 
         let transport_for_rate_limits = transport.clone();
         let rate_limits_task = tokio::spawn(async move {
@@ -758,9 +782,6 @@ impl Engine for CodexEngine {
                 }
 
                 for event in mapper.map_turn_result(&result) {
-                  if event_indicates_sandbox_denial(&event) {
-                    self.force_external_sandbox_for_thread(&thread_id).await;
-                  }
                   if event_indicates_auth_failure(&event) {
                     self
                       .invalidate_transport(
@@ -833,7 +854,6 @@ impl Engine for CodexEngine {
                       }
                       self
                         .route_sub_agent_notification(
-                          &thread_id,
                           &child_thread_id,
                           &link,
                           &method,
@@ -884,9 +904,6 @@ impl Engine for CodexEngine {
                     }
 
                     for event in mapped_events {
-                      if event_indicates_sandbox_denial(&event) {
-                        self.force_external_sandbox_for_thread(&thread_id).await;
-                      }
                       if event_indicates_auth_failure(&event) {
                         self
                           .invalidate_transport(
@@ -1580,9 +1597,6 @@ impl CodexEngine {
                 }
 
                 for event in mapper.map_turn_result(&result) {
-                  if event_indicates_sandbox_denial(&event) {
-                    self.force_external_sandbox_for_thread(&active_thread_id).await;
-                  }
                   if event_indicates_auth_failure(&event) {
                     self
                       .invalidate_transport(
@@ -1664,9 +1678,6 @@ impl CodexEngine {
                     }
 
                     for event in mapped_events {
-                      if event_indicates_sandbox_denial(&event) {
-                        self.force_external_sandbox_for_thread(&active_thread_id).await;
-                      }
                       if event_indicates_auth_failure(&event) {
                         self
                           .invalidate_transport(
@@ -1961,15 +1972,18 @@ impl CodexEngine {
         }
 
         if prefer_external_sandbox_by_default() {
-            Some(
-                "Panes is forcing Codex external sandbox mode on macOS to avoid opaque tool-call failures in local workspace-write mode. Set `PANES_CODEX_PREFER_WORKSPACE_WRITE=1` only for diagnostics."
-                    .to_string(),
-            )
-        } else {
-            Some(
-                "macOS denied Codex local sandbox (`sandbox-exec`). Commands may fail unless Panes uses external sandbox mode. This is an OS/policy restriction, not a promptable permission.".to_string(),
-            )
+            return Some(format!(
+                "Codex runs without its OS sandbox because `{EXTERNAL_SANDBOX_OPT_IN_ENV}` is set. Unset it to restore read-only and workspace-write limits."
+            ));
         }
+
+        let reason = self.state.lock().await.sandbox_fallback_reason.clone();
+        Some(match reason {
+            Some(reason) => format!(
+                "Codex runs without its OS sandbox because {reason}. Commands can write anywhere your user account can."
+            ),
+            None => "Codex runs without its OS sandbox. Commands can write anywhere your user account can.".to_string(),
+        })
     }
 
     async fn probe_version_from_resolution(
@@ -2444,6 +2458,9 @@ impl CodexEngine {
             state.thread_runtimes.clear();
             state.sandbox_probe_completed = false;
             state.force_external_sandbox = false;
+            state.workspace_probe_passed = false;
+            state.sandbox_fallback_reason = None;
+            state.sandbox_fallback_notified_threads.clear();
             if let Some(diagnostics) = state.protocol_diagnostics.as_mut() {
                 diagnostics.stale = true;
             }
@@ -2973,7 +2990,7 @@ impl CodexEngine {
         let prefer_external_default = prefer_external_sandbox_by_default();
         if prefer_external_default {
             log::warn!(
-                "forcing Codex externalSandbox mode by default on macOS; local workspace-write mode can fail tool calls without diagnostics"
+                "forcing Codex externalSandbox mode because {EXTERNAL_SANDBOX_OPT_IN_ENV} is set"
             );
         }
 
@@ -2995,15 +3012,58 @@ impl CodexEngine {
                 return true;
             }
             state.force_external_sandbox = prefer_external_default || preflight_failed;
+            if preflight_failed && !prefer_external_default {
+                state.sandbox_fallback_reason =
+                    Some("macOS refused to start its sandbox (`sandbox-exec`)".to_string());
+            }
         }
 
         state.force_external_sandbox
     }
 
-    async fn set_force_external_sandbox(&self, force_external_sandbox: bool) {
+    /// Moves the engine to external sandbox mode after one of Panes' own
+    /// startup probes failed. Never call this from turn output: a command can
+    /// print any text, including a sandbox denial.
+    async fn fall_back_to_external_sandbox(&self, reason: &str) {
         let mut state = self.state.lock().await;
         state.sandbox_probe_completed = true;
-        state.force_external_sandbox = force_external_sandbox;
+        state.force_external_sandbox = true;
+        state.sandbox_fallback_reason = Some(reason.to_string());
+    }
+
+    async fn workspace_probe_passed(&self) -> bool {
+        self.state.lock().await.workspace_probe_passed
+    }
+
+    async fn mark_workspace_probe_passed(&self) {
+        self.state.lock().await.workspace_probe_passed = true;
+    }
+
+    /// Returns a notice for the first turn of a thread that runs without the
+    /// Codex OS sandbox because a startup probe failed.
+    async fn take_sandbox_fallback_notice(
+        &self,
+        engine_thread_id: &str,
+        runtime: Option<&ThreadRuntime>,
+    ) -> Option<EngineEvent> {
+        let runtime = runtime?;
+        if runtime
+            .sandbox_policy
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            != Some("externalSandbox")
+        {
+            return None;
+        }
+        let mut state = self.state.lock().await;
+        let reason = state.sandbox_fallback_reason.clone()?;
+        if !state
+            .sandbox_fallback_notified_threads
+            .insert(engine_thread_id.to_string())
+        {
+            return None;
+        }
+        Some(sandbox_fallback_notice(&reason))
     }
 
     async fn detect_workspace_write_sandbox_failure(
@@ -3069,19 +3129,6 @@ impl CodexEngine {
         {
             let _ = (transport, cwd, sandbox);
             false
-        }
-    }
-
-    async fn force_external_sandbox_for_thread(&self, engine_thread_id: &str) {
-        self.set_force_external_sandbox(true).await;
-
-        let mut state = self.state.lock().await;
-        if let Some(runtime) = state.thread_runtimes.get_mut(engine_thread_id) {
-            let allow_network = sandbox_policy_network_enabled(&runtime.sandbox_policy);
-            runtime.sandbox_policy = serde_json::json!({
-              "type": "externalSandbox",
-              "networkAccess": if allow_network { "enabled" } else { "restricted" },
-            });
         }
     }
 
@@ -3279,7 +3326,6 @@ impl CodexEngine {
     #[allow(clippy::too_many_arguments)]
     async fn route_sub_agent_notification(
         &self,
-        root_thread_id: &str,
         child_thread_id: &str,
         link: &SubAgentLink,
         method: &str,
@@ -3308,9 +3354,6 @@ impl CodexEngine {
             .map_notification(method, params);
         let mut outgoing = Vec::with_capacity(mapped_events.len() + 1);
         for event in mapped_events {
-            if event_indicates_sandbox_denial(&event) {
-                self.force_external_sandbox_for_thread(root_thread_id).await;
-            }
             if event_indicates_auth_failure(&event) {
                 self.invalidate_transport(
                     "resetting codex transport after auth failure during sub-agent event",
@@ -3413,7 +3456,6 @@ impl CodexEngine {
                     }
                     let child_turn_completed = self
                         .route_sub_agent_notification(
-                            root_thread_id,
                             &child_thread_id,
                             &link,
                             &method,
@@ -4827,22 +4869,32 @@ async fn detect_macos_sandbox_exec_failure() -> bool {
     }
 }
 
-fn prefer_external_sandbox_by_default() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let override_workspace_write = env::var("PANES_CODEX_PREFER_WORKSPACE_WRITE")
-            .ok()
-            .map(|value| {
-                let normalized = value.trim().to_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
-        !override_workspace_write
-    }
+/// Opt-in for the old behaviour of running Codex without its OS sandbox.
+/// Codex's own sandbox is used by default on every platform, and Panes falls
+/// back to external mode only when one of its startup probes fails.
+const EXTERNAL_SANDBOX_OPT_IN_ENV: &str = "PANES_CODEX_FORCE_EXTERNAL_SANDBOX";
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        false
+fn prefer_external_sandbox_by_default() -> bool {
+    external_sandbox_opt_in(env::var(EXTERNAL_SANDBOX_OPT_IN_ENV).ok().as_deref())
+}
+
+fn external_sandbox_opt_in(value: Option<&str>) -> bool {
+    value
+        .map(|value| {
+            let normalized = value.trim().to_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes"
+        })
+        .unwrap_or(false)
+}
+
+fn sandbox_fallback_notice(reason: &str) -> EngineEvent {
+    EngineEvent::Notice {
+        kind: "codex_sandbox_fallback".to_string(),
+        level: "warning".to_string(),
+        title: "Codex sandbox is off".to_string(),
+        message: format!(
+            "Panes is running Codex without its OS sandbox because {reason}. Commands can write anywhere your user account can. Restart Codex to probe the sandbox again."
+        ),
     }
 }
 
@@ -4944,38 +4996,6 @@ fn is_transport_or_protocol_error(value: &str) -> bool {
         || value.contains("method not found")
         || value.contains("invalid params")
         || value.contains("invalid request")
-}
-
-fn sandbox_policy_network_enabled(policy: &serde_json::Value) -> bool {
-    match policy.get("networkAccess") {
-        Some(serde_json::Value::Bool(value)) => *value,
-        Some(serde_json::Value::String(value)) => value.eq_ignore_ascii_case("enabled"),
-        _ => false,
-    }
-}
-
-fn event_indicates_sandbox_denial(event: &EngineEvent) -> bool {
-    match event {
-        // Only an explicit sandbox signature may flip the session to
-        // externalSandbox (danger-full-access). Opaque failures (empty output,
-        // synthesized "Action failed with status `failed`") are routinely
-        // produced by benign non-zero commands, so treating them as denials
-        // silently disabled codex's own sandbox for every later turn.
-        EngineEvent::ActionCompleted { result, .. } if !result.success => {
-            result
-                .error
-                .as_deref()
-                .map(is_sandbox_denied_error)
-                .unwrap_or(false)
-                || result
-                    .output
-                    .as_deref()
-                    .map(is_sandbox_denied_error)
-                    .unwrap_or(false)
-        }
-        EngineEvent::Error { message, .. } => is_sandbox_denied_error(message),
-        _ => false,
-    }
 }
 
 fn event_indicates_auth_failure(event: &EngineEvent) -> bool {
@@ -8419,37 +8439,13 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_denial_ignores_opaque_action_failures() {
-        let event = EngineEvent::ActionCompleted {
-            action_id: "action-1".to_string(),
-            result: ActionResult {
-                success: false,
-                output: None,
-                error: Some("Action failed with status `failed`".to_string()),
-                diff: None,
-                duration_ms: 52,
-            },
-        };
-
-        assert!(!event_indicates_sandbox_denial(&event));
-    }
-
-    #[test]
-    fn sandbox_denial_requires_explicit_sandbox_signature() {
-        let event = EngineEvent::ActionCompleted {
-            action_id: "action-1".to_string(),
-            result: ActionResult {
-                success: false,
-                output: None,
-                error: Some(
-                    "sandbox denied: operation not permitted while writing /etc/hosts".to_string(),
-                ),
-                diff: None,
-                duration_ms: 52,
-            },
-        };
-
-        assert!(event_indicates_sandbox_denial(&event));
+    fn external_sandbox_requires_an_explicit_opt_in() {
+        assert!(!external_sandbox_opt_in(None));
+        assert!(!external_sandbox_opt_in(Some("")));
+        assert!(!external_sandbox_opt_in(Some("0")));
+        assert!(external_sandbox_opt_in(Some("1")));
+        assert!(external_sandbox_opt_in(Some(" TRUE ")));
+        assert!(external_sandbox_opt_in(Some("yes")));
     }
 
     #[test]
@@ -9240,6 +9236,155 @@ mod tests {
 mod sub_agent_routing_tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn sandbox_fallback_notice_is_sent_once_per_thread_after_a_probe_failure() {
+        let engine = CodexEngine::default();
+        let mut external = workspace_write_runtime();
+        external.sandbox_policy =
+            json!({ "type": "externalSandbox", "networkAccess": "restricted" });
+
+        // External mode without a failed probe (the opt-in) does not notify.
+        assert!(engine
+            .take_sandbox_fallback_notice("thread-1", Some(&external))
+            .await
+            .is_none());
+
+        engine
+            .fall_back_to_external_sandbox("the probe failed")
+            .await;
+        assert!(engine
+            .take_sandbox_fallback_notice("thread-1", Some(&workspace_write_runtime()))
+            .await
+            .is_none());
+        let notice = engine
+            .take_sandbox_fallback_notice("thread-1", Some(&external))
+            .await;
+        assert!(matches!(
+            notice,
+            Some(EngineEvent::Notice { ref kind, ref message, .. })
+                if kind == "codex_sandbox_fallback" && message.contains("the probe failed")
+        ));
+        assert!(engine
+            .take_sandbox_fallback_notice("thread-1", Some(&external))
+            .await
+            .is_none());
+        assert!(engine
+            .take_sandbox_fallback_notice("thread-2", Some(&external))
+            .await
+            .is_some());
+    }
+
+    fn workspace_write_runtime() -> ThreadRuntime {
+        ThreadRuntime {
+            cwd: "/tmp/workspace".to_string(),
+            model_id: "gpt-6.2-sol".to_string(),
+            approval_policy: json!("on-request"),
+            permission_profile: None,
+            approvals_reviewer: None,
+            sandbox_policy: json!({ "type": "workspaceWrite", "networkAccess": false }),
+            reasoning_effort: None,
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            native_plan_mode_active: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn turn_output_naming_a_sandbox_denial_keeps_the_sandbox() {
+        let engine = CodexEngine::default();
+        engine
+            .store_thread_runtime("root-1", workspace_write_runtime())
+            .await;
+        engine
+            .record_sub_agent_thread("child-1", "root-1", Some("explorer"))
+            .await;
+        engine.set_active_turn("child-1", "turn-child").await;
+
+        let (broadcast_tx, _idle_receiver) = broadcast::channel(16);
+        let mut subscription = broadcast_tx.subscribe();
+        let command = json!({
+            "id": "cmd-1",
+            "type": "commandExecution",
+            "command": "make test",
+            "status": "inProgress",
+        });
+        for (method, params) in [
+            (
+                "item/started",
+                json!({ "threadId": "child-1", "turnId": "turn-child", "item": command }),
+            ),
+            (
+                "item/completed",
+                json!({
+                    "threadId": "child-1",
+                    "turnId": "turn-child",
+                    "item": {
+                        "id": "cmd-1",
+                        "type": "commandExecution",
+                        "command": "make test",
+                        "status": "failed",
+                        "aggregatedOutput": "sandbox: operation not permitted",
+                    }
+                }),
+            ),
+            (
+                "error",
+                json!({
+                    "threadId": "child-1",
+                    "turnId": "turn-child",
+                    "error": { "message": "sandbox denied exec error, exit code 1" },
+                    "willRetry": false,
+                }),
+            ),
+            (
+                "turn/completed",
+                json!({
+                    "threadId": "child-1",
+                    "turn": { "id": "turn-child", "status": "failed" }
+                }),
+            ),
+        ] {
+            broadcast_tx
+                .send(child_notification(method, params))
+                .expect("subscriber should receive the notification");
+        }
+
+        let (event_tx, mut event_rx) = mpsc::channel(32);
+        let mut sub_agents = SubAgentStreamState::default();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            engine.drain_stopped_sub_agents(
+                "root-1",
+                BTreeMap::from([("child-1".to_string(), TurnCompletionStatus::Interrupted)]),
+                &mut sub_agents,
+                &mut subscription,
+                &event_tx,
+                Duration::from_secs(30),
+            ),
+        )
+        .await
+        .expect("drain should return once every child reported");
+
+        let events = drained_events(&mut event_rx);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                EngineEvent::ActionCompleted { result, .. } if !result.success
+            )),
+            "expected the failed command to reach the root turn, got {events:?}"
+        );
+        assert!(!engine.state.lock().await.force_external_sandbox);
+        assert_eq!(
+            engine
+                .thread_runtime("root-1")
+                .await
+                .expect("root runtime should remain")
+                .sandbox_policy["type"],
+            json!("workspaceWrite")
+        );
+    }
 
     #[test]
     fn records_nested_sub_agents_under_the_root_thread() {
