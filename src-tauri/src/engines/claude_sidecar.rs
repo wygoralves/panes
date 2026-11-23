@@ -364,11 +364,14 @@ where
                     }
                     Err(e) => {
                         // The line can carry prompts, tool inputs and file
-                        // contents, so only its shape reaches the log.
+                        // contents, and serde's message can quote them, so
+                        // only the line's shape and the error class are logged.
                         log::warn!(
-                            "claude sidecar: failed to parse event type={} len={}: {e}",
+                            "claude sidecar: failed to parse event type={} len={}: {:?} error at column {}",
                             sidecar_line_event_type(&line),
-                            line.len()
+                            line.len(),
+                            e.classify(),
+                            e.column()
                         );
                     }
                 },
