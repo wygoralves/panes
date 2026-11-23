@@ -2203,8 +2203,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
+    // Subscribe before reading the snapshot and hold events until it is in
+    // place: the stored blocks trail the stream, so events emitted around the
+    // read would otherwise be lost. Each event carries a sequence number, and
+    // the snapshot records the last one it covers, so the replay below skips
+    // what the snapshot already has instead of applying it twice. Releases of
+    // this thread are held from the start of the bind, before any engine sync,
+    // so one heard at any point of it still applies once the view is in place.
+    let preBindEvents: Array<StreamEvent | { heldRelease: TurnRelease }> | null = [];
+    const viewStream: OpenViewStream = {
+      threadId,
+      holdRelease: (release) => {
+        if (bindSeq !== activeThreadBindSeq || !preBindEvents) {
+          return false;
+        }
+        preBindEvents.push({ heldRelease: release });
+        return true;
+      },
+      flush: null,
+    };
+    openViewStream = viewStream;
+    // A bind that failed leaves no view behind to hold or flush for.
+    const abandonViewStream = () => {
+      if (openViewStream === viewStream) {
+        openViewStream = null;
+      }
+    };
+
     let releaseStream: (() => void) | null = null;
-    let bindViewStream: OpenViewStream | null = null;
     try {
       const threadState = useThreadStore.getState();
       let activeThread = threadState.threads.find((thread) => thread.id === threadId);
@@ -2383,25 +2409,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         scheduleStreamFlush();
       };
 
-      // Subscribe before reading the snapshot and hold events until it is in
-      // place: the stored blocks trail the stream, so events emitted around the
-      // read would otherwise be lost. Each event carries a sequence number, and
-      // the snapshot records the last one it covers, so the replay below skips
-      // what the snapshot already has instead of applying it twice.
-      let preBindEvents: Array<StreamEvent | { heldRelease: TurnRelease }> | null = [];
-      const viewStream: OpenViewStream = {
-        threadId,
-        holdRelease: (release) => {
-          if (bindSeq !== activeThreadBindSeq || !preBindEvents) {
-            return false;
-          }
-          preBindEvents.push({ heldRelease: release });
-          return true;
-        },
-        flush: null,
-      };
-      openViewStream = viewStream;
-      bindViewStream = viewStream;
       const unlistenStream = await listenThreadEvents(threadId, (event) => {
         if (bindSeq !== activeThreadBindSeq) {
           return;
@@ -2582,9 +2589,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       // A subscription that never reached the store would leak.
       releaseStream?.();
-      if (bindViewStream && openViewStream === bindViewStream) {
-        openViewStream = null;
-      }
+      abandonViewStream();
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }

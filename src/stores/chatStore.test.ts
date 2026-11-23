@@ -2519,6 +2519,140 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the open view's release ordering when an older bind resumes after its sync", async () => {
+    vi.useFakeTimers();
+
+    const codexThread = (id: string, codexSyncRequired: boolean, status: "idle" | "streaming") => ({
+      id,
+      workspaceId: "workspace-1",
+      repoId: null,
+      engineId: "codex" as const,
+      modelId: "gpt-5.3-codex",
+      engineThreadId: `engine-${id}`,
+      engineMetadata: { codexSyncRequired },
+      title: id,
+      status,
+      messageCount: 0,
+      totalTokens: 0,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      settledAt: null,
+    });
+    const threadA = codexThread("thread-a", true, "idle");
+    const threadB = codexThread("thread-b", false, "streaming");
+    useThreadStore.setState({
+      threads: [threadA, threadB],
+      threadsByWorkspace: { "workspace-1": [threadA, threadB] },
+    });
+    useChatStore.setState({ threadId: null, unlisten: undefined });
+
+    const syncA = deferred<typeof threadA>();
+    mockIpc.syncThreadFromEngine.mockImplementationOnce(() => syncA.promise);
+    const streamHandlers = new Map<string, (event: StreamEvent) => void>();
+    mockListenThreadEvents.mockImplementation(async (threadId: string, onEvent) => {
+      streamHandlers.set(threadId, onEvent);
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementation(async (threadId: string) => ({
+      messages:
+        threadId === "thread-b"
+          ? [
+              {
+                id: "assistant-old",
+                threadId: "thread-b",
+                role: "assistant",
+                status: "streaming",
+                schemaVersion: 1,
+                blocks: [{ type: "text", content: "Old" }],
+                createdAt: new Date().toISOString(),
+                streamSeq: 5,
+              },
+            ]
+          : [],
+      nextCursor: null,
+    }));
+
+    // A waits on its engine sync while the user moves on to B.
+    const bindA = useChatStore.getState().setActiveThread("thread-a");
+    await useChatStore.getState().setActiveThread("thread-b");
+    syncA.resolve({ ...threadA, engineMetadata: { codexSyncRequired: false } });
+    await bindA;
+
+    // B's delta is still batched when its release lands, so it applies first.
+    streamHandlers.get("thread-b")!({ type: "TextDelta", content: "!", seq: 6 } as StreamEvent);
+    for (const handler of turnFinishedHandlers) {
+      handler({ threadId: "thread-b", status: "interrupted", messageId: "assistant-old" });
+    }
+    await vi.advanceTimersByTimeAsync(20);
+
+    const state = useChatStore.getState();
+    expect(state.threadId).toBe("thread-b");
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toMatchObject({
+      id: "assistant-old",
+      status: "interrupted",
+      blocks: [{ type: "text", content: "Old!" }],
+    });
+    expect(state.streaming).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it("applies a release heard while the bound thread's engine sync is pending", async () => {
+    const thread = {
+      id: "thread-1",
+      workspaceId: "workspace-1",
+      repoId: null,
+      engineId: "codex" as const,
+      modelId: "gpt-5.3-codex",
+      engineThreadId: "engine-thread-1",
+      engineMetadata: { codexSyncRequired: true },
+      title: "Thread 1",
+      status: "streaming" as const,
+      messageCount: 0,
+      totalTokens: 0,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      settledAt: null,
+    };
+    useThreadStore.setState({
+      threads: [thread],
+      threadsByWorkspace: { "workspace-1": [thread] },
+    });
+    useChatStore.setState({ threadId: null, unlisten: undefined });
+
+    // The turn is released while the sync runs; the sync still answers with
+    // the status it read before that.
+    mockIpc.syncThreadFromEngine.mockImplementationOnce(async () => {
+      for (const handler of turnFinishedHandlers) {
+        handler({ threadId: "thread-1", status: "interrupted", messageId: "assistant-1" });
+      }
+      return { ...thread, engineMetadata: { codexSyncRequired: false } };
+    });
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "interrupted",
+          schemaVersion: 1,
+          blocks: [{ type: "text", content: "Partial" }],
+          createdAt: new Date().toISOString(),
+          streamSeq: 5,
+        },
+      ],
+      nextCursor: null,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+
+    const state = useChatStore.getState();
+    expect(state.messages[0]).toMatchObject({ id: "assistant-1", status: "interrupted" });
+    expect(state.streaming).toBe(false);
+    expect(state.status).not.toBe("streaming");
+  });
+
   it("settles open approvals, actions and subagents when the user stops the turn", async () => {
     mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
     useChatStore.setState({
