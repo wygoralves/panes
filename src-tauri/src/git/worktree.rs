@@ -255,10 +255,10 @@ pub struct RemoveWorktreeOutcome {
 /// outcome instead of as an error, so callers can still treat the worktree
 /// as removed.
 ///
-/// `git worktree remove` succeeds on a clean worktree even when its detached
-/// HEAD holds commits no ref reaches, and those commits go with it. Unless
-/// either force flag says the caller confirmed losing work, such a removal is
-/// refused.
+/// `git worktree remove` succeeds even when the worktree's detached HEAD holds
+/// commits no ref reaches, and those commits go with it. `force` only confirms
+/// losing files, so unless `force_branch_delete` says the caller confirmed
+/// losing commits, such a removal is refused.
 pub fn remove_worktree(
     repo_path: &str,
     worktree_path: &str,
@@ -267,7 +267,7 @@ pub fn remove_worktree(
     delete_branch: bool,
     force_branch_delete: bool,
 ) -> anyhow::Result<RemoveWorktreeOutcome> {
-    if !force && !force_branch_delete && Path::new(worktree_path).is_dir() {
+    if !force_branch_delete && Path::new(worktree_path).is_dir() {
         let detached = count_commits_held_only_by_head(worktree_path)?;
         if detached > 0 {
             anyhow::bail!(
@@ -837,15 +837,20 @@ mod tests {
             .expect_err("an unforced removal must not drop commits only HEAD reaches");
         assert!(Path::new(&worktree_path).join("detached.txt").is_file());
 
+        fs::write(Path::new(&worktree_path).join("notes.txt"), "draft\n").expect("write");
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect_err("confirming files alone must not drop commits only HEAD reaches");
+        assert!(Path::new(&worktree_path).join("detached.txt").is_file());
+
         remove_worktree(
             repo.path_str(),
             &worktree_path,
-            false,
+            true,
             Some("agent"),
             true,
             true,
         )
-        .expect("confirming the commits allows the removal");
+        .expect("confirming the files and the commits allows the removal");
         assert!(!Path::new(&worktree_path).exists());
     }
 
