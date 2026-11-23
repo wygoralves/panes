@@ -1727,6 +1727,10 @@ mod tests {
             run_git(path_str, &["init", "--initial-branch=main"]).expect("git init");
             run_git(path_str, &["config", "user.email", "test@example.com"]).expect("config email");
             run_git(path_str, &["config", "user.name", "Test"]).expect("config name");
+            // Git for Windows sets core.autocrlf=true system-wide, which turns
+            // the LF files these tests commit into CRLF on checkout. Pin it
+            // off so file contents read back the way the tests wrote them.
+            run_git(path_str, &["config", "core.autocrlf", "false"]).expect("config autocrlf");
             Self {
                 path,
                 _env_guard: env_guard,
