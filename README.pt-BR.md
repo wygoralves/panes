@@ -84,7 +84,7 @@ Para usar um release pré-compilado:
 |---|---|
 | Codex CLI | Obrigatório para a chat engine do Codex; o setup pode instalá-lo via npm |
 | Node.js | 20.5+, obrigatório para a chat engine do Claude; o setup também verifica o Node.js antes de habilitar a chat engine do Codex |
-| Login do Claude | Um login do Claude Code ou `ANTHROPIC_API_KEY`, obrigatório para a chat engine do Claude |
+| Autenticação do Claude | Obrigatória para a chat engine do Claude, por exemplo um login do Claude Code ou `ANTHROPIC_API_KEY` |
 | OpenCode CLI | `opencode` no seu `PATH`, obrigatório para a chat engine do OpenCode |
 | Git | Recomendado, para o painel de git |
 
