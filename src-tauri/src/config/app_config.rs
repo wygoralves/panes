@@ -441,7 +441,16 @@ impl AppConfig {
                 // Keep starting with defaults (an Err here would abort startup),
                 // but copy the unreadable file aside first: the next save
                 // overwrites config.toml.
-                log::error!("failed to parse {}: {error}", path.display());
+                // The error's Display quotes the offending line, which can hold
+                // a provider API key, so log only where parsing failed.
+                let line = error
+                    .span()
+                    .map(|span| raw[..span.start].matches('\n').count() + 1);
+                log::error!(
+                    "failed to parse {} (line {})",
+                    path.display(),
+                    line.map_or_else(|| "unknown".to_string(), |line| line.to_string())
+                );
                 preserve_corrupt_config(&path, &raw);
                 Self::default()
             }
