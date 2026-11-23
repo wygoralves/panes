@@ -90,8 +90,16 @@ to `~/.var/app/com.panes.app/` on the host. Panes therefore:
   with a non-empty `FLATPAK_ID` and `/.flatpak-info` present
   (`runtime_env::is_flatpak`), so a host install started from another
   Flatpak app's terminal, which inherits that app's `FLATPAK_ID`, keeps
-  using `~/.agent-workspace`. It does not try to migrate a host
-  `~/.agent-workspace` into the sandbox.
+  using `~/.agent-workspace`.
+- Copies `~/.agent-workspace` into that dir once, on the first launch where
+  the new dir has no `workspaces.db` and `~/.agent-workspace/workspaces.db`
+  is visible in the sandbox. That happens only when an older Flatpak was
+  given a home or `~/.agent-workspace` filesystem override, or
+  `--persist=.agent-workspace`. The copy never moves, deletes or changes the
+  source (it may be a host install's live data), keeps any file already in
+  the new dir, and renames the database into place last, so an interrupted
+  copy is retried on the next launch rather than opened half done. After
+  that the two dirs are independent.
 - Sets `CODEX_HOME` and `CLAUDE_CONFIG_DIR` in `flatpak/panes-wrapper.sh` to
   `$XDG_CONFIG_HOME/codex` and `$XDG_CONFIG_HOME/claude`
   (`~/.var/app/com.panes.app/config/{codex,claude}` on the host), unless they
