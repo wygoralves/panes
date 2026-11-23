@@ -411,24 +411,20 @@ impl Engine for CodexEngine {
             && sandbox.sandbox_mode.as_deref() != Some("danger-full-access")
             && !self.workspace_probe_passed().await
         {
+            // An inconclusive probe (`None`) runs again before the next turn.
             let probe_failed = self
                 .detect_workspace_write_sandbox_failure(transport.as_ref(), &cwd, &sandbox)
                 .await;
-            if probe_failed == Some(true) {
-                force_external_sandbox = true;
-                self.fall_back_to_external_sandbox(
-                    "the Codex workspace-write sandbox probe failed on this machine",
-                )
-                .await;
-                log::warn!(
-                    "forcing external sandbox mode after workspaceWrite command probe failed"
-                );
-                sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
-                sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
-                requested_runtime.sandbox_policy = sandbox_policy.clone();
-            } else if probe_failed == Some(false) {
-                // An inconclusive probe runs again before the next turn.
-                self.mark_workspace_probe_passed().await;
+            if let Some(failed) = probe_failed {
+                if self.record_workspace_probe(&transport, failed).await && failed {
+                    force_external_sandbox = true;
+                    log::warn!(
+                        "forcing external sandbox mode after workspaceWrite command probe failed"
+                    );
+                    sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
+                    sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+                    requested_runtime.sandbox_policy = sandbox_policy.clone();
+                }
             }
         }
 
@@ -3001,22 +2997,31 @@ impl CodexEngine {
         state.force_external_sandbox
     }
 
-    /// Moves the engine to external sandbox mode after one of Panes' own
-    /// startup probes failed. Never call this from turn output: a command can
-    /// print any text, including a sandbox denial.
-    async fn fall_back_to_external_sandbox(&self, reason: &str) {
+    /// Records the workspace-write probe result for `transport`. A result
+    /// from an app-server that was replaced while the probe ran says nothing
+    /// about the new one, so it is dropped and this returns false.
+    async fn record_workspace_probe(&self, transport: &Arc<CodexTransport>, failed: bool) -> bool {
         let mut state = self.state.lock().await;
-        state.sandbox_probe_completed = true;
-        state.force_external_sandbox = true;
-        state.sandbox_fallback_reason = Some(reason.to_string());
+        let current = state
+            .transport
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, transport));
+        if !current {
+            return false;
+        }
+        if failed {
+            fall_back_to_external_sandbox(
+                &mut state,
+                "the Codex workspace-write sandbox probe failed on this machine",
+            );
+        } else {
+            state.workspace_probe_passed = true;
+        }
+        true
     }
 
     async fn workspace_probe_passed(&self) -> bool {
         self.state.lock().await.workspace_probe_passed
-    }
-
-    async fn mark_workspace_probe_passed(&self) {
-        self.state.lock().await.workspace_probe_passed = true;
     }
 
     /// Returns a notice for the first turn of each thread after a startup
@@ -4847,6 +4852,15 @@ const EXTERNAL_SANDBOX_OPT_IN_ENV: &str = "PANES_CODEX_FORCE_EXTERNAL_SANDBOX";
 
 fn prefer_external_sandbox_by_default() -> bool {
     external_sandbox_opt_in(env::var(EXTERNAL_SANDBOX_OPT_IN_ENV).ok().as_deref())
+}
+
+/// Moves the engine to external sandbox mode after one of Panes' own startup
+/// probes failed. Never call this from turn output: a command can print any
+/// text, including a sandbox denial.
+fn fall_back_to_external_sandbox(state: &mut CodexState, reason: &str) {
+    state.sandbox_probe_completed = true;
+    state.force_external_sandbox = true;
+    state.sandbox_fallback_reason = Some(reason.to_string());
 }
 
 fn external_sandbox_opt_in(value: Option<&str>) -> bool {
@@ -9370,9 +9384,7 @@ mod sub_agent_routing_tests {
             .await
             .is_none());
 
-        engine
-            .fall_back_to_external_sandbox("the probe failed")
-            .await;
+        fall_back_to_external_sandbox(&mut *engine.state.lock().await, "the probe failed");
         // `thread/start` echoes `dangerFullAccess` for a new thread's first
         // turn, so the notice cannot depend on the stored policy type.
         let notice = engine.take_sandbox_fallback_notice("thread-1").await;
@@ -9389,6 +9401,40 @@ mod sub_agent_routing_tests {
             .take_sandbox_fallback_notice("thread-2")
             .await
             .is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_probe_from_a_replaced_app_server_is_dropped() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("panes-codex-probe-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let script = dir.join("codex");
+        std::fs::write(&script, "#!/bin/sh\nsleep 5\n").expect("write fake codex");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake codex executable");
+        let settings = EngineInstanceSettings::default();
+        let executable = script.to_str().expect("utf-8 path");
+        let retired = Arc::new(
+            CodexTransport::spawn(executable, &settings)
+                .await
+                .expect("spawn fake codex"),
+        );
+        let current = Arc::new(
+            CodexTransport::spawn(executable, &settings)
+                .await
+                .expect("spawn fake codex"),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let engine = CodexEngine::default();
+        engine.state.lock().await.transport = Some(current.clone());
+
+        assert!(!engine.record_workspace_probe(&retired, true).await);
+        assert!(!engine.state.lock().await.force_external_sandbox);
+        assert!(engine.record_workspace_probe(&current, true).await);
+        assert!(engine.state.lock().await.force_external_sandbox);
     }
 
     fn workspace_write_runtime() -> ThreadRuntime {
