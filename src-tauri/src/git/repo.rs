@@ -592,6 +592,7 @@ pub fn push_repo(repo_path: &str, trust: &TrustLevelDto) -> anyhow::Result<()> {
             let push_args = [
                 "push",
                 "--set-upstream",
+                "--end-of-options",
                 remote_name.as_str(),
                 branch_name.as_str(),
             ];
@@ -752,8 +753,11 @@ pub fn create_git_branch(
     from_ref: Option<&str>,
 ) -> anyhow::Result<()> {
     if let Some(reference) = from_ref.map(str::trim).filter(|value| !value.is_empty()) {
-        run_git(repo_path, &["checkout", "-b", branch_name, reference])
-            .context("failed to create git branch")?;
+        run_git(
+            repo_path,
+            &["checkout", "-b", branch_name, "--end-of-options", reference],
+        )
+        .context("failed to create git branch")?;
     } else {
         run_git(repo_path, &["checkout", "-b", branch_name])
             .context("failed to create git branch")?;
@@ -762,15 +766,21 @@ pub fn create_git_branch(
 }
 
 pub fn rename_git_branch(repo_path: &str, old_name: &str, new_name: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["branch", "-m", old_name, new_name])
-        .context("failed to rename git branch")?;
+    run_git(
+        repo_path,
+        &["branch", "-m", "--end-of-options", old_name, new_name],
+    )
+    .context("failed to rename git branch")?;
     Ok(())
 }
 
 pub fn delete_git_branch(repo_path: &str, branch_name: &str, force: bool) -> anyhow::Result<()> {
     let delete_flag = if force { "-D" } else { "-d" };
-    run_git(repo_path, &["branch", delete_flag, branch_name])
-        .context("failed to delete git branch")?;
+    run_git(
+        repo_path,
+        &["branch", delete_flag, "--end-of-options", branch_name],
+    )
+    .context("failed to delete git branch")?;
     Ok(())
 }
 
@@ -1769,18 +1779,23 @@ pub fn list_remotes(repo_path: &str) -> anyhow::Result<Vec<crate::models::GitRem
 }
 
 pub fn add_remote(repo_path: &str, name: &str, url: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["remote", "add", name, url]).context("failed to add remote")?;
+    run_git(repo_path, &["remote", "add", "--end-of-options", name, url])
+        .context("failed to add remote")?;
     Ok(())
 }
 
 pub fn remove_remote(repo_path: &str, name: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["remote", "remove", name]).context("failed to remove remote")?;
+    run_git(repo_path, &["remote", "remove", "--end-of-options", name])
+        .context("failed to remove remote")?;
     Ok(())
 }
 
 pub fn rename_remote(repo_path: &str, old_name: &str, new_name: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["remote", "rename", old_name, new_name])
-        .context("failed to rename remote")?;
+    run_git(
+        repo_path,
+        &["remote", "rename", "--end-of-options", old_name, new_name],
+    )
+    .context("failed to rename remote")?;
     Ok(())
 }
 
@@ -1789,11 +1804,11 @@ mod tests {
     use std::fs;
 
     use super::{
-        build_diff_preview, checkout_git_branch, discard_files, fetch_repo, get_commit_diff,
-        get_file_diff, get_git_status, get_workspace_file_tree_page, is_diff_preview_metadata_line,
-        parse_porcelain_v1_status, run_git, search_workspace_files, stage_files,
-        truncate_utf8_prefix, unstage_files, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
-        GIT_DIFF_PREVIEW_MAX_LINES,
+        build_diff_preview, checkout_git_branch, create_git_branch, discard_files, fetch_repo,
+        get_commit_diff, get_file_diff, get_git_status, get_workspace_file_tree_page,
+        is_diff_preview_metadata_line, parse_porcelain_v1_status, rename_git_branch, run_git,
+        search_workspace_files, stage_files, truncate_utf8_prefix, unstage_files, FileTreeCache,
+        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::{FileTreeEntryDto, TrustLevelDto};
     use uuid::Uuid;
@@ -1934,6 +1949,34 @@ mod tests {
 
         let staged = run_git(repo.path_str(), &["diff", "--cached", "--name-only"]).expect("diff");
         assert_eq!(staged.trim(), "x/i.ts", "only the chosen file is unstaged");
+    }
+
+    #[test]
+    fn create_branch_does_not_read_a_dash_prefixed_ref_as_an_option() {
+        let repo = TempRepo::init();
+        repo.write("a.txt", "committed\n");
+        repo.commit_all("init");
+        repo.write("a.txt", "committed\nDIRTY\n");
+
+        // Before the fix this ran `git checkout -b feature -f`, which wiped
+        // the uncommitted change.
+        let _ = create_git_branch(repo.path_str(), "feature", Some("-f"));
+
+        assert!(repo.read("a.txt").contains("DIRTY"));
+    }
+
+    #[test]
+    fn rename_branch_does_not_read_a_dash_prefixed_name_as_an_option() {
+        let repo = TempRepo::init();
+        repo.write("a.txt", "committed\n");
+        repo.commit_all("init");
+
+        // Before the fix this ran `git branch -m -M renamed`, renaming main.
+        let _ = rename_git_branch(repo.path_str(), "-M", "renamed");
+
+        let branches = run_git(repo.path_str(), &["branch", "--format=%(refname:short)"])
+            .expect("list branches");
+        assert_eq!(branches.trim(), "main");
     }
 
     /// A repo with one commit and an `origin` remote pointing at a bare
