@@ -545,6 +545,13 @@ impl KeepAwakeManager {
                     if !on_ac {
                         log::info!("keep awake pausing: switched to battery");
                         runtime.paused_due_to_battery = true;
+                        // Killing the Windows helper skips its screen saver
+                        // restore, and a later disable() finds no child.
+                        let restore_screen_saver = runtime.child.is_some()
+                            && runtime
+                                .active_profile
+                                .as_ref()
+                                .is_some_and(|profile| profile.prevent_screen_saver);
                         // Kill primary child but keep monitor running
                         if let Some(mut child) = runtime.child.take() {
                             let _ = child.kill().await;
@@ -569,6 +576,9 @@ impl KeepAwakeManager {
                             try_allow_closed_display_sleep(allow_password_prompt).await;
                         }
                         let _ = clear_helper_state(&self.state_path());
+                        if restore_screen_saver {
+                            restore_windows_screen_saver().await;
+                        }
                     } else if runtime.paused_due_to_battery {
                         log::info!("keep awake resuming: AC power restored");
                         let profile = runtime
