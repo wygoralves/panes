@@ -753,6 +753,11 @@ pub struct GitFileCompareDto {
     pub has_staged_changes: bool,
     pub has_unstaged_changes: bool,
     pub is_binary: bool,
+    /// The working-tree side was not valid UTF-8 and `modified_content` was
+    /// decoded lossily, so saving that text back would corrupt the file. A
+    /// lossy base side is display only and does not set this.
+    #[serde(default)]
+    pub modified_is_lossy_decode: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_editable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

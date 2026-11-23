@@ -852,6 +852,8 @@ export interface GitFileCompare {
   hasStagedChanges: boolean;
   hasUnstagedChanges: boolean;
   isBinary: boolean;
+  /** The working-tree side was not valid UTF-8 and was decoded lossily. */
+  modifiedIsLossyDecode?: boolean;
   isEditable?: boolean;
   fallbackReason?: string | null;
 }

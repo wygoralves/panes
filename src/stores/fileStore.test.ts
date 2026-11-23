@@ -584,6 +584,28 @@ describe("fileStore", () => {
     expect(mockIpc.writeFile).not.toHaveBeenCalled();
   });
 
+  it("opens a non-UTF-8 file from the git changes panel read-only and never writes it", async () => {
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(
+      makeCompare({ modifiedContent: "caf\uFFFD\n", modifiedIsLossyDecode: true }),
+    );
+    await useFileStore.getState().openGitDiffFile("/repo", "latin1.txt", { source: "changes" });
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    expect(useFileStore.getState().tabs[0]!.readOnlyReason).toBe("non-utf8");
+
+    useFileStore.getState().setTabContent(tabId, "cafe\n");
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+    expect(mockIpc.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps a git diff tab editable when only the base side was decoded lossily", async () => {
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(
+      makeCompare({ baseContent: "caf\uFFFD\n", modifiedContent: "caf\u00E9\n" }),
+    );
+    await useFileStore.getState().openGitDiffFile("/repo", "fixed.txt", { source: "changes" });
+
+    expect(useFileStore.getState().tabs[0]!.readOnlyReason).toBeNull();
+  });
+
   it("opens a git diff of a file with mixed endings read-only", async () => {
     mockIpc.getGitFileCompare.mockResolvedValueOnce(
       makeCompare({ modifiedContent: "a\r\nb\nc\n" }),

@@ -134,7 +134,12 @@ function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
     ? tab.lineEnding
     : detectLineEnding(compare.modifiedContent, tab.lineEnding);
   let readOnlyReason = tab.readOnlyReason ?? null;
-  if (!preserveDirtyContent && readOnlyReason !== "non-utf8") {
+  if (compare.modifiedIsLossyDecode) {
+    // The text is a lossy decode of the working file; writing it back would
+    // corrupt the file, and the backend refuses the save anyway. A lossy base
+    // is display only and leaves the working file editable.
+    readOnlyReason = "non-utf8";
+  } else if (!preserveDirtyContent && readOnlyReason !== "non-utf8") {
     readOnlyReason = hasUniformLineEndings(compare.modifiedContent, lineEnding ?? "\n")
       ? null
       : "mixed-line-endings";
