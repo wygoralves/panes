@@ -5991,9 +5991,19 @@ fn is_method_not_supported_error(message: &str) -> bool {
         || normalized.contains("method not found")
         || normalized.contains("unknown method")
         || normalized.contains("not supported")
-        // Newer app-servers reject a removed method while deserializing the
-        // request: "Invalid request: unknown variant `thread/rollback`, ...".
-        || normalized.contains("unknown variant")
+        || names_unknown_method_variant(&normalized)
+}
+
+/// Newer app-servers reject a removed method while deserializing the request:
+/// "Invalid request: unknown variant `thread/rollback`, ...". A bad enum value
+/// in the params ("unknown variant `notLoaded`") is a real error, so only a
+/// method-shaped name counts.
+fn names_unknown_method_variant(message: &str) -> bool {
+    message.split("unknown variant `").skip(1).any(|rest| {
+        rest.split('`')
+            .next()
+            .is_some_and(|name| name.contains('/'))
+    })
 }
 
 /// Picks the turn that `thread/revert` should cut at so that exactly
@@ -8504,6 +8514,9 @@ mod tests {
         ));
         assert!(!is_method_not_supported_error(
             "all rpc methods failed: thread/revert: thread not found"
+        ));
+        assert!(!is_method_not_supported_error(
+            "all rpc methods failed: thread/turns/list: rpc error -32600: Invalid request: unknown variant `notLoaded`, expected `full`"
         ));
     }
 
