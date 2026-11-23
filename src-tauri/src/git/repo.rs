@@ -518,7 +518,9 @@ fn is_network_command_config_key(key: &str) -> bool {
             | Some(("remote", Some(_), "uploadpack" | "receivepack"))
             | Some(("credential", _, "helper"))
             | Some(("gpg", _, "program"))
-    ) || key.starts_with("alias.remote-")
+    ) || key
+        .get(..13)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("alias.remote-"))
 }
 
 /// Overrides for every network command on a repo that is not trusted. The
@@ -2522,6 +2524,7 @@ mod tests {
             "gpg.ssh.program",
             "alias.remote-example",
             "alias.remote-example.v2",
+            "alias.Remote-Example.v2",
         ] {
             assert!(is_network_command_config_key(key), "{key}");
         }
