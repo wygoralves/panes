@@ -341,7 +341,12 @@ pub fn get_file_diff(
 ) -> anyhow::Result<GitDiffPreviewDto> {
     // A repo's config or .gitattributes can name an external diff command or
     // a textconv filter; the preview never runs either.
-    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv"];
+    let mut args = vec![
+        "--literal-pathspecs",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+    ];
     if staged {
         args.push("--staged");
     }
@@ -410,7 +415,8 @@ pub fn stage_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut args = vec!["add", "--"];
+    // Paths are literal: `app/[id]/page.tsx` must not also match `app/i/...`.
+    let mut args = vec!["--literal-pathspecs", "add", "--"];
     let file_refs: Vec<&str> = files.iter().map(|item| item.as_str()).collect();
     args.extend(file_refs);
     run_git(repo_path, &args)?;
@@ -422,7 +428,7 @@ pub fn unstage_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut args = vec!["restore", "--staged", "--"];
+    let mut args = vec!["--literal-pathspecs", "restore", "--staged", "--"];
     let file_refs: Vec<&str> = files.iter().map(|item| item.as_str()).collect();
     args.extend(file_refs);
     run_git(repo_path, &args)?;
@@ -459,13 +465,13 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
     }
 
     if !tracked.is_empty() {
-        let mut args = vec!["checkout", "--"];
+        let mut args = vec!["--literal-pathspecs", "checkout", "--"];
         args.extend(&tracked);
         run_git(repo_path, &args)?;
     }
 
     if !untracked.is_empty() {
-        let mut args = vec!["clean", "-fd", "--"];
+        let mut args = vec!["--literal-pathspecs", "clean", "-fd", "--"];
         args.extend(&untracked);
         run_git(repo_path, &args)?;
     }
@@ -1785,8 +1791,9 @@ mod tests {
     use super::{
         build_diff_preview, checkout_git_branch, discard_files, fetch_repo, get_commit_diff,
         get_file_diff, get_git_status, get_workspace_file_tree_page, is_diff_preview_metadata_line,
-        parse_porcelain_v1_status, run_git, search_workspace_files, truncate_utf8_prefix,
-        FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
+        parse_porcelain_v1_status, run_git, search_workspace_files, stage_files,
+        truncate_utf8_prefix, unstage_files, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
+        GIT_DIFF_PREVIEW_MAX_LINES,
     };
     use crate::models::{FileTreeEntryDto, TrustLevelDto};
     use uuid::Uuid;
@@ -1890,6 +1897,43 @@ mod tests {
             !repo.path.join("newdir").exists(),
             "untracked directory must be removed"
         );
+    }
+
+    #[test]
+    fn discard_treats_bracketed_paths_literally() {
+        let repo = TempRepo::init();
+        repo.write("u/keep.txt", "keep\n");
+        repo.commit_all("init");
+        repo.write("u/[ab]/f.txt", "bracketed\n");
+        repo.write("u/a/f.txt", "unrelated\n");
+
+        discard_files(repo.path_str(), &["u/[ab]/".to_string()]).expect("discard");
+
+        assert!(
+            !repo.path.join("u/[ab]").exists(),
+            "the chosen folder is removed"
+        );
+        assert!(
+            repo.path.join("u/a/f.txt").exists(),
+            "an untracked folder the glob would match must survive"
+        );
+    }
+
+    #[test]
+    fn unstage_treats_bracketed_paths_literally() {
+        let repo = TempRepo::init();
+        repo.write("x/[id].ts", "one\n");
+        repo.write("x/i.ts", "one\n");
+        repo.commit_all("init");
+        repo.write("x/[id].ts", "two\n");
+        repo.write("x/i.ts", "two\n");
+        let both = vec!["x/[id].ts".to_string(), "x/i.ts".to_string()];
+        stage_files(repo.path_str(), &both).expect("stage");
+
+        unstage_files(repo.path_str(), &["x/[id].ts".to_string()]).expect("unstage");
+
+        let staged = run_git(repo.path_str(), &["diff", "--cached", "--name-only"]).expect("diff");
+        assert_eq!(staged.trim(), "x/i.ts", "only the chosen file is unstaged");
     }
 
     /// A repo with one commit and an `origin` remote pointing at a bare
