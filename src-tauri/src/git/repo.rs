@@ -443,6 +443,7 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
     let repo = Repository::open(repo_path).context("failed to open repository")?;
     let mut tracked = Vec::new();
     let mut untracked = Vec::new();
+    let mut conflicted = 0usize;
 
     for f in files {
         // Porcelain with --untracked-files=normal collapses a fully-untracked
@@ -457,11 +458,20 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
 
         let path = std::path::Path::new(f);
         let status = repo.status_file(path).unwrap_or(Status::empty());
-        if status.contains(Status::WT_NEW) {
+        if status.contains(Status::CONFLICTED) {
+            // `git checkout` refuses an unmerged path and would abort the
+            // whole batch, so Discard All leaves conflicts for the user to
+            // resolve and discards everything else.
+            conflicted += 1;
+        } else if status.contains(Status::WT_NEW) {
             untracked.push(f.as_str());
         } else {
             tracked.push(f.as_str());
         }
+    }
+
+    if tracked.is_empty() && untracked.is_empty() && conflicted > 0 {
+        anyhow::bail!("cannot discard a file with merge conflicts; resolve the conflict first");
     }
 
     if !tracked.is_empty() {
@@ -1912,6 +1922,32 @@ mod tests {
             !repo.path.join("newdir").exists(),
             "untracked directory must be removed"
         );
+    }
+
+    #[test]
+    fn discard_all_skips_conflicted_files_and_discards_the_rest() {
+        let repo = TempRepo::init();
+        repo.write("c.txt", "base\n");
+        repo.write("m.txt", "base\n");
+        repo.commit_all("init");
+        run_git(repo.path_str(), &["checkout", "-q", "-b", "other"]).expect("branch");
+        repo.write("c.txt", "other\n");
+        repo.commit_all("other");
+        run_git(repo.path_str(), &["checkout", "-q", "main"]).expect("back to main");
+        repo.write("c.txt", "main\n");
+        repo.commit_all("main");
+        let _ = run_git(repo.path_str(), &["merge", "other"]);
+        repo.write("m.txt", "edited\n");
+
+        let files = vec!["c.txt".to_string(), "m.txt".to_string()];
+        discard_files(repo.path_str(), &files).expect("discard the non-conflicted file");
+
+        assert_eq!(repo.read("m.txt"), "base\n");
+        assert!(
+            repo.read("c.txt").contains("<<<<<<<"),
+            "conflict is left alone"
+        );
+        assert!(discard_files(repo.path_str(), &["c.txt".to_string()]).is_err());
     }
 
     #[test]
