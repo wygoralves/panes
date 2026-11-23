@@ -48,7 +48,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$status" -ne 0 ]; then
-            echo "::warning::pnpm audit reported advisories (exit $status). See the job summary."
+            echo "::warning::pnpm audit exited with status $status: advisories were found or the audit could not run. See the job summary."
           fi
 
   cargo_audit:
@@ -78,5 +78,5 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$status" -ne 0 ]; then
-            echo "::warning::cargo audit reported advisories (exit $status). See the job summary."
+            echo "::warning::cargo audit exited with status $status: advisories were found or the audit could not run. See the job summary."
           fi
