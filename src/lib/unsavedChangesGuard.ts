@@ -81,21 +81,28 @@ export function registerUnsavedChangesCloseGuard(target: CloseRequestedTarget): 
   });
 }
 
-/** The text of every dirty tab now, to compare against after a prompt was answered. */
-export function snapshotDirtyTabs(): Map<string, string> {
+export type DirtyTabsSnapshot = Map<string, { content: string; savedContent: string }>;
+
+/** Every dirty tab's text and saved baseline now, to compare against after a prompt was answered. */
+export function snapshotDirtyTabs(): DirtyTabsSnapshot {
   return new Map(
     useFileStore
       .getState()
       .tabs.filter((tab) => tab.isDirty)
-      .map((tab) => [tab.id, tab.content]),
+      .map((tab) => [tab.id, { content: tab.content, savedContent: tab.savedContent }]),
   );
 }
 
-/** True when a tab is dirty with text the snapshot does not hold, so it was edited since. */
-export function hasDirtyTabsEditedSince(snapshot: Map<string, string>): boolean {
-  return useFileStore
-    .getState()
-    .tabs.some((tab) => tab.isDirty && snapshot.get(tab.id) !== tab.content);
+/**
+ * True when a tab is dirty in a way the snapshot does not hold: new text, or the
+ * same text against a different saved baseline (saved, then undone).
+ */
+export function hasDirtyTabsEditedSince(snapshot: DirtyTabsSnapshot): boolean {
+  return useFileStore.getState().tabs.some((tab) => {
+    if (!tab.isDirty) return false;
+    const approved = snapshot.get(tab.id);
+    return approved?.content !== tab.content || approved.savedContent !== tab.savedContent;
+  });
 }
 
 /**
