@@ -106,6 +106,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       }
       await update.install();
       set({ status: "ready" });
+      // The editor stays usable while install() runs; ask again about edits
+      // made meanwhile. On cancel the update applies at the next launch.
+      if (!(await confirmDiscardUnsavedWork())) return;
       await relaunch();
     } catch (err) {
       // A failed install leaves the downloaded installer in native memory.
