@@ -506,9 +506,24 @@ pub fn soft_reset_last_commit(repo_path: &str) -> anyhow::Result<()> {
 }
 
 /// Repo config keys that make fetch, pull or push run a program: an ssh or
-/// proxy command, an upload or receive pack path, a credential helper, an
-/// askpass or signing program, or a protocol allow rule that enables `ext::`.
-const NETWORK_COMMAND_CONFIG_KEYS: &str = r"^(core\.(sshcommand|gitproxy|askpass)|remote\..+\.(uploadpack|receivepack)|credential\.(.+\.)?helper|protocol\.(.+\.)?allow|gpg\.(.+\.)?program)$";
+/// proxy command, an upload or receive pack path, a credential helper, or an
+/// askpass or signing program.
+const NETWORK_COMMAND_CONFIG_KEYS: &str = r"^(core\.(sshcommand|gitproxy|askpass)|remote\..+\.(uploadpack|receivepack)|credential\.(.+\.)?helper|gpg\.(.+\.)?program)$";
+
+/// Overrides for every network command on a repo that is not trusted. The
+/// `ext::` transport runs a command named in the url, which a repo's url
+/// rewrite could pick, and a submodule's own config is never checked, so
+/// neither is reached.
+const UNTRUSTED_NETWORK_OVERRIDES: &[&str] = &[
+    "-c",
+    "protocol.ext.allow=never",
+    "-c",
+    "submodule.recurse=false",
+    "-c",
+    "fetch.recurseSubmodules=false",
+    "-c",
+    "push.recurseSubmodules=no",
+];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NetworkCommand {
@@ -539,10 +554,14 @@ fn network_config_overrides(
         );
     }
 
+    let mut overrides: Vec<String> = UNTRUSTED_NETWORK_OVERRIDES
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
     if command == NetworkCommand::Fetch || matches!(trust, TrustLevelDto::Restricted) {
-        return Ok(vec!["-c".to_string(), hooks_disabled_config()?]);
+        overrides.extend(["-c".to_string(), hooks_disabled_config()?]);
     }
-    Ok(Vec::new())
+    Ok(overrides)
 }
 
 fn with_overrides<'a>(overrides: &'a [String], args: &[&'a str]) -> Vec<&'a str> {
@@ -2083,6 +2102,73 @@ mod tests {
             refs.contains("origin/main"),
             "fetch must still update refs: {refs}"
         );
+    }
+
+    #[test]
+    fn fetch_on_a_standard_repo_allows_a_repo_that_disables_ext() {
+        let (repo, _remote) = repo_with_file_remote();
+        run_git(repo.path_str(), &["config", "protocol.ext.allow", "never"]).expect("config");
+
+        fetch_repo(repo.path_str(), &TrustLevelDto::Standard).expect("fetch");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_on_a_standard_repo_does_not_recurse_into_submodules() {
+        let (repo, _remote) = repo_with_file_remote();
+        let source = repo.path.join(".git/sub-source");
+        fs::create_dir_all(&source).expect("create submodule source");
+        fs::write(source.join("a.txt"), "a\n").expect("write file");
+        let source_str = source.to_str().unwrap();
+        for args in [
+            &["init", "-q", "--initial-branch=main"][..],
+            &["add", "-A"],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "-m",
+                "sub",
+            ],
+        ] {
+            run_git(source_str, args).expect("prepare submodule source");
+        }
+        run_git(
+            repo.path_str(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                source_str,
+                "sub",
+            ],
+        )
+        .expect("add submodule");
+        repo.commit_all("add submodule");
+
+        let marker = repo.path.join(".git/sub-uploadpack-ran");
+        let uploadpack = format!("touch {}; git-upload-pack", marker.display());
+        let sub = repo.path.join("sub");
+        for (key, value) in [
+            ("remote.origin.uploadpack", uploadpack.as_str()),
+            ("protocol.file.allow", "always"),
+        ] {
+            run_git(sub.to_str().unwrap(), &["config", key, value]).expect("submodule config");
+        }
+        run_git(
+            repo.path_str(),
+            &["config", "fetch.recurseSubmodules", "true"],
+        )
+        .expect("recurse config");
+
+        let _ = fetch_repo(repo.path_str(), &TrustLevelDto::Standard);
+
+        assert!(!marker.exists(), "fetch ran the submodule's uploadpack");
     }
 
     #[cfg(unix)]
