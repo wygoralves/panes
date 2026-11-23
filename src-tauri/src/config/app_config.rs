@@ -443,9 +443,14 @@ impl AppConfig {
                 // overwrites config.toml.
                 // The error's Display quotes the offending line, which can hold
                 // a provider API key, so log only where parsing failed.
-                let line = error
-                    .span()
-                    .map(|span| raw[..span.start].matches('\n').count() + 1);
+                // Count bytes: the span can start inside a multibyte character.
+                let line = error.span().map(|span| {
+                    raw.bytes()
+                        .take(span.start)
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1
+                });
                 log::error!(
                     "failed to parse {} (line {})",
                     path.display(),
@@ -770,6 +775,36 @@ max_action_output_chars = 20000
             copies,
             vec!["first = [".to_string(), "second = [".to_string()]
         );
+    }
+
+    #[test]
+    fn invalid_escape_before_a_multibyte_character_is_kept_without_panicking() {
+        with_temp_app_data_env(|| {
+            let path = AppConfig::path();
+            fs::create_dir_all(path.parent().expect("config has a parent"))
+                .expect("config dir should exist");
+            let broken = "[general]\nlocale = \"\\\u{e9}\"\n";
+            fs::write(&path, broken).expect("broken config should be written");
+
+            let loaded = AppConfig::load_or_create().expect("config should load");
+
+            assert_eq!(loaded.general.locale, None);
+            let copies: Vec<_> = fs::read_dir(path.parent().unwrap())
+                .expect("config dir should be readable")
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("config.toml.corrupt-")
+                })
+                .collect();
+            assert_eq!(copies.len(), 1);
+            assert_eq!(
+                fs::read_to_string(copies[0].path()).expect("copy should be readable"),
+                broken
+            );
+        });
     }
 
     #[test]
