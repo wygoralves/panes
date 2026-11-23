@@ -13,8 +13,17 @@ export SHELL="${SHELL:-/usr/bin/bash}"
 # ~/.claude.json would be lost on exit. Point both CLIs at the persistent
 # XDG config dir (~/.var/app/com.panes.app/config on the host). Values the
 # user already set, and per-instance homes configured in Panes, still win.
-export CODEX_HOME="${CODEX_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/codex}"
-export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/claude}"
-mkdir -p "$CODEX_HOME" "$CLAUDE_CONFIG_DIR" || true
+# A home that already holds a login (a user who bind-mounted ~/.codex or
+# ~/.claude into the sandbox and signed in there) is left in use, so
+# updating does not sign them out.
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+if [ -z "${CODEX_HOME:-}" ] && [ ! -f "$HOME/.codex/auth.json" ]; then
+  export CODEX_HOME="$config_home/codex"
+  mkdir -p "$CODEX_HOME" || true
+fi
+if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ ! -f "$HOME/.claude/.credentials.json" ]; then
+  export CLAUDE_CONFIG_DIR="$config_home/claude"
+  mkdir -p "$CLAUDE_CONFIG_DIR" || true
+fi
 
 exec /app/bin/Panes "$@"

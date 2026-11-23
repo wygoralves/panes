@@ -103,11 +103,15 @@ to `~/.var/app/com.panes.app/` on the host. Panes therefore:
 - Sets `CODEX_HOME` and `CLAUDE_CONFIG_DIR` in `flatpak/panes-wrapper.sh` to
   `$XDG_CONFIG_HOME/codex` and `$XDG_CONFIG_HOME/claude`
   (`~/.var/app/com.panes.app/config/{codex,claude}` on the host), unless they
-  are already set. A per-instance home configured in Panes still wins.
+  are already set. A per-instance home configured in Panes still wins. Each
+  is also left unset when the sandbox already sees a login in the default
+  home (`~/.codex/auth.json` for Codex, `~/.claude/.credentials.json` for
+  Claude), which happens when a user bind-mounted `~/.codex` or `~/.claude`
+  into the sandbox and signed in there; that login keeps working.
 
-Host `~/.codex`, `~/.claude` and `~/.claude.json` are not shared with the
-sandbox, so a one-time `codex login` and Claude login inside a Panes terminal
-is needed after installing the Flatpak.
+By default host `~/.codex`, `~/.claude` and `~/.claude.json` are not shared
+with the sandbox, so a one-time `codex login` and Claude login inside a Panes
+terminal is needed after installing the Flatpak.
 
 Harness CLIs installed through mise live in `$XDG_DATA_HOME/mise` and
 persist. The Claude Code harness still prefers its curl installer, which
