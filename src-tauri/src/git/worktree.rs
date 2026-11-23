@@ -291,8 +291,8 @@ pub struct WorktreeInspection {
     pub changed_count: usize,
     /// Untracked files (ignored files are not counted; git removes them).
     pub untracked_count: usize,
-    /// Commits on the branch that are not reachable from the main checkout's
-    /// HEAD, which is what `git branch -d` checks.
+    /// Commits on the branch reachable from neither the main checkout's HEAD
+    /// nor the branch's upstream, so deleting the branch loses them.
     pub unmerged_commit_count: usize,
 }
 
@@ -325,12 +325,20 @@ pub fn inspect_worktree(
         )
         .is_ok();
         if exists {
-            let count = run_git(
+            // Commits already on the upstream survive a local branch delete.
+            // `<name>@{upstream}` only resolves with the short branch name.
+            let upstream = format!("{branch}@{{upstream}}");
+            let mut args = vec!["rev-list", "--count", branch_ref.as_str(), "--not", "HEAD"];
+            if run_git(
                 repo_path,
-                &["rev-list", "--count", branch_ref.as_str(), "--not", "HEAD"],
+                &["rev-parse", "--verify", "--quiet", upstream.as_str()],
             )
-            .context("failed to count unmerged commits")?;
-            inspection.unmerged_commit_count = count.trim().parse().unwrap_or(0);
+            .is_ok()
+            {
+                args.push(upstream.as_str());
+            }
+            let count = run_git(repo_path, &args).context("failed to count unmerged commits")?;
+            inspection.unmerged_commit_count += count.trim().parse::<usize>().unwrap_or(0);
         }
     }
 
@@ -637,6 +645,51 @@ mod tests {
                 untracked_count: 2,
                 unmerged_commit_count: 2,
             }
+        );
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_already_on_the_upstream() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "pushed.txt");
+        // A remote-tracking ref stands in for a pushed branch.
+        run_git(
+            repo.path_str(),
+            &[
+                "update-ref",
+                "refs/remotes/origin/agent",
+                "refs/heads/agent",
+            ],
+        )
+        .expect("create remote-tracking ref");
+        run_git(
+            repo.path_str(),
+            &["config", "branch.agent.remote", "origin"],
+        )
+        .expect("set remote");
+        run_git(
+            repo.path_str(),
+            &["config", "branch.agent.merge", "refs/heads/agent"],
+        )
+        .expect("set merge");
+        run_git(
+            repo.path_str(),
+            &[
+                "config",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        )
+        .expect("set fetch refspec");
+        commit_in(&worktree_path, "local.txt");
+
+        assert_eq!(
+            inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+                .expect("inspect")
+                .unmerged_commit_count,
+            1,
+            "only the commit missing from both HEAD and the upstream is at risk"
         );
     }
 
