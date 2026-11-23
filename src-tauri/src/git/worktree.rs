@@ -456,11 +456,15 @@ fn fingerprint_path(path: &Path, out: &mut Vec<u8>) {
             fingerprint_path(&path.join(&child), out);
         }
         out.extend_from_slice(b"end\0");
-    } else {
+    } else if metadata.is_file() {
         match git2::Oid::hash_file(git2::ObjectType::Blob, path) {
             Ok(oid) => out.extend_from_slice(format!("file\0{oid}\0").as_bytes()),
             Err(_) => out.extend_from_slice(b"unreadable\0"),
         }
+    } else {
+        // A FIFO, socket or device holds no content git could keep, and
+        // opening a FIFO with no writer would block the inspection forever.
+        out.extend_from_slice(b"special\0");
     }
 }
 
@@ -824,6 +828,32 @@ mod tests {
             amended.fingerprint, confirmed.fingerprint,
             "an amended commit is not the commit the user saw"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspect_worktree_does_not_block_on_a_fifo_inside_an_untracked_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["init", "nested"]).expect("nested repo");
+        let fifo = Path::new(&worktree_path).join("nested/pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo failed");
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let repo_path = repo.path_str().to_string();
+        let inspected_path = worktree_path.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(inspect_worktree(&repo_path, &inspected_path, Some("agent")));
+        });
+        let inspection = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("inspection must not wait for a FIFO writer")
+            .expect("inspect");
+        assert_eq!(counts(&inspection), (0, 1, 0));
     }
 
     #[test]
