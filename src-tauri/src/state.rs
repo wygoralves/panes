@@ -97,10 +97,11 @@ impl StreamSnapshotSync {
         self.phase.store(SNAPSHOT_SERVING, Ordering::SeqCst);
     }
 
-    /// Called once the turn stored everything its loop streamed.
+    /// Called once the turn stored everything its loop streamed. It wakes no
+    /// one: a request the loop left unanswered, like one made from now on,
+    /// waits for the turn's final write in `finish`.
     pub fn stop_serving(&self) {
         self.phase.store(SNAPSHOT_TEARING_DOWN, Ordering::SeqCst);
-        self.mark_flushed();
     }
 
     fn finish(&self) {
@@ -340,6 +341,32 @@ mod tests {
             }
         });
         tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!request.is_finished());
+
+        turns.finish("thread").await;
+        assert!(request.await.expect("request task panicked"));
+    }
+
+    #[tokio::test]
+    async fn stream_snapshot_request_left_unanswered_by_the_loop_waits_for_the_final_write() {
+        let turns = Arc::new(TurnManager::default());
+        assert!(turns.try_register("thread", CancellationToken::new()).await);
+        let sync = turns.snapshot_sync("thread").await.expect("sync exists");
+        sync.start_serving();
+
+        // The request lands as the loop ends, so the loop never answers it.
+        let request = tokio::spawn({
+            let turns = turns.clone();
+            async move {
+                turns
+                    .request_stream_snapshot("thread", Duration::from_secs(5))
+                    .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        sync.stop_serving();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Teardown can still emit and store an engine failure.
         assert!(!request.is_finished());
 
         turns.finish("thread").await;
