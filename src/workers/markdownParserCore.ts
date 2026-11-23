@@ -59,6 +59,12 @@ function sanitizeUrl(url: string, attrName: string): string {
     return trimmed;
   }
 
+  // Protocol-relative ("//host") and backslash-prefixed links resolve to a
+  // remote host against the app origin, so they never pass as relative paths.
+  if (/^[\\/]{2}/.test(trimmed)) {
+    return "#";
+  }
+
   if (
     trimmed.startsWith("#") ||
     trimmed.startsWith("/") ||

@@ -139,6 +139,21 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain("<code>&lt;br&gt;</code>");
   });
 
+  it("drops protocol-relative links and keeps relative and local ones", () => {
+    const html = renderMarkdownToHtml(
+      "[a](//evil.example/x) [b](./notes) [c](../x) [d](/repo/README.md)",
+    );
+
+    expect(html).not.toContain("evil.example");
+    expect(html).toContain('<a href="#" rel="noreferrer noopener">a</a>');
+    expect(html).toContain('href="./notes"');
+    expect(html).toContain('href="../x"');
+    expect(html).toContain('href="/repo/README.md"');
+
+    const unc = renderMarkdownToHtml("See `\\\\server\\share\\f.txt`");
+    expect(unc).toContain('href="\\\\server\\share\\f.txt"');
+  });
+
   it("places fenced code between the paragraphs around it", () => {
     const html = renderMarkdownToHtml("before\n```js\nconst a = '$&';\n```\nafter");
 
