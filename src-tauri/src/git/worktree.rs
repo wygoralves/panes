@@ -291,8 +291,9 @@ pub struct WorktreeInspection {
     pub changed_count: usize,
     /// Untracked files (ignored files are not counted; git removes them).
     pub untracked_count: usize,
-    /// Commits on the branch reachable from neither the main checkout's HEAD
-    /// nor the branch's upstream, so deleting the branch loses them.
+    /// Commits that only the branch or the worktree's detached HEAD hold:
+    /// reachable from neither the main checkout's HEAD nor the branch's
+    /// upstream, so deleting them with the worktree loses them.
     pub unmerged_commit_count: usize,
 }
 
@@ -315,6 +316,23 @@ pub fn inspect_worktree(
         let (changed, untracked) = count_porcelain_entries(&status);
         inspection.changed_count = changed;
         inspection.untracked_count = untracked;
+
+        // Commits made on a detached HEAD belong to no branch; removing the
+        // worktree drops the only reference to them.
+        let detached = run_git(
+            worktree_path,
+            &[
+                "rev-list",
+                "--count",
+                "HEAD",
+                "--not",
+                "--branches",
+                "--remotes",
+                "--tags",
+            ],
+        )
+        .context("failed to count commits held only by the worktree HEAD")?;
+        inspection.unmerged_commit_count += detached.trim().parse::<usize>().unwrap_or(0);
     }
 
     if let Some(branch) = branch_name.filter(|branch| !branch.trim().is_empty()) {
@@ -645,6 +663,21 @@ mod tests {
                 untracked_count: 2,
                 unmerged_commit_count: 2,
             }
+        );
+    }
+
+    #[test]
+    fn inspect_worktree_counts_commits_held_only_by_a_detached_head() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["checkout", "--detach"]).expect("detach");
+        commit_in(&worktree_path, "detached.txt");
+
+        assert_eq!(
+            inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+                .expect("inspect")
+                .unmerged_commit_count,
+            1
         );
     }
 
