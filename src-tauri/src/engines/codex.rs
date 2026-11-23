@@ -385,6 +385,9 @@ impl Engine for CodexEngine {
             .approval_policy
             .clone()
             .unwrap_or_else(|| serde_json::Value::String("on-request".to_string()));
+        // A dead app-server is replaced here, which resets the sandbox state,
+        // so the sandbox mode is read after it.
+        let transport = self.ensure_ready_transport().await?;
         let mut force_external_sandbox = self.resolve_external_sandbox_mode().await;
         let mut sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
         let mut sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
@@ -401,8 +404,6 @@ impl Engine for CodexEngine {
             output_schema: sandbox.output_schema.clone(),
             native_plan_mode_active: false,
         };
-
-        let transport = self.ensure_ready_transport().await?;
 
         if !force_external_sandbox && !self.workspace_probe_passed().await {
             if self
