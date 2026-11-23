@@ -268,7 +268,7 @@ pub fn remove_worktree(
     force_branch_delete: bool,
 ) -> anyhow::Result<RemoveWorktreeOutcome> {
     if !force_branch_delete && Path::new(worktree_path).is_dir() {
-        let detached = count_commits_held_only_by_head(worktree_path)?;
+        let detached = count_commits_held_only_by_head(repo_path, worktree_path)?;
         if detached > 0 {
             anyhow::bail!(
                 "failed to remove worktree: its detached HEAD holds {detached} commit(s) that no branch, tag or remote reaches"
@@ -305,9 +305,9 @@ pub struct WorktreeInspection {
     pub changed_count: usize,
     /// Untracked files (ignored files are not counted; git removes them).
     pub untracked_count: usize,
-    /// Commits that only the branch or the worktree's detached HEAD hold:
-    /// reachable from neither the main checkout's HEAD nor the branch's
-    /// upstream, so deleting them with the worktree loses them.
+    /// Commits that only the branch or the worktree's HEAD hold: reachable from
+    /// no other ref (other branches, tags, remote-tracking refs) and from no
+    /// other worktree's HEAD, so deleting them with the worktree loses them.
     pub unmerged_commit_count: usize,
     /// Identifies the exact work counted above: the worktree HEAD, the branch
     /// tip, the status entries, the staged blobs and the current content of
@@ -316,8 +316,8 @@ pub struct WorktreeInspection {
     pub fingerprint: String,
 }
 
-/// Counts the uncommitted files in `worktree_path` and the commits on
-/// `branch_name` that `git branch -d` would refuse to drop. A worktree
+/// Counts the uncommitted files in `worktree_path` and the commits that
+/// removing it and deleting `branch_name` would lose. A worktree
 /// directory that no longer exists has no files to lose.
 pub fn inspect_worktree(
     repo_path: &str,
@@ -326,6 +326,8 @@ pub fn inspect_worktree(
 ) -> anyhow::Result<WorktreeInspection> {
     let mut inspection = WorktreeInspection::default();
     let mut fingerprint = Vec::new();
+    // Commits reachable from these may be lost with the worktree and branch.
+    let mut tips = Vec::new();
 
     if Path::new(worktree_path).is_dir() {
         let status = run_git(
@@ -339,7 +341,9 @@ pub fn inspect_worktree(
 
         // Commits made on a detached HEAD belong to no branch; removing the
         // worktree drops the only reference to them.
-        inspection.unmerged_commit_count += count_commits_held_only_by_head(worktree_path)?;
+        if let Some(head) = worktree_head(worktree_path) {
+            tips.push(head);
+        }
 
         let head = run_git(worktree_path, &["rev-parse", "HEAD"]).unwrap_or_default();
         let staged = run_git(
@@ -358,32 +362,27 @@ pub fn inspect_worktree(
         }
     }
 
+    let mut removed_branch = None;
     if let Some(branch) = branch_name.filter(|branch| !branch.trim().is_empty()) {
         let branch_ref = format!("refs/heads/{branch}");
-        let exists = run_git(
+        if let Ok(tip) = run_git(
             repo_path,
-            &["rev-parse", "--verify", "--quiet", branch_ref.as_str()],
-        )
-        .is_ok();
-        if exists {
-            let tip = run_git(repo_path, &["rev-parse", branch_ref.as_str()]).unwrap_or_default();
-            fingerprint.extend_from_slice(format!("branch\0{}\0", tip.trim()).as_bytes());
-            // Commits already on the upstream survive a local branch delete.
-            // `<name>@{upstream}` only resolves with the short branch name.
-            let upstream = format!("{branch}@{{upstream}}");
-            let mut args = vec!["rev-list", "--count", branch_ref.as_str(), "--not", "HEAD"];
-            if run_git(
-                repo_path,
-                &["rev-parse", "--verify", "--quiet", upstream.as_str()],
-            )
-            .is_ok()
-            {
-                args.push(upstream.as_str());
-            }
-            let count = run_git(repo_path, &args).context("failed to count unmerged commits")?;
-            inspection.unmerged_commit_count += count.trim().parse::<usize>().unwrap_or(0);
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{branch_ref}^{{commit}}"),
+            ],
+        ) {
+            let tip = tip.trim().to_string();
+            fingerprint.extend_from_slice(format!("branch\0{tip}\0").as_bytes());
+            tips.push(tip);
+            removed_branch = Some(branch);
         }
     }
+
+    inspection.unmerged_commit_count =
+        count_commits_at_risk(repo_path, worktree_path, &tips, removed_branch)?;
 
     inspection.fingerprint = git2::Oid::hash_object(git2::ObjectType::Blob, &fingerprint)
         .context("failed to hash worktree fingerprint")?
@@ -391,22 +390,63 @@ pub fn inspect_worktree(
     Ok(inspection)
 }
 
-/// Commits reachable from the worktree's HEAD but from no branch, tag or
-/// remote: the ones a detached HEAD alone keeps alive.
-fn count_commits_held_only_by_head(worktree_path: &str) -> anyhow::Result<usize> {
-    let count = run_git(
+/// Commits reachable from the worktree's HEAD but from no ref and no other
+/// worktree's HEAD: the ones a detached HEAD alone keeps alive.
+fn count_commits_held_only_by_head(repo_path: &str, worktree_path: &str) -> anyhow::Result<usize> {
+    let tips: Vec<String> = worktree_head(worktree_path).into_iter().collect();
+    count_commits_at_risk(repo_path, worktree_path, &tips, None)
+}
+
+/// The commit the worktree's HEAD points at, if it has one.
+fn worktree_head(worktree_path: &str) -> Option<String> {
+    run_git(
         worktree_path,
-        &[
-            "rev-list",
-            "--count",
-            "HEAD",
-            "--not",
-            "--branches",
-            "--remotes",
-            "--tags",
-        ],
+        &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
     )
-    .context("failed to count commits held only by the worktree HEAD")?;
+    .ok()
+    .map(|head| head.trim().to_string())
+    .filter(|head| !head.is_empty())
+}
+
+/// Counts the commits reachable from `tips` that nothing surviving the removal
+/// of `worktree_path` (and of `removed_branch`, when given) still reaches.
+///
+/// Survivors are every ref except the removed branch and `refs/stash`, plus
+/// the HEAD of every other worktree. A stash only keeps commits as the parent
+/// of a stash entry, which is not where anyone looks for branch work, so it
+/// does not count. Another worktree's detached HEAD does count: it keeps the
+/// commits alive while that worktree exists, and removing that worktree later
+/// runs this same check for its own HEAD. `--all` is not used because it also
+/// adds the HEAD of the worktree being removed.
+fn count_commits_at_risk(
+    repo_path: &str,
+    worktree_path: &str,
+    tips: &[String],
+    removed_branch: Option<&str>,
+) -> anyhow::Result<usize> {
+    if tips.is_empty() {
+        return Ok(0);
+    }
+    let other_heads: Vec<String> = list_worktrees(repo_path)?
+        .into_iter()
+        .filter(|worktree| !worktree.is_prunable)
+        .filter(|worktree| !worktree_paths_match(&worktree.path, worktree_path))
+        .filter_map(|worktree| worktree.head_sha)
+        .filter(|head| !head.is_empty() && head.bytes().any(|byte| byte != b'0'))
+        .collect();
+
+    let excluded_branch = removed_branch.map(|branch| format!("--exclude=refs/heads/{branch}"));
+    let mut args = vec!["rev-list", "--count"];
+    args.extend(tips.iter().map(String::as_str));
+    args.extend(["--not", "--exclude=refs/stash"]);
+    if let Some(excluded) = excluded_branch.as_deref() {
+        args.push(excluded);
+    }
+    // `--exclude` only applies to the next ref selector, so it comes first.
+    args.push("--glob=refs/*");
+    args.extend(other_heads.iter().map(String::as_str));
+
+    let count = run_git(repo_path, &args).context("failed to count unmerged commits")?;
     Ok(count.trim().parse::<usize>().unwrap_or(0))
 }
 
@@ -942,6 +982,90 @@ mod tests {
             1,
             "only the commit missing from both HEAD and the upstream is at risk"
         );
+    }
+
+    fn unmerged_commits(repo: &TempRepo, worktree_path: &str) -> usize {
+        inspect_worktree(repo.path_str(), worktree_path, Some("agent"))
+            .expect("inspect")
+            .unmerged_commit_count
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_another_local_branch_reaches() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        run_git(repo.path_str(), &["branch", "keep", "agent"]).expect("create branch");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 0);
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_a_tag_reaches() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        run_git(repo.path_str(), &["tag", "v1", "agent"]).expect("create tag");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 0);
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_on_a_remote_ref_that_is_not_the_upstream() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        run_git(
+            repo.path_str(),
+            &[
+                "update-ref",
+                "refs/remotes/fork/agent-copy",
+                "refs/heads/agent",
+            ],
+        )
+        .expect("create remote-tracking ref");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 0);
+    }
+
+    #[test]
+    fn inspect_worktree_counts_commits_only_the_branch_holds() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(repo.path_str(), &["tag", "base"]).expect("tag the base");
+        commit_in(&worktree_path, "agent.txt");
+        commit_in(&worktree_path, "agent2.txt");
+        // A stash entry has the branch tip as parent but is not a place to
+        // find branch work, so it does not keep the commits.
+        fs::write(Path::new(&worktree_path).join("a.txt"), "stashed\n").expect("modify");
+        run_git(&worktree_path, &["stash"]).expect("stash");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 2);
+    }
+
+    #[test]
+    fn unforced_removal_still_refuses_a_detached_head_nothing_else_reaches() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(repo.path_str(), &["tag", "base"]).expect("tag the base");
+        run_git(&worktree_path, &["checkout", "--detach"]).expect("detach");
+        commit_in(&worktree_path, "detached.txt");
+        fs::write(Path::new(&worktree_path).join("a.txt"), "stashed\n").expect("modify");
+        run_git(&worktree_path, &["stash"]).expect("stash");
+
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect_err("commits only the detached HEAD reaches must not be dropped");
+        assert!(Path::new(&worktree_path).join("detached.txt").is_file());
+
+        run_git(repo.path_str(), &["tag", "kept", "agent"]).expect("tag unrelated");
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect_err("a ref that does not reach the commits does not keep them");
+
+        let head = run_git(&worktree_path, &["rev-parse", "HEAD"]).expect("read head");
+        run_git(repo.path_str(), &["tag", "saved", head.trim()]).expect("tag the head");
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect("a tag on the detached HEAD keeps its commits");
+        assert!(!Path::new(&worktree_path).exists());
     }
 
     #[test]
