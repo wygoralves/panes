@@ -423,8 +423,8 @@
       "someWorktreesNotRemoved": "Some worktrees could not be removed: {{message}}",
       "worktreeBranchesKept_one": "Worktree removed, but git kept its branch {{branches}} (usually because it has unmerged commits)",
       "worktreeBranchesKept_other": "Worktrees removed, but git kept {{count}} branches (usually because they have unmerged commits): {{branches}}",
-      "worktreesKeptAfterChange_one": "Kept worktree {{names}}: it gained new work after you chose to remove it",
-      "worktreesKeptAfterChange_other": "Kept {{count}} worktrees that gained new work after you chose to remove them: {{names}}"
+      "worktreesKeptAfterChange_one": "Kept worktree {{names}}: it may hold work you did not confirm losing",
+      "worktreesKeptAfterChange_other": "Kept {{count}} worktrees that may hold work you did not confirm losing: {{names}}"
     }
   },
   "harnesses": {
