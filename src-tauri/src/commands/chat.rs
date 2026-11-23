@@ -1549,13 +1549,18 @@ async fn respond_to_approval_inner(
         )
         .await
     {
+        let turn_is_live = state
+            .turns
+            .get(&thread_id)
+            .await
+            .is_some_and(|token| !token.is_cancelled());
         let released = run_db(db.clone(), {
             let approval_id = approval_id.clone();
-            move |db| db::actions::release_approval_claim(db, &approval_id)
+            move |db| db::actions::release_approval_claim(db, &approval_id, turn_is_live)
         })
         .await;
         return match released {
-            // The turn ended meanwhile and expired the claim.
+            // The turn ended meanwhile, so the approval expired.
             Ok(false) => Err(db::actions::APPROVAL_NOT_PENDING_ERROR.to_string()),
             Ok(true) => Err(err_to_string(error)),
             Err(release_error) => {
@@ -7122,23 +7127,45 @@ mod tests {
     }
 
     #[test]
-    fn a_claim_the_turn_end_expired_stays_expired_when_delivery_fails() {
+    fn an_answer_in_flight_outlives_the_turn_end_and_settles_by_its_delivery() {
         let state = test_app_state();
         let thread = test_thread(&state, "opencode", "model");
-        let approval_id = "approval-in-flight";
-        let message_id = insert_pending_approval(&state, &thread, approval_id);
+        let delivered = "approval-delivered";
+        let refused = "approval-refused";
+        let message_id = insert_pending_approval(&state, &thread, delivered);
+        db::actions::insert_approval(
+            &state.db,
+            refused,
+            &thread.id,
+            &message_id,
+            &crate::engines::events::ActionType::Command,
+            "Run command",
+            &serde_json::json!({}),
+        )
+        .expect("failed to insert approval");
 
-        db::actions::answer_approval(&state.db, approval_id, &thread.id, "accept")
+        db::actions::answer_approval(&state.db, delivered, &thread.id, "accept")
             .expect("answer should claim the approval");
-        assert_eq!(
+        db::actions::answer_approval(&state.db, refused, &thread.id, "accept")
+            .expect("answer should claim the approval");
+        // The turn ends while both answers are in flight.
+        assert!(
             db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
-                .expect("expiry should run"),
-            vec![approval_id.to_string()]
+                .expect("expiry should run")
+                .is_empty()
         );
-        assert!(!db::actions::release_approval_claim(&state.db, approval_id)
-            .expect("release should run"));
-        assert!(db::actions::confirm_approval_answer(&state.db, approval_id, "accept").is_err());
-        assert_eq!(approval_row(&state, approval_id).0, "expired");
+
+        db::actions::confirm_approval_answer(&state.db, delivered, "accept")
+            .expect("a delivered answer is confirmed after the turn ended");
+        assert!(
+            !db::actions::release_approval_claim(&state.db, refused, false)
+                .expect("release should run")
+        );
+        assert_eq!(
+            approval_row(&state, delivered),
+            ("answered".to_string(), Some("accept".to_string()))
+        );
+        assert_eq!(approval_row(&state, refused), ("expired".to_string(), None));
     }
 
     #[test]

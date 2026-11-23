@@ -510,7 +510,8 @@ pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryR
     let approvals_expired = tx
         .execute(
             "UPDATE approvals
-       SET status = 'expired', answered_at = COALESCE(answered_at, datetime('now'))
+       SET status = 'expired', decision = NULL,
+           answered_at = COALESCE(answered_at, datetime('now'))
        WHERE status IN ('pending', 'answering')",
             [],
         )
@@ -844,6 +845,8 @@ mod tests {
         )
         .unwrap();
         update_thread_status(&db, &thread.id, ThreadStatusDto::AwaitingApproval).unwrap();
+        // The user answered, but the app died before the engine took it.
+        crate::db::actions::answer_approval(&db, "approval-1", &thread.id, "accept").unwrap();
 
         let report = reconcile_runtime_state(&db).unwrap();
 
@@ -853,18 +856,20 @@ mod tests {
             ThreadStatusDto::Idle
         );
         let conn = db.connect().unwrap();
-        let (approval_status, raw_blocks): (String, String) = conn
+        let (approval_status, decision, raw_blocks): (String, Option<String>, String) = conn
             .query_row(
-                "SELECT a.status, m.blocks_json
+                "SELECT a.status, a.decision, m.blocks_json
                  FROM approvals a JOIN messages m ON m.id = a.message_id
                  WHERE a.id = 'approval-1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
         assert_eq!(approval_status, "expired");
+        assert_eq!(decision, None);
         let blocks: serde_json::Value = serde_json::from_str(&raw_blocks).unwrap();
         assert_eq!(blocks[0]["status"], "expired");
+        assert!(blocks[0].get("decision").is_none());
         assert_eq!(blocks[1]["status"], "error");
         assert_eq!(blocks[2]["status"], "interrupted");
         assert!(blocks[2].get("progress").is_none());

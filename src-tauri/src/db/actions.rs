@@ -93,9 +93,9 @@ pub const APPROVAL_NOT_PENDING_ERROR: &str =
     "This approval is no longer pending: the turn that asked for it has ended.";
 
 /// Claims a pending approval of `thread_id` for the user's decision. The row
-/// reads 'answering' until the engine took the answer: turn-end expiry and a
-/// second answer both lose to the claim, and expiry and crash recovery treat
-/// an undelivered claim like a pending approval.
+/// reads 'answering' until the engine took the answer: a second answer loses
+/// to the claim, turn-end expiry leaves the in-flight answer to its caller,
+/// and crash recovery expires an undelivered claim.
 pub fn answer_approval(
     db: &Database,
     approval_id: &str,
@@ -143,20 +143,31 @@ pub fn confirm_approval_answer(
     Ok(())
 }
 
-/// Gives a claim back when the engine refused the answer, so the user can
-/// answer again. Returns false when the turn ended first and expired it.
-pub fn release_approval_claim(db: &Database, approval_id: &str) -> anyhow::Result<bool> {
+/// Settles a claim the engine refused. While its turn still runs the claim
+/// goes back to pending so the user can answer again; once the turn is gone
+/// it expires, without the decision that never took effect. Returns whether
+/// the approval is pending again.
+pub fn release_approval_claim(
+    db: &Database,
+    approval_id: &str,
+    turn_is_live: bool,
+) -> anyhow::Result<bool> {
     let conn = db.connect()?;
-    let changed = conn
-        .execute(
-            "UPDATE approvals
+    let sql = if turn_is_live {
+        "UPDATE approvals
      SET status = 'pending', decision = NULL, answered_at = NULL
      WHERE id = ?1
-       AND status = 'answering'",
-            params![approval_id],
-        )
+       AND status = 'answering'"
+    } else {
+        "UPDATE approvals
+     SET status = 'expired', decision = NULL, answered_at = COALESCE(answered_at, datetime('now'))
+     WHERE id = ?1
+       AND status = 'answering'"
+    };
+    let changed = conn
+        .execute(sql, params![approval_id])
         .context("failed to release approval claim")?;
-    Ok(changed > 0)
+    Ok(turn_is_live && changed > 0)
 }
 
 /// Marks every approval of a finished turn that nobody answered as expired
@@ -171,7 +182,7 @@ pub fn expire_pending_approvals_for_message(
             "UPDATE approvals
              SET status = 'expired', answered_at = COALESCE(answered_at, datetime('now'))
              WHERE message_id = ?1
-               AND status IN ('pending', 'answering')
+               AND status = 'pending'
              RETURNING id",
         )
         .context("failed to prepare approval expiry")?;
