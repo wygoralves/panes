@@ -52,6 +52,13 @@ pub fn is_flatpak() -> bool {
 }
 
 pub fn app_data_dir() -> PathBuf {
+    if is_flatpak() {
+        return flatpak_app_data_dir_for(
+            env::var_os("XDG_DATA_HOME").as_deref(),
+            env::var_os("FLATPAK_ID").as_deref(),
+            home_dir().as_deref(),
+        );
+    }
     app_data_dir_for(
         cfg!(target_os = "windows"),
         local_app_data_dir().as_deref(),
@@ -65,6 +72,12 @@ pub fn legacy_app_data_dir() -> Option<PathBuf> {
 }
 
 pub fn migrate_legacy_app_data_dir() -> std::io::Result<()> {
+    // Inside a Flatpak, ~/.agent-workspace is either an empty tmpfs path or,
+    // when the user granted home access, the host install's live data. In
+    // neither case should it be moved into the sandbox's data dir.
+    if is_flatpak() {
+        return Ok(());
+    }
     let current = app_data_dir();
     migrate_legacy_app_data_dir_for(&current, legacy_app_data_dir().as_deref())
 }
@@ -797,6 +810,26 @@ fn app_data_dir_for(
 
     home.map(legacy_app_data_dir_for)
         .unwrap_or_else(|| Path::new(".").join(".agent-workspace"))
+}
+
+/// Flatpak gives the app a throwaway tmpfs `$HOME`; only the XDG base dirs
+/// (redirected to `~/.var/app/$FLATPAK_ID`) survive a restart, so app data
+/// has to live under `$XDG_DATA_HOME` there.
+fn flatpak_app_data_dir_for(
+    xdg_data_home: Option<&OsStr>,
+    flatpak_id: Option<&OsStr>,
+    home: Option<&Path>,
+) -> PathBuf {
+    if let Some(data_home) = non_empty_os_str(xdg_data_home) {
+        return Path::new(data_home).join("panes");
+    }
+    let flatpak_id = non_empty_os_str(flatpak_id).unwrap_or(OsStr::new("com.panes.app"));
+    home.unwrap_or_else(|| Path::new("."))
+        .join(".var")
+        .join("app")
+        .join(flatpak_id)
+        .join("data")
+        .join("panes")
 }
 
 fn non_empty_os_str(value: Option<&OsStr>) -> Option<&OsStr> {
@@ -1615,6 +1648,11 @@ mod tests {
 
     #[test]
     fn is_flatpak_reflects_flatpak_id_env_var() {
+        // FLATPAK_ID now also moves app_data_dir(), so hold the app data lock
+        // that tests resolving that dir take.
+        let _app_data_guard = crate::config::app_config::app_data_env_lock()
+            .lock()
+            .expect("app data env lock poisoned");
         let _env_guard = env_lock().lock().expect("env lock poisoned");
         let original = std::env::var_os("FLATPAK_ID");
 
@@ -1628,5 +1666,100 @@ mod tests {
             Some(value) => std::env::set_var("FLATPAK_ID", value),
             None => std::env::remove_var("FLATPAK_ID"),
         }
+    }
+
+    #[test]
+    fn flatpak_app_data_dir_for_prefers_xdg_data_home() {
+        let path = flatpak_app_data_dir_for(
+            Some(OsStr::new("/home/panes/.var/app/com.panes.app/data")),
+            Some(OsStr::new("com.panes.app")),
+            Some(Path::new("/home/panes")),
+        );
+        assert_eq!(
+            path,
+            PathBuf::from("/home/panes/.var/app/com.panes.app/data/panes")
+        );
+    }
+
+    #[test]
+    fn flatpak_app_data_dir_for_falls_back_to_var_app_dir() {
+        let path = flatpak_app_data_dir_for(
+            Some(OsStr::new("")),
+            Some(OsStr::new("com.panes.app")),
+            Some(Path::new("/home/panes")),
+        );
+        assert_eq!(
+            path,
+            PathBuf::from("/home/panes/.var/app/com.panes.app/data/panes")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn app_data_dir_moves_out_of_home_only_inside_flatpak() {
+        let _app_data_guard = crate::config::app_config::app_data_env_lock()
+            .lock()
+            .expect("app data env lock poisoned");
+        let _env_guard = env_lock().lock().expect("env lock poisoned");
+        let saved: Vec<(&str, Option<OsString>)> = ["FLATPAK_ID", "XDG_DATA_HOME", "HOME"]
+            .into_iter()
+            .map(|key| (key, std::env::var_os(key)))
+            .collect();
+
+        std::env::set_var("HOME", "/home/panes");
+        std::env::set_var("XDG_DATA_HOME", "/home/panes/.var/app/com.panes.app/data");
+
+        std::env::remove_var("FLATPAK_ID");
+        assert_eq!(
+            app_data_dir(),
+            PathBuf::from("/home/panes/.agent-workspace")
+        );
+
+        std::env::set_var("FLATPAK_ID", "com.panes.app");
+        assert_eq!(
+            app_data_dir(),
+            PathBuf::from("/home/panes/.var/app/com.panes.app/data/panes")
+        );
+
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn migrate_legacy_app_data_dir_is_skipped_inside_flatpak() {
+        let _app_data_guard = crate::config::app_config::app_data_env_lock()
+            .lock()
+            .expect("app data env lock poisoned");
+        let _env_guard = env_lock().lock().expect("env lock poisoned");
+        let saved: Vec<(&str, Option<OsString>)> = ["FLATPAK_ID", "XDG_DATA_HOME", "HOME"]
+            .into_iter()
+            .map(|key| (key, std::env::var_os(key)))
+            .collect();
+
+        let root = std::env::temp_dir().join(format!("panes-flatpak-migrate-{}", Uuid::new_v4()));
+        let legacy = root.join(".agent-workspace");
+        fs::create_dir_all(&legacy).expect("legacy app data dir should exist");
+        fs::write(legacy.join("config.toml"), "theme = \"dark\"\n")
+            .expect("legacy config should be written");
+
+        std::env::set_var("HOME", &root);
+        std::env::set_var("XDG_DATA_HOME", root.join("data"));
+        std::env::set_var("FLATPAK_ID", "com.panes.app");
+
+        migrate_legacy_app_data_dir().expect("migration should be a no-op");
+        assert!(legacy.join("config.toml").exists());
+        assert!(!root.join("data").join("panes").exists());
+
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 }
