@@ -28,6 +28,16 @@ pub fn add_worktree(
         }
     }
 
+    // `git worktree add` hands the new branch and the base on to `git branch`
+    // with no option boundary, so a leading dash would be read as an option.
+    anyhow::ensure!(
+        !branch_name.starts_with('-'),
+        "invalid branch name: {branch_name}"
+    );
+    if let Some(base) = base_ref {
+        anyhow::ensure!(!base.starts_with('-'), "invalid base ref: {base}");
+    }
+
     let mut args = vec![
         "worktree",
         "add",
@@ -329,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn add_worktree_does_not_read_a_dash_prefixed_base_as_an_option() {
+    fn add_worktree_does_not_read_a_dash_prefixed_base_or_branch_as_an_option() {
         let repo = TempRepo::init();
         let worktree_path = repo.path.join(".panes/worktrees/feature");
         fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
@@ -344,6 +354,24 @@ mod tests {
 
         assert!(result.is_err(), "--lock is not a ref");
         assert!(!worktree_path.exists());
+
+        // git passes the new branch name on to `git branch`, where `-M`
+        // renamed the current branch.
+        run_git(repo.path_str(), &["branch", "other"]).expect("create branch");
+        let result = add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "-M",
+            Some("other"),
+        );
+
+        assert!(result.is_err(), "-M is not a branch name");
+        let branches = run_git(
+            repo.path_str(),
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        )
+        .expect("list branches");
+        assert_eq!(branches.trim(), "main\nother");
     }
 
     #[test]
