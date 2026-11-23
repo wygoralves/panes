@@ -467,7 +467,17 @@ describe("claude-agent-sdk-server sidecar", () => {
         string,
         unknown
       >;
-      expect(sandbox.autoAllowBashIfSandboxed).toBe(testCase.autoAllow);
+      // A host without a working OS sandbox (a Linux runner without
+      // bubblewrap) downgrades trusted to approvals and says so in a notice.
+      const sandboxUnavailable = harness.events.some(
+        (event) =>
+          event.id === queryId &&
+          event.type === "notice" &&
+          event.kind === "claude_sandbox_unavailable",
+      );
+      const autoAllow = testCase.autoAllow && !sandboxUnavailable;
+      expect(sandbox.autoAllowBashIfSandboxed).toBe(autoAllow);
+      expect(sandbox.failIfUnavailable).toBe(autoAllow);
       const filesystem = sandbox.filesystem as Record<string, unknown>;
       if (testCase.sandboxMode === "read-only") {
         expect(filesystem.allowWrite).toEqual([]);
@@ -498,6 +508,7 @@ describe("claude-agent-sdk-server sidecar", () => {
           },
         ],
         emitObservationResult: true,
+        emitQueryOptions: true,
         sessionId: "session-no-sandbox",
       },
       { PANES_CLAUDE_SANDBOX_UNAVAILABLE: "windows" },
@@ -533,8 +544,11 @@ describe("claude-agent-sdk-server sidecar", () => {
     );
 
     const observations = parseObservationResults(harness, "query-no-sandbox");
-    expect(observations[0]?.result.behavior).toBe("allow");
-    expect(observations[1]?.result.behavior).toBe("deny");
+    const sandbox = observations[0]?.result.sandbox as Record<string, unknown>;
+    expect(sandbox.autoAllowBashIfSandboxed).toBe(false);
+    expect(sandbox.failIfUnavailable).toBe(false);
+    expect(observations[1]?.result.behavior).toBe("allow");
+    expect(observations[2]?.result.behavior).toBe("deny");
   });
 
   it("skips the sandbox notice under full access", async () => {

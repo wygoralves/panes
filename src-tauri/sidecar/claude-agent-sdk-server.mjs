@@ -520,6 +520,13 @@ function resolvePermissionMode(approvalPolicy, allowNetwork) {
   }
 }
 
+// "trusted" leans on the sandbox to confine commands. Without it, commands
+// run with the user's full access, so they wait for approval instead.
+function effectivePermissionMode(approvalPolicy, allowNetwork, sandboxAvailable) {
+  const permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
+  return !sandboxAvailable && permissionMode === "trusted" ? "standard" : permissionMode;
+}
+
 function requiresApproval(permissionMode, toolName, allowedTools) {
   // Task bookkeeping never touches the filesystem, so it skips approval, but
   // only while it is actually part of the thread's effective allowlist.
@@ -1410,12 +1417,7 @@ function buildPermissionHandler({
   sandboxAvailable = true,
 }) {
   const normalizedRoots = writableRoots.map((root) => path.resolve(root));
-  let permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
-  // "trusted" leans on the sandbox to confine commands. Without it, commands
-  // run with the user's full access, so they wait for approval instead.
-  if (!sandboxAvailable && permissionMode === "trusted") {
-    permissionMode = "standard";
-  }
+  const permissionMode = effectivePermissionMode(approvalPolicy, allowNetwork, sandboxAvailable);
   const allowedToolNames = new Set(allowedTools);
 
   return async (toolName, input, options) => {
@@ -2053,12 +2055,15 @@ function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork, { cwd, pe
     return { enabled: false };
   }
 
+  // Auto-allowed commands skip canUseTool, so only the preset that runs
+  // without asking may use it, and only while the sandbox really confines
+  // them: the CLI fails the query instead of running them unsandboxed. The
+  // other presets send every command to approval either way.
+  const autoAllow = permissionMode === "trusted";
   return {
     enabled: true,
-    failIfUnavailable: false,
-    // Auto-allowed commands skip canUseTool, so only the preset that runs
-    // without asking may use it. The others send every command to approval.
-    autoAllowBashIfSandboxed: permissionMode === "trusted",
+    failIfUnavailable: autoAllow,
+    autoAllowBashIfSandboxed: autoAllow,
     allowUnsandboxedCommands: false,
     filesystem: {
       allowWrite: allowWriteRootsForSandbox(sandboxMode, writableRoots),
@@ -2128,8 +2133,9 @@ async function probeSandboxAvailability() {
   return { available: true };
 }
 
-// The Claude Code CLI runs commands unsandboxed when the OS sandbox cannot
-// start (failIfUnavailable is false), so Panes checks for it itself.
+// Outside the trusted preset the Claude Code CLI runs commands unsandboxed
+// when the OS sandbox cannot start (failIfUnavailable is false there), so
+// Panes checks for it itself and asks before each command.
 function detectSandboxAvailability() {
   sandboxAvailabilityPromise ??= probeSandboxAvailability().catch(() => ({
     available: false,
@@ -2271,7 +2277,11 @@ async function handleQuery(req) {
       normalizedSandboxMode === "danger-full-access"
         ? { available: true }
         : await detectSandboxAvailability();
-    const permissionMode = resolvePermissionMode(approvalPolicy, Boolean(allowNetwork));
+    const permissionMode = effectivePermissionMode(
+      approvalPolicy,
+      Boolean(allowNetwork),
+      sandboxAvailability.available,
+    );
     // Only a Trusted repo may run its own settings: hooks, env, apiKeyHelper
     // and .mcp.json servers all execute outside the sandbox and approvals.
     const projectTrusted = projectSettingsTrusted === true;
