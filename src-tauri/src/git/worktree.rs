@@ -28,7 +28,14 @@ pub fn add_worktree(
         }
     }
 
-    let mut args = vec!["worktree", "add", "-b", branch_name, worktree_path];
+    let mut args = vec![
+        "worktree",
+        "add",
+        "-b",
+        branch_name,
+        "--end-of-options",
+        worktree_path,
+    ];
     if let Some(base) = base_ref {
         args.push(base);
     }
@@ -250,12 +257,12 @@ pub fn remove_worktree(
     if force {
         args.push("--force");
     }
-    args.push(worktree_path);
+    args.extend(["--end-of-options", worktree_path]);
     run_git(repo_path, &args).context("failed to remove worktree")?;
     if delete_branch {
         if let Some(branch) = branch_name {
             let flag = if force { "-D" } else { "-d" };
-            run_git(repo_path, &["branch", flag, branch])
+            run_git(repo_path, &["branch", flag, "--end-of-options", branch])
                 .with_context(|| format!("failed to delete worktree branch '{branch}'"))?;
         }
     }
@@ -319,6 +326,24 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn add_worktree_does_not_read_a_dash_prefixed_base_as_an_option() {
+        let repo = TempRepo::init();
+        let worktree_path = repo.path.join(".panes/worktrees/feature");
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+
+        // Before the fix this ran `git worktree add -b feature <path> --lock`.
+        let result = add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "feature",
+            Some("--lock"),
+        );
+
+        assert!(result.is_err(), "--lock is not a ref");
+        assert!(!worktree_path.exists());
     }
 
     #[test]
