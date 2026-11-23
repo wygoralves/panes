@@ -2412,6 +2412,10 @@ async function handleQuery(req) {
         permissions: {
           defaultMode: planMode ? "plan" : "default",
           disableBypassPermissionsMode: "disable",
+          // The CLI allows commands it classifies as read-only before it
+          // consults canUseTool. A Bash ask rule is checked first, so every
+          // command outside the trusted preset reaches Panes' approval.
+          ...(permissionMode === "trusted" ? {} : { ask: ["Bash"] }),
         },
       },
       includePartialMessages: true,
