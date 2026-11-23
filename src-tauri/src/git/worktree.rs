@@ -339,6 +339,22 @@ mod tests {
     }
 
     #[test]
+    fn add_worktree_succeeds_when_the_repo_defines_an_unusable_filter_name() {
+        let repo = TempRepo::init();
+        run_git(repo.path_str(), &["config", "filter.a=b.clean", "cat"]).expect("config");
+        let worktree_path = repo.path.join(".panes/worktrees/feature");
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+
+        add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "feature",
+            None,
+        )
+        .expect("worktree listing does not read filter config");
+    }
+
+    #[test]
     fn add_worktree_does_not_read_a_dash_prefixed_base_or_branch_as_an_option() {
         let repo = TempRepo::init();
         let worktree_path = repo.path.join(".panes/worktrees/feature");

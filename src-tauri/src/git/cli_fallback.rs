@@ -61,13 +61,26 @@ pub fn run_git(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
 /// which would otherwise run the repo's `post-index-change` hook. Signature
 /// checks would run the repo's `gpg.program`. A lazy fetch in a partial clone
 /// would reach a remote without the checks fetch gets, so no transport is
-/// allowed: `GIT_ALLOW_PROTOCOL` overrides any `protocol.*.allow` config.
+/// allowed: an empty `GIT_ALLOW_PROTOCOL` overrides any `protocol.*.allow`.
 pub fn run_git_read(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
-    let filter_overrides = repo_filter_overrides(repo_path)?;
+    run_git_read_with(repo_path, &[], args)
+}
+
+/// [`run_git_read`] for a command that reads working tree files (status,
+/// a diff against the working tree), with the repo's filter drivers off.
+pub fn run_git_read_files(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
+    run_git_read_with(repo_path, &repo_filter_overrides(repo_path)?, args)
+}
+
+fn run_git_read_with(
+    repo_path: &str,
+    overrides: &[String],
+    args: &[&str],
+) -> anyhow::Result<String> {
     let output = git_command(repo_path)
-        .env("GIT_ALLOW_PROTOCOL", "none")
+        .env("GIT_ALLOW_PROTOCOL", "")
         .args(["-c", "log.showSignature=false"])
-        .args(&filter_overrides)
+        .args(overrides)
         .arg("--no-optional-locks")
         .args(args)
         .output()
@@ -170,21 +183,21 @@ fn kill_process_tree(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
-/// Lists config keys matching `key_regex` that come from the repository
-/// itself (`.git/config`, its worktree config, or files they include), as
-/// opposed to the user's global or system config. Uses git rather than
-/// libgit2 so conditional includes resolve exactly as they would for git.
-pub fn repo_scoped_config_keys(repo_path: &str, key_regex: &str) -> anyhow::Result<Vec<String>> {
-    let args = ["config", "--show-scope", "-z", "--get-regexp", key_regex];
+/// Lists the config keys for which `is_wanted` holds that come from the
+/// repository itself (`.git/config`, its worktree config, or files they
+/// include), as opposed to the user's global or system config. Uses git
+/// rather than libgit2 so conditional includes resolve exactly as they would
+/// for git, and lists every key rather than asking git to match a pattern,
+/// which skips keys that are not valid UTF-8.
+pub fn repo_scoped_config_keys(
+    repo_path: &str,
+    is_wanted: impl Fn(&str) -> bool,
+) -> anyhow::Result<Vec<String>> {
+    let args = ["config", "--list", "--show-scope", "-z"];
     let output = git_command(repo_path)
         .args(args)
         .output()
         .with_context(|| format!("failed to run git command: {}", describe(repo_path, &args)))?;
-
-    // `git config --get-regexp` exits with 1 when nothing matches.
-    if output.status.code() == Some(1) {
-        return Ok(Vec::new());
-    }
     let stdout = into_stdout(output).context("failed to read repository git config")?;
 
     let mut keys = Vec::new();
@@ -194,11 +207,20 @@ pub fn repo_scoped_config_keys(repo_path: &str, key_regex: &str) -> anyhow::Resu
             continue;
         }
         let key = entry.split_once('\n').map_or(entry, |(key, _)| key);
-        if !keys.iter().any(|existing| existing == key) {
+        if is_wanted(key) && !keys.iter().any(|existing| existing == key) {
             keys.push(key.to_string());
         }
     }
     Ok(keys)
+}
+
+/// Splits a config key into its section, optional subsection and name.
+pub fn split_config_key(key: &str) -> Option<(&str, Option<&str>, &str)> {
+    let (section, rest) = key.split_once('.')?;
+    Some(match rest.rsplit_once('.') {
+        Some((subsection, name)) => (section, Some(subsection), name),
+        None => (section, None, rest),
+    })
 }
 
 /// `-c` overrides that empty every filter driver the repo's own config
@@ -206,21 +228,26 @@ pub fn repo_scoped_config_keys(repo_path: &str, key_regex: &str) -> anyhow::Resu
 /// tree file (status on a touched file, diff), and its smudge command on
 /// checkout. Drivers from the user's global config, such as git-lfs, stay.
 fn repo_filter_overrides(repo_path: &str) -> anyhow::Result<Vec<String>> {
-    let keys = repo_scoped_config_keys(repo_path, r"^filter\..+\.(clean|smudge|process)$")
-        .context("failed to check the repository git config")?;
+    let keys = repo_scoped_config_keys(repo_path, |key| {
+        matches!(
+            split_config_key(key),
+            Some(("filter", Some(_), "clean" | "smudge" | "process"))
+        )
+    })
+    .context("failed to check the repository git config")?;
     let mut drivers: Vec<&str> = keys
         .iter()
-        .filter_map(|key| key.strip_prefix("filter.")?.rsplit_once('.'))
-        .map(|(driver, _)| driver)
+        .filter_map(|key| split_config_key(key)?.1)
         .collect();
     drivers.sort_unstable();
     drivers.dedup();
 
     let mut overrides = Vec::new();
     for driver in drivers {
-        // `-c` splits at the first `=`, so such a name cannot be overridden.
+        // `-c` splits at the first `=`, and a name that is not UTF-8 was
+        // changed when decoded, so neither could be overridden.
         anyhow::ensure!(
-            !driver.contains('='),
+            !driver.contains('=') && !driver.contains(char::REPLACEMENT_CHARACTER),
             "the repository git config defines a filter driver Panes cannot turn off: {driver}"
         );
         for setting in ["clean=", "smudge=", "process=", "required=false"] {

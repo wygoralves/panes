@@ -20,7 +20,7 @@ use crate::path_utils;
 
 use super::cli_fallback::{
     hooks_disabled_config, repo_scoped_config_keys, run_git, run_git_network, run_git_read,
-    GIT_NETWORK_TIMEOUT,
+    run_git_read_files, split_config_key, GIT_NETWORK_TIMEOUT,
 };
 
 const FILE_TREE_DEFAULT_PAGE_SIZE: usize = 2000;
@@ -140,7 +140,7 @@ pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
 fn get_git_status_via_cli(repo_path: &str) -> anyhow::Result<GitStatusDto> {
     // Checking a submodule's contents runs `git status` inside it, under the
     // submodule's own config, so only its checked-out commit is compared.
-    let output = run_git_read(
+    let output = run_git_read_files(
         repo_path,
         &[
             "status",
@@ -359,7 +359,7 @@ pub fn get_file_diff(
     args.push("--");
     args.push(file_path);
 
-    let raw = run_git_read(repo_path, &args)?;
+    let raw = run_git_read_files(repo_path, &args)?;
     Ok(build_diff_preview(raw))
 }
 
@@ -507,11 +507,19 @@ pub fn soft_reset_last_commit(repo_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Repo config keys that make fetch, pull or push run a program: an ssh or
-/// proxy command, an upload or receive pack path, a credential helper, an
+/// Whether a repo config key makes fetch, pull or push run a program: an ssh
+/// or proxy command, an upload or receive pack path, a credential helper, an
 /// askpass or signing program, or an alias git falls back to when a
 /// `<helper>::` url names a remote helper that is not installed.
-const NETWORK_COMMAND_CONFIG_KEYS: &str = r"^(core\.(sshcommand|gitproxy|askpass)|remote\..+\.(uploadpack|receivepack)|credential\.(.+\.)?helper|gpg\.(.+\.)?program|alias\.remote-.+)$";
+fn is_network_command_config_key(key: &str) -> bool {
+    matches!(
+        split_config_key(key),
+        Some(("core", None, "sshcommand" | "gitproxy" | "askpass"))
+            | Some(("remote", Some(_), "uploadpack" | "receivepack"))
+            | Some(("credential", _, "helper"))
+            | Some(("gpg", _, "program"))
+    ) || matches!(split_config_key(key), Some(("alias", None, name)) if name.starts_with("remote-"))
+}
 
 /// Overrides for every network command on a repo that is not trusted. The
 /// `ext::` transport runs a command named in the url, which a repo's url
@@ -548,7 +556,7 @@ fn network_config_overrides(
         return Ok(Vec::new());
     }
 
-    let keys = repo_scoped_config_keys(repo_path, NETWORK_COMMAND_CONFIG_KEYS)
+    let keys = repo_scoped_config_keys(repo_path, is_network_command_config_key)
         .context("failed to check the repository git config")?;
     if !keys.is_empty() {
         anyhow::bail!(
@@ -2086,6 +2094,36 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn fetch_refuses_a_command_under_a_remote_name_that_is_not_utf8() {
+        use std::io::Write;
+
+        let (repo, remote) = repo_with_file_remote();
+        let marker = repo.path.join("uploadpack-ran");
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(repo.path.join(".git/config"))
+            .expect("open config");
+        config
+            .write_all(b"[remote \"\xff\"]\n")
+            .and_then(|_| writeln!(config, "\turl = file://{}", remote.display()))
+            .and_then(|_| {
+                writeln!(
+                    config,
+                    "\tuploadpack = touch {}; git-upload-pack",
+                    marker.display()
+                )
+            })
+            .expect("write config");
+
+        let error = fetch_repo(repo.path_str(), &TrustLevelDto::Standard)
+            .expect_err("fetch must be refused");
+
+        assert!(error.to_string().contains("uploadpack"), "{error}");
+        assert!(!marker.exists(), "uploadpack ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn fetch_on_a_standard_repo_runs_without_repo_hooks() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -2349,6 +2387,36 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn reads_never_run_a_filter_driver_whose_name_is_not_utf8() {
+        use std::io::Write;
+
+        let repo = TempRepo::init();
+        repo.write("a.txt", "a\n");
+        repo.commit_all("init");
+        let marker = repo.path.join(".git/clean-ran");
+        fs::write(
+            repo.path.join(".git/info/attributes"),
+            b"*.txt filter=\xff\n",
+        )
+        .expect("attributes");
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(repo.path.join(".git/config"))
+            .expect("open config");
+        config
+            .write_all(b"[filter \"\xff\"]\n")
+            .and_then(|_| writeln!(config, "\tclean = touch {}; cat", marker.display()))
+            .expect("write config");
+        repo.write("a.txt", "a\n");
+
+        let _ = get_git_status(repo.path_str());
+        let _ = get_file_diff(repo.path_str(), "a.txt", false);
+
+        assert!(!marker.exists(), "the filter driver ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn fetch_refuses_a_remote_helper_alias_unless_trusted() {
         let repo = TempRepo::init();
         let marker = repo.path.join(".git/alias-ran");
@@ -2428,6 +2496,20 @@ mod tests {
             !marker.exists(),
             "a background read fetched from the remote"
         );
+
+        // A remote helper named like a protocol list entry is refused too.
+        let alias = format!("!touch {}", marker.display());
+        for (key, value) in [
+            ("remote.origin.url", "none::x"),
+            ("alias.remote-none", alias.as_str()),
+            ("protocol.none.allow", "always"),
+        ] {
+            run_git(clone.to_str().unwrap(), &["config", key, value]).expect("config");
+        }
+
+        let _ = get_commit_diff(clone.to_str().unwrap(), head.trim());
+
+        assert!(!marker.exists(), "a background read ran a remote helper");
     }
 
     #[test]
