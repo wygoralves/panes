@@ -58,6 +58,17 @@ pub fn add_worktree(
         .ok_or_else(|| anyhow::anyhow!("worktree created but not found in listing"))
 }
 
+/// Strips the one line ending git ends a printed path with, and nothing
+/// else: on unix a directory name can end in a space or a line break.
+pub fn strip_git_line_end(output: &str) -> &str {
+    let line = output.strip_suffix('\n').unwrap_or(output);
+    if cfg!(windows) {
+        line.strip_suffix('\r').unwrap_or(line)
+    } else {
+        line
+    }
+}
+
 /// Resolves the git directory shared by a repository and all of its linked
 /// worktrees. `git rev-parse --git-common-dir` follows `gitdir:` pointer files
 /// and linked-worktree admin directories, so the answer is the main repository's
@@ -65,8 +76,7 @@ pub fn add_worktree(
 pub fn git_common_dir(repo_path: &str) -> anyhow::Result<PathBuf> {
     let output = run_git_read(repo_path, &["rev-parse", "--git-common-dir"])
         .context("failed to resolve the git common directory")?;
-    // Only git's line ending is stripped: a path can end in a space.
-    let resolved = output.trim_end_matches(['\n', '\r']);
+    let resolved = strip_git_line_end(&output);
     if resolved.is_empty() {
         anyhow::bail!("git returned an empty common directory for '{repo_path}'");
     }

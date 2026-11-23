@@ -137,17 +137,18 @@ pub async fn soft_reset_last_commit(
 /// has several rows, the least trusted wins.
 fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustLevelDto> {
     let common_dir = canonicalize_dir(worktree::git_common_dir(repo_path)?)?;
-    let git_dir = canonicalize_dir(PathBuf::from(
-        run_git_read(repo_path, &["rev-parse", "--absolute-git-dir"])?
-            .trim_end_matches(['\n', '\r']),
-    ))?;
+    let git_dir = canonicalize_dir(PathBuf::from(worktree::strip_git_line_end(&run_git_read(
+        repo_path,
+        &["rev-parse", "--absolute-git-dir"],
+    )?)))?;
 
+    let rows = db::repos::list_discovered_repos(db)?;
     let mut matched: Option<TrustLevelDto> = None;
-    for repo in db::repos::list_discovered_repos(db)? {
+    for repo in &rows {
         if registered_common_dir(&repo.path).as_ref() == Some(&common_dir) {
             matched = Some(match matched {
                 Some(level) if trust_rank(&level) <= trust_rank(&repo.trust_level) => level,
-                _ => repo.trust_level,
+                _ => repo.trust_level.clone(),
             });
         }
     }
@@ -165,20 +166,25 @@ fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustL
         Some(TrustLevelDto::Trusted) => TrustLevelDto::Standard,
         Some(level) => level,
         // A repo with no row of its own (the scan stops at the first repo it
-        // finds) stays restricted inside a restricted repo, whether it is
-        // reached through its checkout or through the main checkout beside
+        // finds) stays restricted inside any restricted repo row, whether it
+        // is reached through its checkout or through the main checkout beside
         // its common dir.
         None => {
             let main_checkout = common_dir.parent().map(|dir| dir.to_string_lossy());
-            let mut level = TrustLevelDto::Standard;
-            for path in std::iter::once(repo_path.into()).chain(main_checkout) {
-                if let Some(repo) = db::repos::find_deepest_repo_containing_path(db, &path, None)? {
-                    if matches!(repo.trust_level, TrustLevelDto::Restricted) {
-                        level = TrustLevelDto::Restricted;
-                    }
-                }
+            let locations: Vec<String> = std::iter::once(repo_path.to_string())
+                .chain(main_checkout.map(|dir| dir.into_owned()))
+                .collect();
+            let restricted = rows.iter().any(|repo| {
+                matches!(repo.trust_level, TrustLevelDto::Restricted)
+                    && locations
+                        .iter()
+                        .any(|path| crate::path_utils::is_path_within_root(path, &repo.path))
+            });
+            if restricted {
+                TrustLevelDto::Restricted
+            } else {
+                TrustLevelDto::Standard
             }
-            level
         }
     })
 }
@@ -191,7 +197,7 @@ fn registered_common_dir(path: &str) -> Option<PathBuf> {
     let commondir = git_dir.join("commondir");
     let common_dir = if commondir.is_file() {
         let relative = std::fs::read_to_string(&commondir).ok()?;
-        git_dir.join(relative.trim_end_matches(['\n', '\r']))
+        git_dir.join(worktree::strip_git_line_end(&relative))
     } else if commondir.exists() {
         return None;
     } else {
@@ -1034,6 +1040,43 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&nested_outside);
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn a_nested_repo_stays_restricted_when_its_parent_also_has_a_standard_row() {
+        let repo = TestRepo::init();
+        let root = repo.path.canonicalize().expect("canonical repo path");
+        let other_root = root.join("other-workspace");
+        fs::create_dir_all(&other_root).expect("create other workspace root");
+        let other_workspace = crate::db::workspaces::upsert_workspace(
+            &repo.state.db,
+            other_root.to_str().unwrap(),
+            Some(1),
+        )
+        .expect("create other workspace");
+        for (workspace_id, level) in [
+            (repo.workspace_id.as_str(), TrustLevelDto::Standard),
+            (other_workspace.id.as_str(), TrustLevelDto::Restricted),
+        ] {
+            let row = crate::db::repos::upsert_repo(
+                &repo.state.db,
+                workspace_id,
+                "repo",
+                root.to_str().unwrap(),
+                "main",
+                true,
+            )
+            .expect("register repo");
+            crate::db::repos::set_repo_trust_level(&repo.state.db, &row.id, level)
+                .expect("set trust");
+        }
+        let nested = root.join("vendor/nested");
+        fs::create_dir_all(&nested).expect("create nested repo dir");
+        run_git(nested.to_str().unwrap(), &["init", "-q"]).expect("init nested repo");
+
+        let level = repo_trust_level(&repo.state.db, nested.to_str().unwrap()).expect("trust");
+
+        assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
     }
 
     #[cfg(unix)]
