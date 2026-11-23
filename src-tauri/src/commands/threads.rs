@@ -2310,10 +2310,16 @@ async fn build_codex_branch_context(
     .await?;
 
     let workspace_root = workspace.root_path.clone();
+    let codex_external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
-    let sandbox_mode = sandbox_mode_override
-        .clone()
-        .unwrap_or_else(|| "workspace-write".to_string());
+    let sandbox_mode = sandbox_mode_override.clone().unwrap_or_else(|| {
+        default_thread_sandbox_mode(
+            &thread.engine_id,
+            thread.engine_metadata.as_ref(),
+            codex_external_sandbox_active,
+        )
+        .to_string()
+    });
     let workspace_writable_roots = if selected_repo.is_some() {
         None
     } else {
@@ -2327,7 +2333,6 @@ async fn build_codex_branch_context(
         .as_ref()
         .map(|repo| repo.trust_level.clone())
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
-    let codex_external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
     let permission_profile = thread_permission_profile(thread.engine_metadata.as_ref());
 
     if permission_profile.is_none() {
@@ -2604,6 +2609,31 @@ fn thread_allow_network_override(metadata: Option<&Value>) -> Option<bool> {
     metadata
         .and_then(|value| value.get("sandboxAllowNetwork"))
         .and_then(Value::as_bool)
+}
+
+/// The sandbox mode for a thread that stores none. While Codex ran in
+/// external sandbox mode, the read-only preset stored only its approval
+/// policy, so a Codex thread whose stored approval policy is that preset's
+/// runs read-only. Every other thread defaults to workspace-write, and so
+/// does that one while external mode is still on: no OS sandbox holds it
+/// read-only then, so it keeps the workspace-write confirmation checks.
+pub(crate) fn default_thread_sandbox_mode(
+    engine_id: &str,
+    metadata: Option<&Value>,
+    codex_external_sandbox_active: bool,
+) -> &'static str {
+    if engine_kind(engine_id) == "codex" && !codex_external_sandbox_active {
+        let read_only_approval = autonomy_policy_for_preset(engine_id, "read-only", false)
+            .ok()
+            .map(|policy| policy.approval_policy);
+        let stored_approval = thread_approval_policy_override_value(engine_id, metadata)
+            .ok()
+            .flatten();
+        if read_only_approval.is_some() && stored_approval == read_only_approval {
+            return "read-only";
+        }
+    }
+    "workspace-write"
 }
 
 fn thread_sandbox_mode(metadata: Option<&Value>) -> Result<Option<String>, String> {
@@ -4000,6 +4030,134 @@ mod tests {
         );
         assert_eq!(metadata.get("sandboxMode"), None);
         assert_eq!(metadata.get("sandboxAllowNetwork"), None);
+    }
+
+    async fn branch_context_sandbox_mode(metadata: Option<Value>) -> Option<String> {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-6.2-sol");
+        if let Some(metadata) = metadata.as_ref() {
+            crate::db::threads::update_engine_metadata(&state.db, &thread.id, metadata)
+                .expect("store thread metadata");
+        }
+        let thread = crate::db::threads::get_thread(&state.db, &thread.id)
+            .expect("read thread")
+            .expect("thread exists");
+        let (_, _, sandbox) = build_codex_branch_context(&state, &thread)
+            .await
+            .expect("branch context");
+        sandbox.sandbox_mode
+    }
+
+    fn preset_metadata(preset: &str, codex_external_sandbox: bool) -> Value {
+        let policy = autonomy_policy_for_preset("codex", preset, codex_external_sandbox).unwrap();
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            approval_policy_metadata_key("codex").to_string(),
+            policy.approval_policy,
+        );
+        if let Some(sandbox_mode) = policy.sandbox_mode {
+            metadata.insert("sandboxMode".to_string(), json!(sandbox_mode));
+        }
+        if let Some(allow_network) = policy.allow_network {
+            metadata.insert("sandboxAllowNetwork".to_string(), json!(allow_network));
+        }
+        Value::Object(metadata)
+    }
+
+    #[tokio::test]
+    async fn a_legacy_read_only_codex_thread_without_a_sandbox_mode_stays_read_only() {
+        // A row written by the read-only preset while external sandbox mode
+        // was the macOS default: approval policy and network, no sandboxMode.
+        let legacy = json!({
+            "sandboxApprovalPolicy": "untrusted",
+            "sandboxAllowNetwork": false,
+        });
+        assert_eq!(
+            branch_context_sandbox_mode(Some(legacy)).await.as_deref(),
+            Some("read-only")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_only_codex_thread_created_during_a_fallback_stays_read_only() {
+        let metadata = preset_metadata("read-only", true);
+        assert_eq!(metadata.get("sandboxMode"), None);
+        assert_eq!(
+            branch_context_sandbox_mode(Some(metadata)).await.as_deref(),
+            Some("read-only")
+        );
+    }
+
+    #[tokio::test]
+    async fn other_codex_threads_keep_their_sandbox_mode() {
+        for (preset, external, expected) in [
+            ("ask", true, "workspace-write"),
+            ("auto", true, "workspace-write"),
+            ("full", true, "danger-full-access"),
+            ("ask", false, "workspace-write"),
+            ("full", false, "danger-full-access"),
+            ("read-only", false, "read-only"),
+        ] {
+            assert_eq!(
+                branch_context_sandbox_mode(Some(preset_metadata(preset, external)))
+                    .await
+                    .as_deref(),
+                Some(expected),
+                "{preset} preset, external={external}"
+            );
+        }
+        assert_eq!(
+            branch_context_sandbox_mode(None).await.as_deref(),
+            Some("workspace-write")
+        );
+        // A stored mode wins over the approval policy.
+        assert_eq!(
+            branch_context_sandbox_mode(Some(json!({
+                "sandboxApprovalPolicy": "untrusted",
+                "sandboxMode": "workspace-write",
+            })))
+            .await
+            .as_deref(),
+            Some("workspace-write")
+        );
+    }
+
+    #[test]
+    fn only_codex_without_external_mode_reads_the_read_only_approval_as_a_sandbox_default() {
+        assert_eq!(
+            default_thread_sandbox_mode(
+                "codex",
+                Some(&json!({ "sandboxApprovalPolicy": "untrusted" })),
+                false
+            ),
+            "read-only"
+        );
+        assert_eq!(
+            default_thread_sandbox_mode(
+                "codex",
+                Some(&json!({ "sandboxApprovalPolicy": "on-request" })),
+                false
+            ),
+            "workspace-write"
+        );
+        assert_eq!(
+            default_thread_sandbox_mode(
+                "claude",
+                Some(&json!({ "claudePermissionMode": "restricted" })),
+                false
+            ),
+            "workspace-write"
+        );
+        // External mode holds nothing read-only, so the thread keeps the
+        // workspace-write default and its confirmation checks.
+        assert_eq!(
+            default_thread_sandbox_mode(
+                "codex",
+                Some(&json!({ "sandboxApprovalPolicy": "untrusted" })),
+                true
+            ),
+            "workspace-write"
+        );
     }
 
     #[test]

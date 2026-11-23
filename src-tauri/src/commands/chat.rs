@@ -558,13 +558,21 @@ async fn prepare_send_message_turn(
         configured_reasoning_effort.clone()
     };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
+    let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
+        state.engines.codex_uses_external_sandbox().await
+    } else {
+        false
+    };
     let supports_panes_sandbox = engine_kind(&thread.engine_id) != "opencode";
     let sandbox_mode = if supports_panes_sandbox {
-        Some(
-            sandbox_mode_override
-                .clone()
-                .unwrap_or_else(|| "workspace-write".to_string()),
-        )
+        Some(sandbox_mode_override.clone().unwrap_or_else(|| {
+            super::threads::default_thread_sandbox_mode(
+                &thread.engine_id,
+                thread.engine_metadata.as_ref(),
+                codex_external_sandbox_active,
+            )
+            .to_string()
+        }))
     } else {
         if sandbox_mode_override.is_some() {
             log::warn!(
@@ -605,11 +613,6 @@ async fn prepare_send_message_turn(
         .as_ref()
         .map(|repo| repo.trust_level.clone())
         .unwrap_or_else(|| aggregate_workspace_trust_level(&repos));
-    let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
-        state.engines.codex_uses_external_sandbox().await
-    } else {
-        false
-    };
     let permission_profile = if engine_kind(&thread.engine_id) == "codex" {
         thread_permission_profile(thread.engine_metadata.as_ref())
     } else {
