@@ -200,7 +200,7 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
             .iter()
             .map(|arg| arg.to_string())
             .collect();
-        return run_harness_install(&app, &harness_id, "powershell", &args).await;
+        return run_harness_install(&app, &harness_id, &windows_powershell_program(), &args).await;
     }
 
     // Prefer install_script (curl-pipe installers) over install_command (npm).
@@ -438,22 +438,46 @@ fn windows_powershell_install_args(expression: &str) -> [&str; 5] {
     ]
 }
 
+/// Windows PowerShell from System32. The install command is typed into a
+/// terminal that starts in the workspace, where cmd.exe would run a
+/// powershell.exe, .bat or .cmd from that folder before the system one.
+fn windows_powershell_program() -> String {
+    std::env::var_os("SystemRoot")
+        .map(|root| {
+            Path::new(&root)
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe")
+        })
+        .filter(|path| path.is_file())
+        .map(|path| path.display().to_string())
+        // Typed unquoted, so it works the same in cmd.exe and PowerShell.
+        .filter(|path| !path.contains(char::is_whitespace))
+        .unwrap_or_else(|| "powershell".to_string())
+}
+
 /// The install command line for this OS, matching what install_harness runs.
 /// Shown in the Harnesses panel and typed into a terminal by "Install".
 fn install_command_display(def: &HarnessDef) -> Option<String> {
-    install_command_display_on(def, cfg!(target_os = "windows"))
+    let windows_powershell = cfg!(target_os = "windows").then(windows_powershell_program);
+    install_command_display_on(def, windows_powershell.as_deref())
 }
 
-fn install_command_display_on(def: &HarnessDef, is_windows: bool) -> Option<String> {
+/// `windows_powershell` is the PowerShell program on Windows, None elsewhere.
+fn install_command_display_on(
+    def: &HarnessDef,
+    windows_powershell: Option<&str>,
+) -> Option<String> {
     let package_manager_command = || {
         def.install_command
             .map(|program| format!("{program} {}", def.install_args.join(" ")))
     };
 
-    if is_windows {
+    if let Some(powershell) = windows_powershell {
         if let Some(expression) = def.install_script_windows {
             return Some(format!(
-                "powershell -NoProfile -ExecutionPolicy Bypass -Command \"{expression}\""
+                "{powershell} -NoProfile -ExecutionPolicy Bypass -Command \"{expression}\""
             ));
         }
         return package_manager_command();
@@ -800,11 +824,17 @@ mod tests {
                 .iter()
                 .find(|def| def.id == id)
                 .expect("harness exists");
-            let command = install_command_display_on(def, true).expect("windows command");
+            let command = install_command_display_on(
+                def,
+                Some(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            )
+            .expect("windows command");
 
             assert!(harness_can_auto_install_on(def, true), "{id}");
             assert!(
-                command.starts_with("powershell -NoProfile"),
+                command.starts_with(
+                    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile"
+                ),
                 "{id}: {command}"
             );
             assert!(
@@ -821,13 +851,13 @@ mod tests {
             .find(|def| def.id == "claude-code")
             .unwrap();
         assert_eq!(
-            install_command_display_on(claude, false).as_deref(),
+            install_command_display_on(claude, None).as_deref(),
             Some("curl -fsSL https://claude.ai/install.sh | bash")
         );
         let codex = HARNESSES.iter().find(|def| def.id == "codex").unwrap();
-        for is_windows in [false, true] {
+        for windows_powershell in [None, Some("powershell")] {
             assert_eq!(
-                install_command_display_on(codex, is_windows).as_deref(),
+                install_command_display_on(codex, windows_powershell).as_deref(),
                 Some("npm install -g @openai/codex")
             );
         }
