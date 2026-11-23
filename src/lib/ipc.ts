@@ -705,6 +705,8 @@ export interface ThreadUpdatedEvent {
 
 export interface ChatTurnFinishedEvent {
   threadId: string;
+  /** The assistant message the turn wrote. */
+  messageId?: string;
   workspaceId: string;
   engineId: ChatEngineId;
   threadTitle: string;

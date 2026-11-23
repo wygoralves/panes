@@ -126,7 +126,7 @@ function ensureTurnFinishedQueueListener() {
         : event.status === "interrupted"
           ? "interrupted"
           : "failed";
-    releaseFinishedTurnInView(event.threadId, status);
+    releaseFinishedTurnInView(event.threadId, status, event.messageId);
     void useChatStore.getState().drainQueue(event.threadId, status);
   }).catch((error) => {
     turnFinishedQueueListener = null;
@@ -136,22 +136,44 @@ function ensureTurnFinishedQueueListener() {
 
 /**
  * The backend released the thread's turn. A view that bound after the stream
- * already ended never saw its TurnCompleted and may still read as streaming;
- * its latest reply then is no longer streaming. A reply that is streaming
- * belongs to a newer turn and keeps the view as it is.
+ * already ended, or before a stopped turn wrote its end, never saw a
+ * TurnCompleted and may still read as streaming. A streaming reply other than
+ * the released one belongs to a newer turn and keeps the view as it is.
  */
-function releaseFinishedTurnInView(threadId: string, status: TurnCompletionStatus) {
+function releaseFinishedTurnInView(
+  threadId: string,
+  status: TurnCompletionStatus,
+  messageId: string | undefined,
+) {
   const state = useChatStore.getState();
   if (state.threadId !== threadId || !state.streaming) {
     return;
   }
-  const latestAssistant = [...state.messages].reverse().find((message) => message.role === "assistant");
-  if (latestAssistant?.status === "streaming") {
+  let latestIndex = state.messages.length - 1;
+  while (latestIndex >= 0 && state.messages[latestIndex].role !== "assistant") {
+    latestIndex -= 1;
+  }
+  const latest = latestIndex >= 0 ? state.messages[latestIndex] : undefined;
+  const releasedIsLatest = latest !== undefined && latest.id === messageId;
+  if (latest?.status === "streaming" && !releasedIsLatest) {
     return;
   }
-  useChatStore.setState(
-    applyRuntimeStateFromEvent(state.status, state.streaming, { type: "TurnCompleted", status }),
-  );
+  let messages = state.messages;
+  if (releasedIsLatest && latest.status === "streaming") {
+    messages = [...state.messages];
+    messages[latestIndex] = {
+      ...latest,
+      status: status === "completed" ? "completed" : status === "interrupted" ? "interrupted" : "error",
+      blocks:
+        status === "completed" || !latest.blocks
+          ? latest.blocks
+          : settleStoppedAssistantBlocks(latest.blocks),
+    };
+  }
+  useChatStore.setState({
+    messages,
+    ...applyRuntimeStateFromEvent(state.status, state.streaming, { type: "TurnCompleted", status }),
+  });
 }
 
 /** Sequence number a backend stream event carries; absent on events emitted outside a turn. */
@@ -2349,7 +2371,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         preBindEvents = null;
         for (const event of buffered) {
           const seq = streamEventSeq(event);
-          if (seq !== null && coveredSeq !== null && seq <= coveredSeq) {
+          // Usage updates write no block, so the snapshot never covers them.
+          if (
+            seq !== null &&
+            coveredSeq !== null &&
+            seq <= coveredSeq &&
+            event.type !== "UsageLimitsUpdated"
+          ) {
             // The snapshot holds this event's blocks but not the turn state it
             // implies, such as a TurnCompleted that ended the turn. Earlier
             // events still queued apply first so states keep their order.

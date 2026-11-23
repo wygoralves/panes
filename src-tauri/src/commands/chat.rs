@@ -229,6 +229,9 @@ struct ThreadUpdatedEvent {
 #[serde(rename_all = "camelCase")]
 struct ChatTurnFinishedEvent {
     thread_id: String,
+    /// The assistant message the turn wrote, so a view can tell it apart
+    /// from a newer turn's reply.
+    message_id: String,
     workspace_id: String,
     engine_id: String,
     thread_title: String,
@@ -2403,7 +2406,13 @@ async fn run_turn(
     let (thread_updated_event, final_thread) = build_final_thread_event(latest_thread, &thread);
     let _ = app.emit("thread-updated", thread_updated_event);
     if let Some(final_thread) = final_thread.as_ref() {
-        emit_chat_turn_finished(&app, final_thread, &message_status, &blocks);
+        emit_chat_turn_finished(
+            &app,
+            final_thread,
+            &assistant_message_id,
+            &message_status,
+            &blocks,
+        );
     }
 }
 
@@ -3055,7 +3064,13 @@ async fn run_codex_review_turn(
         build_final_thread_event(latest_review_thread, &review_thread);
     let _ = app.emit("thread-updated", thread_updated_event);
     if let Some(final_review_thread) = final_review_thread.as_ref() {
-        emit_chat_turn_finished(&app, final_review_thread, &message_status, &blocks);
+        emit_chat_turn_finished(
+            &app,
+            final_review_thread,
+            &assistant_message_id,
+            &message_status,
+            &blocks,
+        );
     }
 }
 
@@ -3813,11 +3828,13 @@ fn preview_from_blocks(blocks: &[ContentBlock], include_subagents: bool) -> Opti
 fn emit_chat_turn_finished(
     app: &tauri::AppHandle,
     thread: &ThreadDto,
+    assistant_message_id: &str,
     status: &MessageStatusDto,
     blocks: &[ContentBlock],
 ) {
     let event = ChatTurnFinishedEvent {
         thread_id: thread.id.clone(),
+        message_id: assistant_message_id.to_string(),
         workspace_id: thread.workspace_id.clone(),
         engine_id: thread.engine_id.clone(),
         thread_title: thread.title.clone(),

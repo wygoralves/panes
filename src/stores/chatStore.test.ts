@@ -21,10 +21,10 @@ const mockIpc = vi.hoisted(() => ({
 
 const mockListenThreadEvents = vi.hoisted(() => vi.fn());
 const turnFinishedHandlers = vi.hoisted(
-  () => [] as Array<(event: { threadId: string; status: string }) => void>,
+  () => [] as Array<(event: { threadId: string; status: string; messageId?: string }) => void>,
 );
 const mockListenChatTurnFinished = vi.hoisted(() =>
-  vi.fn(async (onEvent: (event: { threadId: string; status: string }) => void) => {
+  vi.fn(async (onEvent: (event: { threadId: string; status: string; messageId?: string }) => void) => {
     turnFinishedHandlers.push(onEvent);
     return () => {};
   }),
@@ -2302,6 +2302,91 @@ describe("chatStore send", () => {
     }
 
     expect(useChatStore.getState()).toMatchObject({ streaming: false, status: "completed" });
+  });
+
+  it("settles a stopped reply the view loaded before the turn wrote its end", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    useThreadStore.setState({
+      threads: [
+        {
+          id: "thread-1",
+          workspaceId: "workspace-1",
+          repoId: null,
+          engineId: "claude",
+          modelId: "fable",
+          engineThreadId: "engine-thread-1",
+          engineMetadata: {},
+          title: "Stopping thread",
+          status: "streaming",
+          messageCount: 1,
+          totalTokens: 0,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+          settledAt: null,
+        },
+      ],
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      // Usage updates write no block, so a covered one still applies.
+      streamHandler!({
+        type: "UsageLimitsUpdated",
+        usage: { current_tokens: 1200, max_context_tokens: 200000 },
+        seq: 4,
+      } as StreamEvent);
+      return {
+        messages: [
+          {
+            id: "assistant-stopping",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [
+              {
+                type: "action",
+                actionId: "action-1",
+                actionType: "command",
+                summary: "ls",
+                details: {},
+                outputChunks: [],
+                status: "running",
+              },
+            ],
+            createdAt: new Date().toISOString(),
+            streamSeq: 5,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+    expect(useChatStore.getState().usageLimits).toMatchObject({ currentTokens: 1200 });
+
+    // A newer turn's release would carry another message id.
+    for (const handler of turnFinishedHandlers) {
+      handler({ threadId: "thread-1", status: "interrupted", messageId: "assistant-other" });
+    }
+    expect(useChatStore.getState().streaming).toBe(true);
+
+    for (const handler of turnFinishedHandlers) {
+      handler({ threadId: "thread-1", status: "interrupted", messageId: "assistant-stopping" });
+    }
+    const state = useChatStore.getState();
+    expect(state.streaming).toBe(false);
+    expect(state.messages[0]).toMatchObject({
+      status: "interrupted",
+      blocks: [{ type: "action", status: "error" }],
+    });
+
+    vi.useRealTimers();
   });
 
   it("settles open approvals, actions and subagents when the user stops the turn", async () => {
