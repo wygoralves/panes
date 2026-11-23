@@ -36,7 +36,7 @@ use crate::{process_utils, runtime_env};
 use super::{
     codex_event_mapper::{ApprovalRequest, TurnEventMapper},
     codex_protocol::{raw_value_to_value, IncomingMessage},
-    codex_transport::CodexTransport,
+    codex_transport::{is_transport_failure, CodexTransport},
     ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent, EngineThread,
     ImportedThreadMessage, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
     ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
@@ -474,7 +474,7 @@ impl Engine for CodexEngine {
 
                     return Ok(EngineThread { engine_thread_id });
                 }
-                Err(error) if is_missing_thread_error(&error.to_string()) => {
+                Err(error) if reply_names_missing_thread(&error) => {
                     log::warn!(
                         "codex thread {existing_thread_id} no longer exists, starting a new thread: {error}"
                     );
@@ -483,7 +483,7 @@ impl Engine for CodexEngine {
                 Err(error) => {
                     // Starting a fresh thread here would silently drop the
                     // conversation context, so the turn fails instead.
-                    if is_auth_related_error(&error.to_string()) {
+                    if reply_is_auth_failure(&error) {
                         self.invalidate_transport(
                             "resetting codex transport after auth failure while resuming thread",
                         )
@@ -508,7 +508,7 @@ impl Engine for CodexEngine {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                if is_auth_related_error(&error.to_string()) {
+                if reply_is_auth_failure(&error) {
                     self.invalidate_transport(
                         "resetting codex transport after auth failure while creating thread",
                     )
@@ -680,7 +680,7 @@ impl Engine for CodexEngine {
                 let outcome = match response {
                   Ok(Ok(outcome)) => outcome,
                   Ok(Err(error)) => {
-                    if is_auth_related_error(&error.to_string()) {
+                    if reply_is_auth_failure(&error) {
                       self
                         .invalidate_transport(
                           "resetting codex transport after auth failure while starting turn",
@@ -1364,7 +1364,7 @@ impl CodexEngine {
             .await
         {
             Ok(response) => response,
-            Err(error) if is_method_not_supported_error(&error.to_string()) => {
+            Err(error) if reply_names_unsupported_method(&error) => {
                 log::debug!(
                     "codex thread/revert unavailable, falling back to thread/rollback: {error}"
                 );
@@ -1531,7 +1531,7 @@ impl CodexEngine {
                 let result = match response {
                   Ok(Ok(result)) => result,
                   Ok(Err(error)) => {
-                    if is_auth_related_error(&error.to_string()) {
+                    if reply_is_auth_failure(&error) {
                       self
                         .invalidate_transport(
                           "resetting codex transport after auth failure while starting review",
@@ -2129,7 +2129,7 @@ impl CodexEngine {
         .await
         {
             Ok(turns) => turns,
-            Err(error) if is_method_not_supported_error(&error.to_string()) => {
+            Err(error) if reply_names_unsupported_method(&error) => {
                 log::debug!(
                     "codex thread/turns/list unsupported, falling back to thread/read includeTurns"
                 );
@@ -3083,7 +3083,12 @@ impl CodexEngine {
                         }
                     }
                     Err(error) => {
-                        let error_text = error.to_string();
+                        let Some(error_text) = reply_error_text(&error) else {
+                            log::warn!(
+                                "workspaceWrite command probe failed in the transport; skipping externalSandbox fallback (probe_error={error})"
+                            );
+                            return None;
+                        };
                         if is_sandbox_denied_error(&error_text) {
                             log::warn!(
                                 "workspaceWrite command probe detected sandbox denial: {error}"
@@ -4018,7 +4023,9 @@ async fn request_turn_start(
             native_plan_mode_active: input.plan_mode && uses_native_collaboration_mode,
         }),
         Err(error) => {
-            if !uses_native_collaboration_mode || !is_plan_mode_protocol_error(&error.to_string()) {
+            if !uses_native_collaboration_mode
+                || !reply_error_text(&error).is_some_and(|text| is_plan_mode_protocol_error(&text))
+            {
                 return Err(error).context("codex turn/start request failed");
             }
 
@@ -4528,6 +4535,9 @@ async fn request_with_fallback(
     for method in methods {
         match transport.request(method, params.clone(), timeout).await {
             Ok(result) => return Ok(result),
+            // No other method can answer once the transport has failed, and
+            // the failure must stay typed so no reply classifier reads it.
+            Err(error) if is_transport_failure(&error) => return Err(error),
             Err(error) => {
                 errors.push(format!("{method}: {error}"));
             }
@@ -4913,6 +4923,30 @@ fn static_codex_model(
             effort("xhigh", "Extra high reasoning depth for complex problems"),
         ],
     }
+}
+
+/// The text of a reply error that classifiers may read, or `None` when the
+/// request got no reply because the transport failed. A transport failure's
+/// message can carry the app-server's stderr tail, and nothing written there
+/// may decide how Panes treats a thread or the sandbox.
+fn reply_error_text(error: &anyhow::Error) -> Option<String> {
+    if is_transport_failure(error) {
+        None
+    } else {
+        Some(error.to_string())
+    }
+}
+
+fn reply_names_missing_thread(error: &anyhow::Error) -> bool {
+    reply_error_text(error).is_some_and(|text| is_missing_thread_error(&text))
+}
+
+fn reply_is_auth_failure(error: &anyhow::Error) -> bool {
+    reply_error_text(error).is_some_and(|text| is_auth_related_error(&text))
+}
+
+fn reply_names_unsupported_method(error: &anyhow::Error) -> bool {
+    reply_error_text(error).is_some_and(|text| is_method_not_supported_error(&text))
 }
 
 /// True when `thread/resume` failed because Codex has no such thread (for
@@ -6013,11 +6047,10 @@ async fn fetch_paginated_data(
 }
 
 fn method_call_outcome_from_error<T>(error: anyhow::Error) -> MethodCallOutcome<T> {
-    let message = error.to_string();
-    if is_method_not_supported_error(&message) {
-        MethodCallOutcome::Unsupported(Some(message))
+    if reply_names_unsupported_method(&error) {
+        MethodCallOutcome::Unsupported(Some(error.to_string()))
     } else {
-        MethodCallOutcome::Error(message)
+        MethodCallOutcome::Error(error.to_string())
     }
 }
 
@@ -9461,6 +9494,120 @@ mod sub_agent_routing_tests {
         assert!(!engine.state.lock().await.force_external_sandbox);
         assert!(engine.record_workspace_probe(&current, true).await);
         assert!(engine.state.lock().await.force_external_sandbox);
+    }
+
+    /// Spawns a fake app-server that writes `stderr` and exits on its first
+    /// request. The script's folder must outlive that request, so the caller
+    /// removes it.
+    #[cfg(unix)]
+    async fn app_server_that_exits_with_stderr(
+        stderr: &str,
+    ) -> (Arc<CodexTransport>, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("panes-codex-exit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let script = dir.join("codex");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\nread line\necho '{stderr}' >&2\nexit 1\n"),
+        )
+        .expect("write fake codex");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake codex executable");
+        let transport = CodexTransport::spawn(
+            script.to_str().expect("utf-8 path"),
+            &EngineInstanceSettings::default(),
+        )
+        .await
+        .expect("spawn fake codex");
+        (Arc::new(transport), dir)
+    }
+
+    #[cfg(unix)]
+    async fn exit_error_with_stderr(method: &str, stderr: &str) -> anyhow::Error {
+        let (transport, dir) = app_server_that_exits_with_stderr(stderr).await;
+        let error = request_with_fallback(
+            transport.as_ref(),
+            &[method],
+            json!({}),
+            Duration::from_secs(30),
+        )
+        .await
+        .expect_err("the app-server exited without answering");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            error.to_string().contains(stderr),
+            "the stderr tail stays in the message people read: {error}"
+        );
+        error
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_a_sandbox_denial_leaves_the_probe_inconclusive() {
+        let (transport, dir) =
+            app_server_that_exits_with_stderr("sandbox: operation not permitted").await;
+        let engine = CodexEngine::default();
+        engine.state.lock().await.transport = Some(transport.clone());
+
+        let sandbox = SandboxPolicy {
+            writable_roots: vec!["/tmp".to_string()],
+            allow_network: false,
+            approval_policy: None,
+            permission_profile: None,
+            approvals_reviewer: None,
+            reasoning_effort: None,
+            sandbox_mode: Some("workspace-write".to_string()),
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            opencode_agent: None,
+        };
+        let probe = engine
+            .detect_workspace_write_sandbox_failure(transport.as_ref(), "/tmp", &sandbox)
+            .await;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(probe, None);
+        let state = engine.state.lock().await;
+        assert!(!state.force_external_sandbox);
+        assert!(state.sandbox_fallback_reason.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_a_missing_thread_does_not_replace_the_thread() {
+        let error =
+            exit_error_with_stderr("thread/resume", "no rollout found for thread 0199").await;
+        assert!(!reply_names_missing_thread(&error));
+        assert!(reply_names_missing_thread(&anyhow::anyhow!(
+            "all rpc methods failed: thread/resume: no rollout found for thread 0199"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_an_auth_failure_is_not_an_auth_failure() {
+        let error = exit_error_with_stderr("turn/start", "401 Unauthorized").await;
+        assert!(!reply_is_auth_failure(&error));
+        assert!(reply_is_auth_failure(&anyhow::anyhow!(
+            "all rpc methods failed: turn/start: 401 Unauthorized"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_an_unknown_method_is_not_unsupported() {
+        let error = exit_error_with_stderr("thread/revert", "method not found").await;
+        assert!(!reply_names_unsupported_method(&error));
+        assert!(matches!(
+            method_call_outcome_from_error::<()>(error),
+            MethodCallOutcome::Error(_)
+        ));
+        assert!(reply_names_unsupported_method(&anyhow::anyhow!(
+            "all rpc methods failed: thread/revert: method not found"
+        )));
     }
 
     fn workspace_write_runtime() -> ThreadRuntime {

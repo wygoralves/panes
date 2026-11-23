@@ -22,7 +22,7 @@ use crate::{process_utils, runtime_env};
 
 use super::codex_protocol::{
     notification_payload, parse_incoming, request_payload, response_error_payload,
-    response_success_payload, IncomingMessage, RpcError, RpcResponse,
+    response_success_payload, IncomingMessage, RpcResponse,
 };
 use super::trim_action_output_delta_content;
 
@@ -42,6 +42,33 @@ const STDERR_DRAIN_GRACE: Duration = Duration::from_millis(500);
 const APP_SERVER_EXITED_MESSAGE: &str = "codex app-server exited";
 
 type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>;
+
+/// A request that ended without a reply from the app-server: the process
+/// exited, its pipes failed, or the reply did not arrive in time. The message
+/// is for people and can carry the app-server's stderr tail, so code that
+/// classifies reply errors by their text must check `is_transport_failure`
+/// first and never read this text.
+#[derive(Debug)]
+pub struct TransportFailure(String);
+
+impl std::fmt::Display for TransportFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TransportFailure {}
+
+fn transport_failure(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(TransportFailure(message.into()))
+}
+
+/// True when `error`, or anything it wraps, is a `TransportFailure`.
+pub fn is_transport_failure(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<TransportFailure>().is_some())
+}
 type StderrTail = Arc<std::sync::Mutex<VecDeque<String>>>;
 
 pub struct CodexTransport {
@@ -115,7 +142,6 @@ impl CodexTransport {
             let pending = pending.clone();
             let incoming_tx = incoming_tx.clone();
             let closed = closed.clone();
-            let stderr_tail = stderr_tail.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
 
@@ -168,8 +194,7 @@ impl CodexTransport {
                 // now instead of letting each one run into its timeout.
                 let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, stderr_done_rx).await;
                 closed.store(true, Ordering::SeqCst);
-                let message = app_server_exited_message(&stderr_tail);
-                fail_pending_requests(&pending, &message).await;
+                fail_pending_requests(&pending).await;
             });
         }
 
@@ -231,23 +256,36 @@ impl CodexTransport {
         // request registered after that drain is caught here.
         if self.closed.load(Ordering::SeqCst) {
             self.pending.lock().await.remove(&id);
-            anyhow::bail!("{}", app_server_exited_message(&self.stderr_tail));
+            return Err(transport_failure(app_server_exited_message(
+                &self.stderr_tail,
+            )));
         }
 
         if let Err(error) = self.write_payload(&payload).await {
             self.pending.lock().await.remove(&id);
-            return Err(error);
+            return Err(transport_failure(format!("{error:#}")));
         }
 
         let response = match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
                 self.pending.lock().await.remove(&id);
-                anyhow::bail!("codex response channel closed for method `{method}`")
+                // The stdout reader drops every waiting sender once the
+                // app-server has exited.
+                if self.closed.load(Ordering::SeqCst) {
+                    return Err(transport_failure(app_server_exited_message(
+                        &self.stderr_tail,
+                    )));
+                }
+                return Err(transport_failure(format!(
+                    "codex response channel closed for method `{method}`"
+                )));
             }
             Err(_) => {
                 self.pending.lock().await.remove(&id);
-                anyhow::bail!("codex request timeout for method `{method}`")
+                return Err(transport_failure(format!(
+                    "codex request timeout for method `{method}`"
+                )));
             }
         };
 
@@ -316,14 +354,14 @@ impl CodexTransport {
 
     async fn ensure_alive(&self) -> anyhow::Result<()> {
         let mut child = self.child.lock().await;
-        if let Some(status) = child
-            .try_wait()
-            .context("failed to query codex process status")?
-        {
-            anyhow::bail!(
+        let status = child.try_wait().map_err(|error| {
+            transport_failure(format!("failed to query codex process status: {error}"))
+        })?;
+        if let Some(status) = status {
+            return Err(transport_failure(format!(
                 "codex app-server exited with status {status}{}",
                 stderr_tail_suffix(&self.stderr_tail)
-            );
+            )));
         }
         Ok(())
     }
@@ -357,19 +395,10 @@ fn app_server_exited_message(tail: &StderrTail) -> String {
     format!("{APP_SERVER_EXITED_MESSAGE}{}", stderr_tail_suffix(tail))
 }
 
-async fn fail_pending_requests(pending: &PendingRequests, message: &str) {
-    let waiters = pending.lock().await.drain().collect::<Vec<_>>();
-    for (id, sender) in waiters {
-        let _ = sender.send(RpcResponse {
-            id,
-            result: None,
-            error: Some(RpcError {
-                code: None,
-                message: message.to_string(),
-                data: None,
-            }),
-        });
-    }
+/// Drops every waiting sender. Each waiter then sees `closed` set and fails
+/// with the exit message, typed as a transport failure rather than a reply.
+async fn fail_pending_requests(pending: &PendingRequests) {
+    pending.lock().await.drain();
 }
 
 fn trim_buffered_incoming_message(message: IncomingMessage) -> IncomingMessage {
@@ -517,6 +546,7 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("codex app-server exited"), "{message}");
         assert!(message.contains("bad key"), "{message}");
+        assert!(is_transport_failure(&error), "{message}");
     }
 
     #[test]
