@@ -2145,21 +2145,7 @@ impl Engine for ClaudeSidecarEngine {
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => {
-                    let cancel_id = Uuid::new_v4().to_string();
-                    let cancel_cmd = serde_json::json!({
-                        "id": cancel_id.clone(),
-                        "method": "cancel",
-                        "params": { "requestId": request_id.clone() },
-                    });
-                    let _ = transport.send_command(&cancel_cmd).await;
-                    // The sidecar answers only once the cancelled query has
-                    // stopped. Releasing the thread before that would let the
-                    // next turn overlap the query being torn down.
-                    if !wait_for_cancel_ack(&mut rx, &request_id, &cancel_id).await {
-                        log::warn!(
-                            "claude sidecar did not acknowledge the cancel for request {request_id}"
-                        );
-                    }
+                    cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                     let mut state = self.state.lock().await;
                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
                         if config.active_request_id.as_deref() == Some(request_id.as_str()) {
@@ -2573,6 +2559,10 @@ impl Engine for ClaudeSidecarEngine {
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             log::warn!("claude sidecar: event receiver lagged by {n} messages");
+                            // The turn fails here, so the sidecar query must
+                            // stop too, or it keeps running tools unseen and
+                            // overlaps the next turn on the same session.
+                            cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                             let message = format!(
                                 "Claude sidecar event stream skipped {n} messages under load."
                             );
@@ -2742,6 +2732,27 @@ fn normalize_claude_sandbox_policy(mut sandbox: SandboxPolicy) -> SandboxPolicy 
         sandbox.allow_network = true;
     }
     sandbox
+}
+
+/// Asks the sidecar to stop a query and waits for it to confirm.
+async fn cancel_sidecar_request(
+    transport: &ClaudeTransport,
+    rx: &mut broadcast::Receiver<SidecarEvent>,
+    request_id: &str,
+) {
+    let cancel_id = Uuid::new_v4().to_string();
+    let cancel_cmd = serde_json::json!({
+        "id": cancel_id.clone(),
+        "method": "cancel",
+        "params": { "requestId": request_id },
+    });
+    let _ = transport.send_command(&cancel_cmd).await;
+    // The sidecar answers only once the cancelled query has stopped.
+    // Releasing the thread before that would let the next turn overlap the
+    // query being torn down.
+    if !wait_for_cancel_ack(rx, request_id, &cancel_id).await {
+        log::warn!("claude sidecar did not acknowledge the cancel for request {request_id}");
+    }
 }
 
 /// Waits for the sidecar to confirm that a cancelled query stopped. Returns
@@ -2937,6 +2948,64 @@ mod tests {
             })
         ));
         assert!(engine.state.lock().await.transport.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn event_lag_cancels_the_sidecar_query() {
+        let (transport, mut commands) = echo_transport();
+        let engine = engine_with_transport(&transport).await;
+        // A one-slot channel that nobody drains holds the turn loop on its
+        // first forwarded delta while the broadcast buffer overflows.
+        let (event_tx, mut events) = mpsc::channel(1);
+
+        let turn = tokio::spawn(async move {
+            engine
+                .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                .await
+                .expect("send_message");
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+
+        for _ in 0..(SIDECAR_EVENT_BUFFER_CAPACITY + 8) {
+            let _ = transport.event_tx.send(SidecarEvent::TextDelta {
+                id: Some(request_id.clone()),
+                content: "x".to_string(),
+            });
+        }
+        let drain = tokio::spawn(async move {
+            let mut received = Vec::new();
+            while let Some(event) = events.recv().await {
+                received.push(event);
+            }
+            received
+        });
+
+        let cancel = next_command(&mut commands).await;
+        assert_eq!(cancel["method"], "cancel");
+        assert_eq!(cancel["params"]["requestId"], request_id.as_str());
+        transport
+            .event_tx
+            .send(SidecarEvent::CancelResult {
+                id: cancel["id"].as_str().map(str::to_string),
+                request_id: Some(request_id.clone()),
+                closed: false,
+            })
+            .expect("the turn is still subscribed");
+
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends after the cancel is acknowledged")
+            .expect("turn task");
+        let received = drain.await.expect("drain task");
+        assert!(matches!(
+            received.last(),
+            Some(EngineEvent::TurnCompleted {
+                status: TurnCompletionStatus::Failed,
+                ..
+            })
+        ));
     }
 
     #[test]
