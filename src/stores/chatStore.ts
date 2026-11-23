@@ -139,16 +139,21 @@ function streamEventSeq(event: StreamEvent): number | null {
   return typeof seq === "number" && Number.isFinite(seq) ? seq : null;
 }
 
-/** Highest stream sequence already folded into a loaded snapshot of messages. */
+/**
+ * Stream sequence the latest assistant reply of a loaded snapshot covers. Only
+ * that reply can still be streaming; older ones may carry numbers from an
+ * earlier run.
+ */
 function snapshotStreamSeq(messages: Message[]): number | null {
-  let latest: number | null = null;
-  for (const message of messages) {
-    const seq = message.streamSeq;
-    if (typeof seq === "number" && seq > 0 && (latest === null || seq > latest)) {
-      latest = seq;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") {
+      continue;
     }
+    const seq = message.streamSeq;
+    return typeof seq === "number" && seq > 0 ? seq : null;
   }
-  return latest;
+  return null;
 }
 const MESSAGE_WINDOW_INITIAL_LIMIT = 80;
 const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
@@ -2324,6 +2329,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         for (const event of buffered) {
           const seq = streamEventSeq(event);
           if (seq !== null && coveredSeq !== null && seq <= coveredSeq) {
+            // The snapshot holds this event's blocks but not the turn state it
+            // implies, such as a TurnCompleted that ended the turn.
+            set((state) =>
+              state.threadId === threadId
+                ? applyRuntimeStateFromEvent(state.status, state.streaming, event)
+                : state,
+            );
             continue;
           }
           handleStreamEvent(event);

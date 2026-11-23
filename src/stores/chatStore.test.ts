@@ -2044,6 +2044,115 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("ends the turn when the snapshot already covers its completion", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    useThreadStore.setState({
+      threads: [
+        {
+          id: "thread-1",
+          workspaceId: "workspace-1",
+          repoId: null,
+          engineId: "claude",
+          modelId: "fable",
+          engineThreadId: "engine-thread-1",
+          engineMetadata: {},
+          title: "Running thread",
+          status: "streaming",
+          messageCount: 1,
+          totalTokens: 0,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+          settledAt: null,
+        },
+      ],
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      streamHandler!({ type: "TurnCompleted", status: "completed", seq: 9 } as StreamEvent);
+      return {
+        messages: [
+          {
+            id: "assistant-done",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "completed",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "Done" }],
+            createdAt: new Date().toISOString(),
+            streamSeq: 9,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+
+    const state = useChatStore.getState();
+    expect(state.streaming).toBe(false);
+    expect(state.status).toBe("completed");
+    expect(state.messages).toHaveLength(1);
+
+    vi.useRealTimers();
+  });
+
+  it("reconciles against the latest reply, not an older one with a higher sequence", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      streamHandler!({ type: "TextDelta", content: " there", seq: 6 } as StreamEvent);
+      return {
+        messages: [
+          {
+            id: "assistant-old",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "completed",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "Earlier run" }],
+            createdAt: new Date().toISOString(),
+            streamSeq: 100,
+          },
+          {
+            id: "assistant-live",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "Hi" }],
+            createdAt: new Date().toISOString(),
+            streamSeq: 5,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+
+    const blocks = useChatStore.getState().messages[1]?.blocks ?? [];
+    expect(
+      blocks
+        .filter((block): block is TextBlock => block.type === "text")
+        .map((block) => block.content)
+        .join(""),
+    ).toBe("Hi there");
+
+    vi.useRealTimers();
+  });
+
   it("settles open approvals, actions and subagents when the user stops the turn", async () => {
     mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
     useChatStore.setState({

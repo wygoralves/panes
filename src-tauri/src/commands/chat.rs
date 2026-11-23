@@ -28,7 +28,7 @@ use crate::{
         ThreadStatusDto, TrustLevelDto,
     },
     runtime_env,
-    state::AppState,
+    state::{AppState, StreamSnapshotSync},
 };
 
 const MAX_THREAD_TITLE_CHARS: usize = 72;
@@ -950,13 +950,6 @@ pub async fn start_codex_review(
     target: CodexReviewTargetPayload,
     delivery: Option<CodexReviewDeliveryPayload>,
 ) -> Result<ThreadDto, String> {
-    if state.turns.get(&thread_id).await.is_some() {
-        return Err(
-            "A turn is already running for this thread. Cancel it before starting a review."
-                .to_string(),
-        );
-    }
-
     let db = state.db.clone();
     let source_thread = run_db(db.clone(), {
         let thread_id = thread_id.clone();
@@ -1678,6 +1671,15 @@ pub async fn get_thread_messages_window(
     let requested_limit = limit.unwrap_or(MESSAGE_WINDOW_DEFAULT_LIMIT);
     let clamped_limit = requested_limit.clamp(1, MESSAGE_WINDOW_MAX_LIMIT);
 
+    if cursor.is_none() {
+        // The stored blocks of a running turn trail its stream; have the turn
+        // store them first so the window covers every event emitted so far.
+        state
+            .turns
+            .request_stream_snapshot(&thread_id, STREAM_SNAPSHOT_MAX_WAIT)
+            .await;
+    }
+
     run_db(state.db.clone(), move |db| {
         db::messages::get_thread_messages_window(db, &thread_id, cursor.as_ref(), clamped_limit)
     })
@@ -1863,6 +1865,7 @@ async fn run_turn(
     let stream_event_topic = format!("stream-event-{}", thread.id);
     let approval_event_topic = format!("approval-request-{}", thread.id);
     let mut pending_event: Option<EngineEvent> = None;
+    let snapshot_sync = state.turns.snapshot_sync(&thread.id).await;
 
     let initial_turn_started_event = EngineEvent::TurnStarted { client_turn_id };
     let initial_progress = process_stream_event(
@@ -1910,10 +1913,45 @@ async fn run_turn(
     .await;
 
     loop {
+        let received = match next_stream_input(
+            &mut event_rx,
+            &cancellation,
+            pending_event.is_some(),
+            snapshot_sync.as_deref(),
+        )
+        .await
+        {
+            StreamInput::Received(received) => received,
+            StreamInput::SnapshotRequested => {
+                // A view is binding to this thread mid-turn: store what the
+                // stream has so far, so its snapshot covers every event it
+                // could not hear. The next events draw higher numbers.
+                flush_stream_state(
+                    &state,
+                    &thread,
+                    &assistant_message_id,
+                    &blocks,
+                    &message_status,
+                    &thread_status,
+                    &turn_model_id,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                    &mut last_persisted_thread_status,
+                    &mut last_persist_at,
+                    &mut last_blocks_persist_at,
+                    true,
+                )
+                .await;
+                if let Some(sync) = snapshot_sync.as_deref() {
+                    sync.mark_flushed();
+                }
+                continue;
+            }
+        };
         let incoming_event = if pending_event.is_some() {
-            match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
-                .await
-            {
+            match received {
                 Ok(event) => event,
                 Err(_) => {
                     if let Some(event) = pending_event.take() {
@@ -1965,7 +2003,8 @@ async fn run_turn(
                 }
             }
         } else {
-            recv_engine_event(&mut event_rx, &cancellation, TURN_CANCEL_GRACE).await
+            // Without a pending event the receive never times out.
+            received.unwrap_or(None)
         };
 
         let Some(incoming_event) = incoming_event else {
@@ -2441,6 +2480,7 @@ async fn run_codex_review_turn(
     let stream_event_topic = format!("stream-event-{}", review_thread.id);
     let approval_event_topic = format!("approval-request-{}", review_thread.id);
     let mut pending_event: Option<EngineEvent> = None;
+    let snapshot_sync = state.turns.snapshot_sync(&review_thread.id).await;
 
     let initial_turn_started_event = EngineEvent::TurnStarted {
         client_turn_id: None,
@@ -2494,10 +2534,45 @@ async fn run_codex_review_turn(
     }
 
     loop {
+        let received = match next_stream_input(
+            &mut event_rx,
+            &cancellation,
+            pending_event.is_some(),
+            snapshot_sync.as_deref(),
+        )
+        .await
+        {
+            StreamInput::Received(received) => received,
+            StreamInput::SnapshotRequested => {
+                // A view is binding to this thread mid-turn: store what the
+                // stream has so far, so its snapshot covers every event it
+                // could not hear. The next events draw higher numbers.
+                flush_stream_state(
+                    &state,
+                    &review_thread,
+                    &assistant_message_id,
+                    &blocks,
+                    &message_status,
+                    &thread_status,
+                    &turn_model_id,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                    &mut last_persisted_thread_status,
+                    &mut last_persist_at,
+                    &mut last_blocks_persist_at,
+                    true,
+                )
+                .await;
+                if let Some(sync) = snapshot_sync.as_deref() {
+                    sync.mark_flushed();
+                }
+                continue;
+            }
+        };
         let incoming_event = if pending_event.is_some() {
-            match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
-                .await
-            {
+            match received {
                 Ok(event) => event,
                 Err(_) => {
                     if let Some(event) = pending_event.take() {
@@ -2549,7 +2624,8 @@ async fn run_codex_review_turn(
                 }
             }
         } else {
-            recv_engine_event(&mut event_rx, &cancellation, TURN_CANCEL_GRACE).await
+            // Without a pending event the receive never times out.
+            received.unwrap_or(None)
         };
 
         let Some(incoming_event) = incoming_event else {
@@ -2855,7 +2931,11 @@ async fn run_codex_review_turn(
     .await;
 
     state.turns.finish(&source_thread.id).await;
-    state.turns.finish(&review_thread.id).await;
+    // An inline review runs on the source thread: releasing it twice could
+    // drop a turn registered in between.
+    if review_thread.id != source_thread.id {
+        state.turns.finish(&review_thread.id).await;
+    }
 
     if let Err(error) = run_db(state.db.clone(), {
         let assistant_message_id = assistant_message_id.clone();
@@ -3165,6 +3245,11 @@ async fn process_stream_event(
         _ => {}
     }
 
+    if matches!(normalized_event, EngineEvent::TurnCompleted { .. }) {
+        // The view treats the turn as over once it sees this event; a send it
+        // makes now waits for the release instead of bouncing.
+        state.turns.mark_finishing(&thread.id).await;
+    }
     let _ = app.emit(
         stream_event_topic,
         SequencedStreamEvent {
@@ -3364,6 +3449,12 @@ async fn flush_stream_state(
 ) {
     if !*blocks_dirty && !*message_state_dirty && !*thread_status_dirty && !*turn_model_dirty {
         return;
+    }
+
+    // A forced write stores the blocks with the message status, so a stored
+    // terminal status never sits next to a stream_seq that trails it.
+    if force && *message_state_dirty {
+        *blocks_dirty = true;
     }
 
     let now = Instant::now();
@@ -3691,11 +3782,48 @@ fn build_final_thread_event(
 /// How long a stopped turn waits for the engine to report the interruption
 /// before the turn is closed without it.
 const TURN_CANCEL_GRACE: Duration = Duration::from_secs(10);
+/// How long opening a thread waits for its running turn to store its blocks.
+const STREAM_SNAPSHOT_MAX_WAIT: Duration = Duration::from_millis(500);
 
 /// The next engine event, or `None` once the channel closes. After Stop the
 /// wait is bounded: an engine that never answers the interrupt (a killed
 /// sidecar whose sender is still alive, a hung transport) would otherwise keep
 /// the turn registered forever and block every later message on the thread.
+enum StreamInput {
+    /// An engine event, `Ok(None)` once the engine is done, or `Err` when a
+    /// coalesced event sat idle long enough to be emitted on its own.
+    Received(Result<Option<EngineEvent>, tokio::time::error::Elapsed>),
+    SnapshotRequested,
+}
+
+/// Waits for the next engine event or for a view asking for a snapshot. Both
+/// waits are cancel-safe, so whichever loses keeps nothing half done.
+async fn next_stream_input(
+    event_rx: &mut mpsc::Receiver<EngineEvent>,
+    cancellation: &CancellationToken,
+    coalescing: bool,
+    snapshot_sync: Option<&StreamSnapshotSync>,
+) -> StreamInput {
+    let receive = async {
+        if coalescing {
+            tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv()).await
+        } else {
+            Ok(recv_engine_event(event_rx, cancellation, TURN_CANCEL_GRACE).await)
+        }
+    };
+    let snapshot_requested = async {
+        match snapshot_sync {
+            Some(sync) => sync.requested().await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        biased;
+        () = snapshot_requested => StreamInput::SnapshotRequested,
+        received = receive => StreamInput::Received(received),
+    }
+}
+
 async fn recv_engine_event(
     event_rx: &mut mpsc::Receiver<EngineEvent>,
     cancellation: &CancellationToken,
@@ -7044,6 +7172,57 @@ mod tests {
         );
 
         assert!(thread_status_dirty);
+    }
+
+    #[tokio::test]
+    async fn forced_status_write_stores_the_stream_seq_with_it() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let message = db::messages::insert_assistant_placeholder(
+            &state.db,
+            &thread.id,
+            Some("claude"),
+            None,
+            None,
+        )
+        .expect("failed to create assistant message");
+        let emitted_seq = next_stream_event_seq();
+
+        let mut blocks_dirty = false;
+        let mut message_state_dirty = true;
+        let mut thread_status_dirty = false;
+        let mut turn_model_dirty = false;
+        let mut last_persisted_thread_status = ThreadStatusDto::Streaming;
+        let mut last_persist_at = Instant::now();
+        let mut last_blocks_persist_at = Instant::now();
+        flush_stream_state(
+            &state,
+            &thread,
+            &message.id,
+            &[],
+            &MessageStatusDto::Completed,
+            &ThreadStatusDto::Streaming,
+            "model",
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+            &mut last_persisted_thread_status,
+            &mut last_persist_at,
+            &mut last_blocks_persist_at,
+            true,
+        )
+        .await;
+
+        let window = db::messages::get_thread_messages_window(&state.db, &thread.id, None, 10)
+            .expect("failed to load window");
+        let stored = window
+            .messages
+            .iter()
+            .find(|candidate| candidate.id == message.id)
+            .expect("message should be in the window");
+        assert_eq!(stored.status, MessageStatusDto::Completed);
+        assert!(stored.stream_seq >= emitted_seq as i64);
     }
 
     #[test]

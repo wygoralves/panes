@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use tokio::sync::{Notify, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -25,8 +32,45 @@ pub struct AppState {
 
 #[derive(Default)]
 pub struct TurnManager {
-    active: RwLock<HashMap<String, CancellationToken>>,
+    active: RwLock<HashMap<String, ActiveTurn>>,
     finished: Notify,
+}
+
+struct ActiveTurn {
+    token: CancellationToken,
+    /// Set once the engine reported the turn complete: only teardown is left,
+    /// so a new send waits for the release instead of bouncing.
+    finishing: AtomicBool,
+    snapshot: Arc<StreamSnapshotSync>,
+}
+
+impl ActiveTurn {
+    fn new(token: CancellationToken) -> Self {
+        Self {
+            token,
+            finishing: AtomicBool::new(false),
+            snapshot: Arc::default(),
+        }
+    }
+}
+
+/// Lets a view that binds to a running turn ask the turn loop to store its
+/// blocks at once, so the snapshot it then reads covers every event emitted
+/// before it subscribed.
+#[derive(Default)]
+pub struct StreamSnapshotSync {
+    requested: Notify,
+    flushed: Notify,
+}
+
+impl StreamSnapshotSync {
+    pub async fn requested(&self) {
+        self.requested.notified().await;
+    }
+
+    pub fn mark_flushed(&self) {
+        self.flushed.notify_waiters();
+    }
 }
 
 impl TurnManager {
@@ -36,14 +80,15 @@ impl TurnManager {
             return false;
         }
 
-        active.insert(thread_id.to_string(), token);
+        active.insert(thread_id.to_string(), ActiveTurn::new(token));
         true
     }
 
-    /// Like `try_register`, but a turn that was already cancelled is waited on
-    /// for up to `max_wait`: Stop returns before the stopped turn releases the
-    /// thread, and a message sent right after it should not bounce. A turn that
-    /// is still live is refused at once.
+    /// Like `try_register`, but a turn that was cancelled or already reported
+    /// complete is waited on for up to `max_wait`: the view treats such a turn
+    /// as over before the backend releases the thread, and a message sent
+    /// right then should not bounce. A turn that is still running is refused
+    /// at once.
     pub async fn register_or_wait(
         &self,
         thread_id: &str,
@@ -58,10 +103,15 @@ impl TurnManager {
                 let mut active = self.active.write().await;
                 match active.get(thread_id) {
                     None => {
-                        active.insert(thread_id.to_string(), token);
+                        active.insert(thread_id.to_string(), ActiveTurn::new(token));
                         return true;
                     }
-                    Some(existing) if !existing.is_cancelled() => return false,
+                    Some(existing)
+                        if !existing.token.is_cancelled()
+                            && !existing.finishing.load(Ordering::SeqCst) =>
+                    {
+                        return false
+                    }
                     Some(_) => {
                         // Subscribe before releasing the lock so a finish that
                         // lands in between still wakes this waiter.
@@ -76,17 +126,57 @@ impl TurnManager {
     }
 
     pub async fn get(&self, thread_id: &str) -> Option<CancellationToken> {
-        self.active.read().await.get(thread_id).cloned()
+        self.active
+            .read()
+            .await
+            .get(thread_id)
+            .map(|turn| turn.token.clone())
     }
 
     pub async fn cancel(&self, thread_id: &str) {
-        if let Some(token) = self.active.read().await.get(thread_id).cloned() {
+        if let Some(token) = self.get(thread_id).await {
             token.cancel();
         }
     }
 
+    pub async fn mark_finishing(&self, thread_id: &str) {
+        if let Some(turn) = self.active.read().await.get(thread_id) {
+            turn.finishing.store(true, Ordering::SeqCst);
+        }
+    }
+
+    pub async fn snapshot_sync(&self, thread_id: &str) -> Option<Arc<StreamSnapshotSync>> {
+        self.active
+            .read()
+            .await
+            .get(thread_id)
+            .map(|turn| turn.snapshot.clone())
+    }
+
+    /// Asks the running turn of `thread_id` to store its blocks and waits for
+    /// that write, at most `max_wait`. Returns at once when no turn runs.
+    pub async fn request_stream_snapshot(&self, thread_id: &str, max_wait: Duration) {
+        let Some(sync) = self.snapshot_sync(thread_id).await else {
+            return;
+        };
+        let flushed = sync.flushed.notified();
+        tokio::pin!(flushed);
+        flushed.as_mut().enable();
+        match self.snapshot_sync(thread_id).await {
+            Some(current) if Arc::ptr_eq(&current, &sync) => {}
+            // The turn finished, after its final write, before we subscribed.
+            _ => return,
+        }
+        sync.requested.notify_one();
+        let _ = tokio::time::timeout(max_wait, flushed).await;
+    }
+
     pub async fn finish(&self, thread_id: &str) {
-        self.active.write().await.remove(thread_id);
+        let removed = self.active.write().await.remove(thread_id);
+        if let Some(turn) = removed {
+            // The final write is done: a view waiting on a snapshot can read.
+            turn.snapshot.mark_flushed();
+        }
         self.finished.notify_waiters();
     }
 }
@@ -130,6 +220,50 @@ mod tests {
                 .await
         );
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn register_or_wait_waits_for_a_turn_the_engine_reported_complete() {
+        let turns = Arc::new(TurnManager::default());
+        assert!(turns.try_register("thread", CancellationToken::new()).await);
+        turns.mark_finishing("thread").await;
+
+        let waiter = tokio::spawn({
+            let turns = turns.clone();
+            async move {
+                turns
+                    .register_or_wait("thread", CancellationToken::new(), Duration::from_secs(5))
+                    .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!waiter.is_finished());
+
+        turns.finish("thread").await;
+        assert!(waiter.await.expect("waiter task panicked"));
+    }
+
+    #[tokio::test]
+    async fn stream_snapshot_request_waits_for_the_turn_to_store_its_blocks() {
+        let turns = Arc::new(TurnManager::default());
+        let started = tokio::time::Instant::now();
+        turns
+            .request_stream_snapshot("thread", Duration::from_secs(5))
+            .await;
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        assert!(turns.try_register("thread", CancellationToken::new()).await);
+        let sync = turns.snapshot_sync("thread").await.expect("sync exists");
+        let turn_loop = tokio::spawn(async move {
+            sync.requested().await;
+            sync.mark_flushed();
+        });
+        let started = tokio::time::Instant::now();
+        turns
+            .request_stream_snapshot("thread", Duration::from_secs(5))
+            .await;
+        assert!(started.elapsed() < Duration::from_secs(1));
+        turn_loop.await.expect("turn loop task panicked");
     }
 
     #[tokio::test]
