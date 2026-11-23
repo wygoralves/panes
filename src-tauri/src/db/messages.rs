@@ -295,6 +295,7 @@ pub fn update_assistant_blocks_json(
     blocks_json: &str,
     status: MessageStatusDto,
     turn_model_id: Option<&str>,
+    stream_seq: u64,
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
     let normalized_blocks_json = normalize_blocks_json_for_message(&conn, message_id, blocks_json)?;
@@ -304,14 +305,16 @@ pub fn update_assistant_blocks_json(
     let searchable_text = extract_searchable_text_from_blocks(&normalized_blocks_json);
     conn.execute(
         "UPDATE messages
-     SET blocks_json = ?1, content = ?2, status = ?3, turn_model_id = COALESCE(?4, turn_model_id)
+     SET blocks_json = ?1, content = ?2, status = ?3, turn_model_id = COALESCE(?4, turn_model_id),
+         stream_seq = ?6
      WHERE id = ?5",
         params![
             normalized_blocks_json,
             searchable_text,
             status.as_str(),
             turn_model_id,
-            message_id
+            message_id,
+            stream_seq as i64
         ],
     )
     .context("failed to update assistant blocks")?;
@@ -416,7 +419,8 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at,
+            stream_seq
      FROM messages
      WHERE thread_id = ?1
      ORDER BY created_at ASC, rowid ASC",
@@ -442,7 +446,8 @@ pub fn get_thread_messages_window(
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at, rowid
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at,
+            stream_seq, rowid
      FROM messages
      WHERE thread_id = ?1
        AND (
@@ -474,7 +479,7 @@ pub fn get_thread_messages_window(
         ],
         |row| {
             let message = map_message_row(row)?;
-            let row_id: i64 = row.get(13)?;
+            let row_id: i64 = row.get(14)?;
             Ok((message, row_id))
         },
     )?;
@@ -924,7 +929,8 @@ fn insert_message(
     let conn = db.connect()?;
     conn.query_row(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at,
+            stream_seq
      FROM messages
      WHERE id = ?1",
         params![id],
@@ -957,6 +963,7 @@ fn map_message_row(row: &Row<'_>) -> rusqlite::Result<MessageDto> {
             None
         },
         created_at: row.get(12)?,
+        stream_seq: row.get(13)?,
     })
 }
 
@@ -1415,6 +1422,7 @@ mod tests {
             &blocks.to_string(),
             MessageStatusDto::Completed,
             None,
+            0,
         )
         .unwrap();
 
@@ -1639,6 +1647,7 @@ mod tests {
             &pending_blocks.to_string(),
             MessageStatusDto::Completed,
             None,
+            0,
         )
         .unwrap();
 
@@ -1685,6 +1694,7 @@ mod tests {
             &pending_blocks.to_string(),
             MessageStatusDto::Completed,
             None,
+            0,
         )
         .unwrap();
 
@@ -1755,6 +1765,7 @@ mod tests {
             &pending_blocks.to_string(),
             MessageStatusDto::Interrupted,
             None,
+            0,
         )
         .unwrap();
 
@@ -1762,6 +1773,40 @@ mod tests {
         let (status, decision) = approval_block_status(&blocks).unwrap();
         assert_eq!(status, "expired");
         assert_eq!(decision, None);
+    }
+
+    #[test]
+    fn stream_seq_written_with_blocks_is_returned_by_the_window() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(json!([])),
+            MessageStatusDto::Streaming,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(message.stream_seq, 0);
+
+        update_assistant_blocks_json(
+            &db,
+            &message.id,
+            &json!([{ "type": "text", "content": "Hello" }]).to_string(),
+            MessageStatusDto::Streaming,
+            None,
+            42,
+        )
+        .unwrap();
+
+        let window = get_thread_messages_window(&db, &thread_id, None, 20).unwrap();
+        assert_eq!(window.messages[0].stream_seq, 42);
+        let all = get_thread_messages(&db, &thread_id).unwrap();
+        assert_eq!(all[0].stream_seq, 42);
     }
 
     #[test]

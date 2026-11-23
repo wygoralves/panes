@@ -247,6 +247,35 @@ struct ChatApprovalRequestedEvent {
     summary: String,
 }
 
+/// Stream event as emitted to the webview: the engine event plus `seq`, a
+/// process-wide counter that only grows. Each assistant message stores the
+/// counter value its persisted blocks cover (`messages.stream_seq`), so a view
+/// that subscribes mid-turn can drop buffered events the snapshot already has.
+#[derive(Clone, Serialize)]
+struct SequencedStreamEvent<'a> {
+    #[serde(flatten)]
+    event: &'a EngineEvent,
+    seq: u64,
+}
+
+/// Seeded from the wall clock (milliseconds times 1000) so values keep growing
+/// across restarts and never fall below a sequence stored by an earlier run.
+static STREAM_EVENT_SEQ: std::sync::OnceLock<std::sync::atomic::AtomicU64> =
+    std::sync::OnceLock::new();
+
+fn stream_event_seq_counter() -> &'static std::sync::atomic::AtomicU64 {
+    STREAM_EVENT_SEQ
+        .get_or_init(|| std::sync::atomic::AtomicU64::new(epoch_millis_now().saturating_mul(1000)))
+}
+
+fn next_stream_event_seq() -> u64 {
+    stream_event_seq_counter().fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+fn current_stream_event_seq() -> u64 {
+    stream_event_seq_counter().load(std::sync::atomic::Ordering::SeqCst)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatAttachmentPayload {
@@ -3116,7 +3145,13 @@ async fn process_stream_event(
         _ => {}
     }
 
-    let _ = app.emit(stream_event_topic, &normalized_event);
+    let _ = app.emit(
+        stream_event_topic,
+        SequencedStreamEvent {
+            event: &normalized_event,
+            seq: next_stream_event_seq(),
+        },
+    );
     if let EngineEvent::ApprovalRequested { summary, .. } = &normalized_event {
         let _ = app.emit(approval_event_topic, &normalized_event);
         // Unscoped companion event so background threads can surface pending
@@ -3336,6 +3371,9 @@ async fn flush_stream_state(
     let mut did_flush_blocks = false;
 
     if *blocks_dirty && should_flush_blocks {
+        // Every event this turn emitted so far is already in `blocks`, and the
+        // next one draws a higher number, so the snapshot covers this value.
+        let stream_seq = current_stream_event_seq();
         match serde_json::to_string(blocks) {
             Ok(blocks_json) => {
                 if let Err(error) = run_db(state.db.clone(), {
@@ -3349,6 +3387,7 @@ async fn flush_stream_state(
                             &blocks_json,
                             message_status,
                             Some(turn_model_id.as_str()),
+                            stream_seq,
                         )
                     }
                 })
@@ -6931,6 +6970,25 @@ mod tests {
         );
 
         assert!(thread_status_dirty);
+    }
+
+    #[test]
+    fn stream_events_carry_a_growing_sequence_next_to_their_type() {
+        let event = EngineEvent::TextDelta {
+            content: "hi".to_string(),
+        };
+        let first = next_stream_event_seq();
+        let value = serde_json::to_value(SequencedStreamEvent {
+            event: &event,
+            seq: first,
+        })
+        .expect("sequenced event should serialize");
+
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("TextDelta"));
+        assert_eq!(value.get("content").and_then(Value::as_str), Some("hi"));
+        assert_eq!(value.get("seq").and_then(Value::as_u64), Some(first));
+        assert!(current_stream_event_seq() >= first);
+        assert!(next_stream_event_seq() > first);
     }
 
     #[tokio::test]

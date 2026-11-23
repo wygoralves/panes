@@ -241,6 +241,8 @@ export interface Message {
   createdAt: string;
   hydration?: "full" | "summary";
   hasDeferredContent?: boolean;
+  /** Sequence of the last stream event already folded into `blocks`. */
+  streamSeq?: number;
 }
 
 export interface MessageWindowCursor {

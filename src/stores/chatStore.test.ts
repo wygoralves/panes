@@ -1978,6 +1978,60 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("drops buffered stream events the loaded snapshot already covers", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      // Emitted while the snapshot is being read: seq 4 is already in it.
+      streamHandler!({ type: "TextDelta", content: " wor", seq: 4 } as StreamEvent);
+      streamHandler!({ type: "TextDelta", content: "ld", seq: 6 } as StreamEvent);
+      streamHandler!({
+        type: "ActionStarted",
+        action_id: "action-late",
+        action_type: "command",
+        summary: "ls",
+        details: {},
+        seq: 7,
+      } as StreamEvent);
+      streamHandler!({ type: "TextDelta", content: "!", seq: 8 } as StreamEvent);
+      return {
+        messages: [
+          {
+            id: "assistant-live",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "Hello wor" }],
+            createdAt: new Date().toISOString(),
+            streamSeq: 5,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+
+    const blocks = useChatStore.getState().messages[0]?.blocks ?? [];
+    const text = blocks
+      .filter((block): block is TextBlock => block.type === "text")
+      .map((block) => block.content)
+      .join("");
+    expect(text).toBe("Hello world!");
+    expect(blocks.some((block) => block.type === "action" && block.actionId === "action-late")).toBe(
+      true,
+    );
+
+    vi.useRealTimers();
+  });
+
   it("settles open approvals, actions and subagents when the user stops the turn", async () => {
     mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
     useChatStore.setState({

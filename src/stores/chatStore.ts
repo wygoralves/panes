@@ -122,6 +122,24 @@ function cleanupBackgroundListener(threadId: string) {
     backgroundStreamListeners.delete(threadId);
   }
 }
+
+/** Sequence number a backend stream event carries; absent on events emitted outside a turn. */
+function streamEventSeq(event: StreamEvent): number | null {
+  const seq = (event as { seq?: unknown }).seq;
+  return typeof seq === "number" && Number.isFinite(seq) ? seq : null;
+}
+
+/** Highest stream sequence already folded into a loaded snapshot of messages. */
+function snapshotStreamSeq(messages: Message[]): number | null {
+  let latest: number | null = null;
+  for (const message of messages) {
+    const seq = message.streamSeq;
+    if (typeof seq === "number" && seq > 0 && (latest === null || seq > latest)) {
+      latest = seq;
+    }
+  }
+  return latest;
+}
 const MESSAGE_WINDOW_INITIAL_LIMIT = 80;
 const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
 const MAX_FULLY_HYDRATED_MESSAGES = 80;
@@ -2115,6 +2133,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
+    let releaseStream: (() => void) | null = null;
     try {
       // Clean up any background listener for this thread before re-subscribing
       cleanupBackgroundListener(threadId);
@@ -2133,18 +2152,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } catch (error) {
           console.warn(`Failed to sync Codex thread ${threadId}:`, error);
         }
-      }
-
-      const messageWindow = await ipc.getThreadMessagesWindow(
-        threadId,
-        null,
-        MESSAGE_WINDOW_INITIAL_LIMIT,
-      );
-      let messages = normalizeMessages(messageWindow.messages);
-      const olderCursor = messageWindow.nextCursor;
-      messages = applyHydrationWindow(messages);
-      if (bindSeq !== activeThreadBindSeq) {
-        return;
       }
 
       const queuedStreamEvents: StreamEvent[] = [];
@@ -2268,10 +2275,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }, STREAM_EVENT_BATCH_WINDOW_MS);
       };
 
-      const unlistenStream = await listenThreadEvents(threadId, (event) => {
-        if (bindSeq !== activeThreadBindSeq) {
-          return;
-        }
+      const handleStreamEvent = (event: StreamEvent) => {
         const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
         if (
           pendingTurnMeta &&
@@ -2310,7 +2314,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         }
         scheduleStreamFlush();
+      };
+
+      // Subscribe before reading the snapshot and hold events until it is in
+      // place: the stored blocks trail the stream, so events emitted around the
+      // read would otherwise be lost. Each event carries a sequence number, and
+      // the snapshot records the last one it covers, so the replay below skips
+      // what the snapshot already has instead of applying it twice.
+      let preBindEvents: StreamEvent[] | null = [];
+      const unlistenStream = await listenThreadEvents(threadId, (event) => {
+        if (bindSeq !== activeThreadBindSeq) {
+          return;
+        }
+        if (preBindEvents) {
+          preBindEvents.push(event);
+          return;
+        }
+        handleStreamEvent(event);
       });
+      const replayPreBindEvents = (coveredSeq: number | null) => {
+        const buffered = preBindEvents ?? [];
+        preBindEvents = null;
+        for (const event of buffered) {
+          const seq = streamEventSeq(event);
+          if (seq !== null && coveredSeq !== null && seq <= coveredSeq) {
+            continue;
+          }
+          handleStreamEvent(event);
+        }
+      };
 
       const unlisten = () => {
         if (streamFlushTimer !== null) {
@@ -2321,7 +2353,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         emitEventRateMetric(performance.now());
         unlistenStream();
       };
+      releaseStream = unlisten;
 
+      if (bindSeq !== activeThreadBindSeq) {
+        unlisten();
+        return;
+      }
+
+      const messageWindow = await ipc.getThreadMessagesWindow(
+        threadId,
+        null,
+        MESSAGE_WINDOW_INITIAL_LIMIT,
+      );
+      const coveredSeq = snapshotStreamSeq(messageWindow.messages);
+      let messages = normalizeMessages(messageWindow.messages);
+      const olderCursor = messageWindow.nextCursor;
+      messages = applyHydrationWindow(messages);
       if (bindSeq !== activeThreadBindSeq) {
         unlisten();
         return;
@@ -2341,6 +2388,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           unlisten: currentState.unlisten ?? unlisten,
           error: undefined,
         });
+        releaseStream = null;
+        if (!currentState.unlisten) {
+          // The visible messages were kept, not replaced by the snapshot, so
+          // nothing buffered is covered by it.
+          replayPreBindEvents(null);
+        }
         return;
       }
 
@@ -2365,6 +2418,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         usageLimits: null,
         usageLimitsLoading: shouldRefreshUsageLimits,
       });
+      releaseStream = null;
+      replayPreBindEvents(coveredSeq);
 
       if (shouldRefreshUsageLimits) {
         const refreshRestoredUsageLimits = async () => {
@@ -2389,6 +2444,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         void refreshRestoredUsageLimits();
       }
     } catch (error) {
+      // A subscription that never reached the store would leak.
+      releaseStream?.();
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
