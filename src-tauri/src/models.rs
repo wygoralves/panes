@@ -864,6 +864,7 @@ pub struct ReadFileResultDto {
     pub content: String,
     pub size_bytes: u64,
     pub is_binary: bool,
+    pub is_lossy_decode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

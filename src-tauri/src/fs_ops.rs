@@ -105,15 +105,21 @@ pub fn read_file(repo_path: &str, file_path: &str) -> anyhow::Result<ReadFileRes
     );
     let raw = fs::read(&abs_path).context("failed to read file")?;
     let is_binary = raw.iter().take(BINARY_DETECT_SCAN_SIZE).any(|&b| b == 0);
-    let content = if is_binary {
-        String::new()
+    let (content, is_lossy_decode) = if is_binary {
+        (String::new(), false)
     } else {
-        String::from_utf8_lossy(&raw).to_string()
+        match String::from_utf8(raw) {
+            Ok(text) => (text, false),
+            // Keep the replacement-character text for display only; the
+            // frontend opens these files read-only and write_file refuses them.
+            Err(error) => (String::from_utf8_lossy(error.as_bytes()).to_string(), true),
+        }
     };
     Ok(ReadFileResultDto {
         content,
         size_bytes,
         is_binary,
+        is_lossy_decode,
     })
 }
 
@@ -300,6 +306,15 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
             canonical.starts_with(&repo_root),
             "path traversal not allowed"
         );
+        // The editor decodes non-UTF-8 files lossily for display; writing that
+        // text back would replace every invalid byte with U+FFFD.
+        if canonical.is_file() {
+            let existing = fs::read(&canonical).context("failed to read existing file")?;
+            anyhow::ensure!(
+                std::str::from_utf8(&existing).is_ok(),
+                "refusing to overwrite a file that is not valid UTF-8"
+            );
+        }
     } else {
         // New file — verify the parent directory is inside the repo
         let parent = target.parent().context("invalid file path")?;
@@ -320,7 +335,7 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{create_dir, create_file, delete_path, rename_path, write_file};
+    use super::{create_dir, create_file, delete_path, read_file, rename_path, write_file};
     use uuid::Uuid;
 
     #[cfg(unix)]
@@ -454,6 +469,52 @@ mod tests {
 
             assert!(root.join("target.txt").is_file());
             assert!(fs::symlink_metadata(root.join("link.txt")).is_err());
+        });
+    }
+
+    #[test]
+    fn read_file_flags_non_utf8_content_as_lossy() {
+        with_temp_repo(|root| {
+            fs::write(root.join("latin1.txt"), b"caf\xe9\n").expect("file should exist");
+            fs::write(root.join("utf8.txt"), "\u{feff}café\r\n").expect("file should exist");
+
+            let lossy = read_file(root.to_string_lossy().as_ref(), "latin1.txt")
+                .expect("lossy read should succeed");
+            assert!(lossy.is_lossy_decode);
+            assert!(!lossy.is_binary);
+
+            let clean = read_file(root.to_string_lossy().as_ref(), "utf8.txt")
+                .expect("utf-8 read should succeed");
+            assert!(!clean.is_lossy_decode);
+            assert_eq!(clean.content, "\u{feff}café\r\n");
+        });
+    }
+
+    #[test]
+    fn write_file_refuses_to_overwrite_non_utf8_files() {
+        with_temp_repo(|root| {
+            fs::write(root.join("latin1.txt"), b"caf\xe9\n").expect("file should exist");
+
+            let error = write_file(
+                root.to_string_lossy().as_ref(),
+                "latin1.txt",
+                "caf\u{fffd}\n",
+            )
+            .expect_err("lossy overwrite should be refused");
+
+            assert!(error.to_string().contains("not valid UTF-8"));
+            assert_eq!(
+                fs::read(root.join("latin1.txt")).expect("file should stay readable"),
+                b"caf\xe9\n"
+            );
+
+            fs::write(root.join("utf8.txt"), "old\n").expect("file should exist");
+            write_file(root.to_string_lossy().as_ref(), "utf8.txt", "new\n")
+                .expect("utf-8 overwrite should succeed");
+            assert_eq!(
+                fs::read_to_string(root.join("utf8.txt")).expect("file should be readable"),
+                "new\n"
+            );
         });
     }
 
