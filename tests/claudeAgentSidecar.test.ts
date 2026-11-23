@@ -395,7 +395,7 @@ describe("claude-agent-sdk-server sidecar", () => {
       permissions: {
         defaultMode: "default",
         disableBypassPermissionsMode: "disable",
-        ask: ["Bash"],
+        ask: ["Bash", "PowerShell", "Monitor"],
       },
     });
   });
@@ -514,11 +514,13 @@ describe("claude-agent-sdk-server sidecar", () => {
       const autoAllow = testCase.autoAllow && !sandboxUnavailable;
       expect(sandbox.autoAllowBashIfSandboxed).toBe(autoAllow);
       // The CLI allows read-only commands before canUseTool unless an ask
-      // rule matches, so every preset that asks carries a Bash ask rule.
+      // rule matches, so every preset that asks names each shell tool.
       const settings = parseObservationResults(harness, queryId)[0]?.result.settings as {
         permissions: Record<string, unknown>;
       };
-      expect(settings.permissions.ask).toEqual(autoAllow ? undefined : ["Bash"]);
+      expect(settings.permissions.ask).toEqual(
+        autoAllow ? undefined : ["Bash", "PowerShell", "Monitor"],
+      );
       expect(sandbox.failIfUnavailable).toBe(!sandboxUnavailable);
       const filesystem = sandbox.filesystem as Record<string, unknown>;
       if (testCase.sandboxMode === "read-only") {
@@ -590,7 +592,7 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(sandbox.autoAllowBashIfSandboxed).toBe(false);
     expect(sandbox.failIfUnavailable).toBe(false);
     const settings = observations[0]?.result.settings as { permissions: Record<string, unknown> };
-    expect(settings.permissions.ask).toEqual(["Bash"]);
+    expect(settings.permissions.ask).toEqual(["Bash", "PowerShell", "Monitor"]);
     expect(observations[1]?.result.behavior).toBe("allow");
     expect(observations[2]?.result.behavior).toBe("deny");
   });

@@ -121,6 +121,10 @@ const MAX_ATTACHMENTS_PER_TURN = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS = 40_000;
 const TOOL_OUTPUT_CHUNK_SIZE = 8_192;
+// Every CLI tool that runs a shell command. The CLI allows the ones it
+// classifies as read-only before it consults canUseTool, unless an ask rule
+// names the tool.
+const SHELL_TOOL_NAMES = ["Bash", "PowerShell", "Monitor"];
 const TASK_TOOL_NAMES = new Set([
   "TaskCreate",
   "TaskUpdate",
@@ -2413,9 +2417,9 @@ async function handleQuery(req) {
           defaultMode: planMode ? "plan" : "default",
           disableBypassPermissionsMode: "disable",
           // The CLI allows commands it classifies as read-only before it
-          // consults canUseTool. A Bash ask rule is checked first, so every
+          // consults canUseTool. Ask rules are checked first, so every shell
           // command outside the trusted preset reaches Panes' approval.
-          ...(permissionMode === "trusted" ? {} : { ask: ["Bash"] }),
+          ...(permissionMode === "trusted" ? {} : { ask: [...SHELL_TOOL_NAMES] }),
         },
       },
       includePartialMessages: true,
