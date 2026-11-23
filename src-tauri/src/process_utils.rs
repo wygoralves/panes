@@ -145,12 +145,10 @@ fn plan_child_env_changes(
         }
     }
 
-    // The hook forces GTK_THEME to Adwaita (or to an empty value) because
-    // custom themes break inside the image. Host programs should follow the
-    // user's own theme instead.
-    if lookup("GTK_THEME")
-        .is_some_and(|value| value.is_empty() || value.to_string_lossy().starts_with("Adwaita:"))
-    {
+    // The hook always overwrites GTK_THEME (with Adwaita, or with
+    // APPIMAGE_GTK_THEME) because custom themes break inside the image. Host
+    // programs should follow the user's own theme instead.
+    if lookup("GTK_THEME").is_some() {
         changes.push(ChildEnvChange::Remove("GTK_THEME"));
     }
 
@@ -195,6 +193,8 @@ mod tests {
         assert!(plan_child_env_changes(&lookup, &[]).is_empty());
     }
 
+    // The fixture's path lists use the Unix separator.
+    #[cfg(unix)]
     #[test]
     fn appimage_gtk_hook_vars_are_dropped_from_children() {
         let lookup = lookup_from(&[
@@ -236,12 +236,19 @@ mod tests {
     }
 
     #[test]
-    fn user_gtk_theme_survives_inside_an_appimage() {
-        let lookup = lookup_from(&[("APPDIR", "/tmp/.mount_PanesX"), ("GTK_THEME", "Yaru")]);
+    fn appimage_only_gtk_theme_is_dropped_from_children() {
+        let lookup = lookup_from(&[
+            ("APPDIR", "/tmp/.mount_PanesX"),
+            ("APPIMAGE_GTK_THEME", "Yaru"),
+            ("GTK_THEME", "Yaru"),
+        ]);
 
         assert_eq!(
             plan_child_env_changes(&lookup, &[]),
-            vec![ChildEnvChange::Remove("APPDIR")]
+            vec![
+                ChildEnvChange::Remove("APPDIR"),
+                ChildEnvChange::Remove("GTK_THEME")
+            ]
         );
     }
 }
