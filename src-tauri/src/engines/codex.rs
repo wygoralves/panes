@@ -3075,6 +3075,12 @@ impl CodexEngine {
                             );
                             return Some(true);
                         }
+                        if !workspace_probe_result_reports_exit(&result) {
+                            log::warn!(
+                                "workspaceWrite command probe returned no exit code; probing again next turn (result={result})"
+                            );
+                            return None;
+                        }
                     }
                     Err(error) => {
                         let error_text = error.to_string();
@@ -5010,6 +5016,13 @@ fn workspace_probe_result_indicates_failure(result: &serde_json::Value) -> bool 
     false
 }
 
+/// `command/exec` always reports an exit code, so a reply without one cannot
+/// count as a pass.
+#[cfg(any(target_os = "macos", test))]
+fn workspace_probe_result_reports_exit(result: &serde_json::Value) -> bool {
+    extract_any_i64(result, &["exitCode", "exit_code"]).is_some()
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn is_opaque_workspace_probe_failure(error: &str) -> bool {
     let value = error.to_lowercase();
@@ -5031,6 +5044,7 @@ fn is_transport_or_protocol_error(value: &str) -> bool {
         || value.contains("exited with status")
         || value.contains("codex app-server exited")
         || value.contains("broken pipe")
+        || value.contains("codex stdin")
         || value.contains("connection reset")
         || value.contains("connection refused")
         || value.contains("not connected")
@@ -8592,6 +8606,18 @@ mod tests {
         assert!(is_opaque_workspace_probe_failure(
             "all rpc methods failed: command/exec: failed"
         ));
+        assert!(!is_opaque_workspace_probe_failure(
+            "all rpc methods failed: command/exec: failed writing payload to codex stdin"
+        ));
+    }
+
+    #[test]
+    fn workspace_probe_result_without_exit_code_is_not_a_pass() {
+        assert!(workspace_probe_result_reports_exit(
+            &json!({ "exitCode": 0, "stdout": "", "stderr": "" })
+        ));
+        assert!(!workspace_probe_result_reports_exit(&json!(null)));
+        assert!(!workspace_probe_result_reports_exit(&json!({})));
     }
 
     #[test]
