@@ -3804,27 +3804,33 @@ fn codex_fix_commands(
 /// `launchctl setenv PATH` replaces the PATH every later GUI app inherits, so
 /// keep Homebrew, the system directories and the entries Panes inherited
 /// (launchd's PATH for a Finder launch) after Codex's own directory. The value
-/// is single-quoted because this string runs through `$SHELL -lc`.
-fn launchctl_set_path_fix(bin_dir: &Path, app_path: Option<&str>) -> String {
+/// runs through the user's login shell, so it is single-quoted, which is
+/// literal in sh, zsh, bash, fish and PowerShell as long as it holds no quote
+/// (PowerShell also ends a string at typographic single quotes) or backslash:
+/// an inherited entry with one is dropped, and a Codex directory with one gets
+/// no fix. Parsed with macOS rules whatever the host.
+fn launchctl_set_path_fix(bin_dir: &Path, app_path: Option<&str>) -> Option<String> {
+    let literal =
+        |entry: &str| !entry.contains(['\'', '\\', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}']);
+    let bin_dir = bin_dir.display().to_string();
+    if !literal(&bin_dir) {
+        return None;
+    }
     let system = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
     let inherited = app_path
         .into_iter()
-        .flat_map(std::env::split_paths)
-        .filter(|entry| entry.is_absolute());
-    let mut path: Vec<String> = Vec::new();
-    for entry in std::iter::once(bin_dir.to_path_buf())
-        .chain(std::env::split_paths(system))
+        .flat_map(|value| value.split(':'))
+        .filter(|entry| entry.starts_with('/') && literal(entry));
+    let mut path: Vec<&str> = Vec::new();
+    for entry in std::iter::once(bin_dir.as_str())
+        .chain(system.split(':'))
         .chain(inherited)
     {
-        let entry = entry.display().to_string();
         if !path.contains(&entry) {
             path.push(entry);
         }
     }
-    format!(
-        "launchctl setenv PATH '{}'",
-        path.join(":").replace('\'', r#"'\''"#)
-    )
+    Some(format!("launchctl setenv PATH '{}'", path.join(":")))
 }
 
 fn codex_fix_commands_for_platform(
@@ -3833,28 +3839,26 @@ fn codex_fix_commands_for_platform(
     execution_error: Option<&str>,
 ) -> Vec<String> {
     if platform == "macos" {
+        let app_path = resolution.app_path.as_deref();
         let mut fixes = Vec::new();
         if resolution.executable.is_none() {
-            if let Some(shell_path) = &resolution.login_shell_executable {
-                if let Some(bin_dir) = shell_path.parent() {
-                    fixes.push(launchctl_set_path_fix(
-                        bin_dir,
-                        resolution.app_path.as_deref(),
-                    ));
-                    fixes.push("open -a Panes".to_string());
-                }
-            } else {
-                fixes.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
-                fixes.push("open -a Panes".to_string());
-            }
+            let path_fix = resolution
+                .login_shell_executable
+                .as_deref()
+                .and_then(Path::parent)
+                .and_then(|bin_dir| launchctl_set_path_fix(bin_dir, app_path));
+            fixes.push(path_fix.unwrap_or_else(|| {
+                "/bin/zsh -lic 'command -v codex && codex --version'".to_string()
+            }));
+            fixes.push("open -a Panes".to_string());
         } else if execution_error.is_some() {
-            if let Some(executable) = resolution.executable.as_ref() {
-                if let Some(bin_dir) = executable.parent() {
-                    fixes.push(launchctl_set_path_fix(
-                        bin_dir,
-                        resolution.app_path.as_deref(),
-                    ));
-                }
+            if let Some(path_fix) = resolution
+                .executable
+                .as_deref()
+                .and_then(Path::parent)
+                .and_then(|bin_dir| launchctl_set_path_fix(bin_dir, app_path))
+            {
+                fixes.push(path_fix);
             }
             fixes.push(
                 "/bin/zsh -lic 'command -v node && command -v codex && codex --version'"
@@ -9014,24 +9018,37 @@ mod tests {
 
     #[test]
     fn codex_fix_commands_for_macos_keep_homebrew_and_quote_the_codex_dir() {
+        let resolution = |codex: &str| CodexExecutableResolution {
+            executable: None,
+            source: "unavailable",
+            app_path: Some(
+                "/usr/bin:/Users/panes/.cargo/bin:relative/bin:/Users/it's/bin:/bin".to_string(),
+            ),
+            login_shell_executable: Some(std::path::PathBuf::from(codex)),
+        };
+
         let fixes = codex_fix_commands_for_platform(
             "macos",
-            &CodexExecutableResolution {
-                executable: None,
-                source: "unavailable",
-                app_path: Some("/usr/bin:/Users/panes/.cargo/bin:relative/bin:/bin".to_string()),
-                login_shell_executable: Some(std::path::PathBuf::from(
-                    "/Users/panes/it's $(touch x)/bin/codex",
-                )),
-            },
+            &resolution("/Users/panes/$(touch x) `id`/bin/codex"),
             None,
         );
-
         assert_eq!(
-            fixes[0],
-            r#"launchctl setenv PATH '/Users/panes/it'\''s $(touch x)/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/panes/.cargo/bin'"#
+            fixes,
+            vec![
+                "launchctl setenv PATH '/Users/panes/$(touch x) `id`/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/panes/.cargo/bin'".to_string(),
+                "open -a Panes".to_string(),
+            ]
         );
-        assert_eq!(fixes[1], "open -a Panes");
+
+        let fixes =
+            codex_fix_commands_for_platform("macos", &resolution("/Users/it's/bin/codex"), None);
+        assert_eq!(
+            fixes,
+            vec![
+                "/bin/zsh -lic 'command -v codex && codex --version'".to_string(),
+                "open -a Panes".to_string(),
+            ]
+        );
     }
 
     #[test]
