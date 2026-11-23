@@ -447,7 +447,12 @@
       "kiro": "CLI de coding da AWS focada em fluxos mais estruturados no estilo agent",
       "opencode": "Assistente de código open source para chat, edições e fluxos no terminal",
       "kilo-code": "CLI leve de assistência de código para tarefas do dia a dia no repo",
-      "factory-droid": "Coding agent autônomo da Factory para implementações maiores"
+      "factory-droid": "Coding agent autônomo da Factory para implementações maiores",
+      "cursor-cli": "CLI de coding agent do Cursor para trabalhar no repo pelo terminal",
+      "copilot-cli": "CLI de coding agent do GitHub Copilot para trabalhar no repo pelo terminal",
+      "amp": "CLI de coding agent do Amp para trabalhar no repo pelo terminal",
+      "qwen-code": "CLI de coding agent open source feita para modelos Qwen",
+      "crush": "Coding agent open source da Charm para o terminal"
     }
   },
   "editor": {

@@ -9,6 +9,11 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Record<string, string>> = {
   opencode: "npm install -g opencode-ai",
   "kilo-code": "npm install -g @kilocode/cli",
   "factory-droid": "curl -fsSL https://app.factory.ai/cli | sh",
+  "cursor-cli": "curl https://cursor.com/install -fsS | bash",
+  "copilot-cli": "npm install -g @github/copilot",
+  amp: "curl -fsSL https://ampcode.com/install.sh | bash",
+  "qwen-code": "npm install -g @qwen-code/qwen-code",
+  crush: "npm install -g @charmland/crush",
 };
 
 // npm package name for each harness whose install command in
@@ -21,6 +26,9 @@ const NPM_PACKAGE_NAMES: Readonly<Record<string, string>> = {
   "gemini-cli": "@google/gemini-cli",
   opencode: "opencode-ai",
   "kilo-code": "@kilocode/cli",
+  "copilot-cli": "@github/copilot",
+  "qwen-code": "@qwen-code/qwen-code",
+  crush: "@charmland/crush",
 };
 
 export type HarnessTileAction = "launch" | "install" | "manual";

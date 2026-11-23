@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { SquareTerminal } from "lucide-react";
 
 import antigravityLogo from "../../assets/harness/antigravity-cli.png";
 
@@ -123,6 +124,14 @@ export function getHarnessIcon(id: string, size = 16): ReactNode {
       return <span style={style}><KiloCodeLogo size={size} /></span>;
     case "factory-droid":
       return <span style={style}><FactoryLogo size={Math.round(size * 1.2)} /></span>;
+    // No bundled brand marks for these yet, so they get a neutral terminal
+    // icon instead of the OpenAI mark the default case draws.
+    case "cursor-cli":
+    case "copilot-cli":
+    case "amp":
+    case "qwen-code":
+    case "crush":
+      return <span style={style}><SquareTerminal size={size} strokeWidth={1.75} /></span>;
     default:
       return <span style={style}><CodexLogo size={size} /></span>;
   }

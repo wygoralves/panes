@@ -76,7 +76,7 @@
       story: {
         anyAgentTitle: "Talk to any agent.",
         anyAgentBody:
-          "Native chat for Codex and Claude through their SDKs. Built-in terminal harness for CLI agents like Gemini CLI, Factory Droid, OpenCode, and more. Pick the right engine for the task and go.",
+          "Native chat for Codex and Claude through their SDKs. Built-in terminal harness for CLI agents like Antigravity CLI, Factory Droid, OpenCode, and more. Pick the right engine for the task and go.",
         gitTitle: "Git without the alt-tab.",
         gitBody:
           "Review diffs, stage changes, and commit directly from the agent's output. Agents branch, stash, and push. You approve with full context.",
@@ -183,7 +183,7 @@
       story: {
         anyAgentTitle: "Fale com qualquer agente.",
         anyAgentBody:
-          "Chat nativo pra Codex e Claude via SDK. Terminal integrado pra agentes de CLI como Gemini CLI, Factory Droid, OpenCode e outros. Escolhe a engine certa e vai.",
+          "Chat nativo pra Codex e Claude via SDK. Terminal integrado pra agentes de CLI como Antigravity CLI, Factory Droid, OpenCode e outros. Escolhe a engine certa e vai.",
         gitTitle: "Git sem alt-tab.",
         gitBody:
           "Revise diffs, stage mudanças e commite direto do output do agente. Agentes criam branch, stash e push. Você aprova com contexto completo.",

@@ -66,6 +66,24 @@ describe("harness install actions", () => {
     );
   });
 
+  it("knows the install commands for the newer coding CLIs", () => {
+    expect(getHarnessInstallCommand("cursor-cli")).toBe(
+      "curl https://cursor.com/install -fsS | bash",
+    );
+    expect(getHarnessInstallCommand("amp", "mise")).toBe(
+      "curl -fsSL https://ampcode.com/install.sh | bash",
+    );
+    expect(getHarnessInstallCommand("copilot-cli", "mise")).toBe(
+      "mise use -g npm:@github/copilot",
+    );
+    expect(getHarnessInstallCommand("qwen-code")).toBe(
+      "npm install -g @qwen-code/qwen-code",
+    );
+    expect(getHarnessInstallCommand("crush", "mise")).toBe(
+      "mise use -g npm:@charmland/crush",
+    );
+  });
+
   it("leaves curl-pipe installers unchanged even when mise is preferred", () => {
     expect(getHarnessInstallCommand("kiro", "mise")).toContain("bash");
   });
