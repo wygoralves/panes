@@ -169,10 +169,12 @@ impl TurnEventMapper {
                     .unwrap_or_else(|| "Codex reported a guardian warning".to_string()),
             )],
             "modelverification" => map_model_verification_notice(params).into_iter().collect(),
-            "itemguardianapprovalreviewstarted" => {
+            // The wire methods are `item/autoApprovalReview/*`; the schema
+            // types keep the older "guardian" name.
+            "itemautoapprovalreviewstarted" | "itemguardianapprovalreviewstarted" => {
                 vec![map_guardian_review_notice(params, true)]
             }
-            "itemguardianapprovalreviewcompleted" => {
+            "itemautoapprovalreviewcompleted" | "itemguardianapprovalreviewcompleted" => {
                 vec![map_guardian_review_notice(params, false)]
             }
             "itemfilechangepatchupdated" => {
@@ -2107,6 +2109,37 @@ mod tests {
             }
             other => panic!("expected notice event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn map_notification_emits_auto_approval_review_notices() {
+        let mut mapper = TurnEventMapper::default();
+        let action = json!({ "type": "command", "command": "rm -rf build" });
+
+        let started = mapper.map_notification(
+            "item/autoApprovalReview/started",
+            &json!({ "threadId": "thr", "turnId": "turn", "reviewId": "r1", "action": action }),
+        );
+        let completed = mapper.map_notification(
+            "item/autoApprovalReview/completed",
+            &json!({
+                "threadId": "thr",
+                "turnId": "turn",
+                "reviewId": "r1",
+                "action": action,
+                "review": { "status": "denied" }
+            }),
+        );
+
+        assert!(matches!(
+            started.as_slice(),
+            [EngineEvent::Notice { kind, .. }] if kind == "codex_guardian_review_started"
+        ));
+        assert!(matches!(
+            completed.as_slice(),
+            [EngineEvent::Notice { kind, message, .. }]
+                if kind == "codex_guardian_review_completed" && message.contains("denied")
+        ));
     }
 
     #[test]
