@@ -35,6 +35,14 @@ describe("markdownParserCoreInternals.isFenceClosing", () => {
   });
 });
 
+// Event handler attributes on real tags. Quoted attribute values are
+// skipped so a link whose href mentions "onerror=" does not count.
+function findEventHandlerAttributes(html: string): string[] {
+  return (html.match(/<[a-z][^>]*>/gi) ?? []).filter((tag) =>
+    /[\s/]on[a-z]+\s*=/i.test(tag.replace(/"[^"]*"|'[^']*'/g, '""')),
+  );
+}
+
 describe("renderMarkdownToHtml", () => {
   it("highlights closed and unclosed fences the same way so a streaming block does not restyle when it closes", () => {
     const highlighted = renderMarkdownToHtml("```js\nconst value = 1;\n```\n");
@@ -99,8 +107,45 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain("href=\"#\"");
     expect(html).not.toContain("<script");
     expect(html).toContain("&lt;script&gt;");
-    expect(html).toContain("&lt;img src=&quot;javascript:alert(1)&quot;>");
-    expect(html).not.toContain("onerror=");
+    expect(html).toContain("&lt;img src=&quot;javascript:alert(1)&quot;");
+    expect(html).not.toContain("<img");
+    expect(findEventHandlerAttributes(html)).toEqual([]);
+  });
+
+  it("encodes raw HTML that the old regex filter let through", () => {
+    const payloads = [
+      "<div <>\n<img src=x a/onerror=alert(1) <>",
+      "hello\n\n<div <><img src=x a/onerror=alert(1) <>",
+      "<details <>\n<img src=x a/onerror=alert(1) <>",
+      "<div <>\n<svg/onload=alert(1) <>",
+      "<div <>\n<a href=javascript:alert(1) <>x</a>",
+      "<img src='x'/onerror=alert(1)>",
+      "# Title\n\nSome text\n\n<div <>\n<a href=x a/onmouseover=alert(1) <>hover</a>",
+    ];
+
+    for (const payload of payloads) {
+      const html = renderMarkdownToHtml(payload);
+      expect(html, payload).not.toMatch(/<(?:img|svg|div|details)\b/i);
+      expect(findEventHandlerAttributes(html), payload).toEqual([]);
+      expect(html, payload).not.toContain('href="javascript:');
+    }
+  });
+
+  it("renders inline code with angle brackets escaped once", () => {
+    const html = renderMarkdownToHtml("Use `<div>` and `Vec<String>`, not `<br>`");
+
+    expect(html).toContain("<code>&lt;div&gt;</code>");
+    expect(html).toContain("<code>Vec&lt;String&gt;</code>");
+    expect(html).toContain("<code>&lt;br&gt;</code>");
+  });
+
+  it("places fenced code between the paragraphs around it", () => {
+    const html = renderMarkdownToHtml("before\n```js\nconst a = '$&';\n```\nafter");
+
+    expect(html).toMatch(/^<p>before<\/p>\n<pre><code class="hljs language-js">/);
+    expect(html).toContain("$&amp;");
+    expect(html).toMatch(/<\/pre>\n<p>after<\/p>$/);
+    expect(html).not.toContain("\uE000");
   });
 
   it("keeps safe br/hr tags while escaping other inline html", () => {
