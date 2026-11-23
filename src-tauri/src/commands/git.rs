@@ -125,29 +125,38 @@ pub async fn soft_reset_last_commit(
     .map_err(|error| error.to_string())?
 }
 
-/// The trust level of the repo that holds `repo_path`. A path Panes does not
-/// know (for example a worktree outside the repo) counts as standard, and so
-/// does another repository nested inside a trusted one: trust covers the
-/// repository the user marked and its worktrees, which share its config.
+/// The trust level of the repository git opens at `repo_path`. Trust covers
+/// the repository the user marked and its worktrees, which share its config,
+/// so the repo row is found through git's common dir: its parent is the main
+/// checkout, which also finds a worktree outside the repo or a path reached
+/// through a symlink. Another repository nested inside a trusted one gets no
+/// trust from it, while one nested inside a restricted one stays restricted.
 fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustLevelDto> {
-    let Some(repo) = db::repos::find_deepest_repo_containing_path(db, repo_path, None)? else {
-        return Ok(TrustLevelDto::Standard);
-    };
-    if matches!(repo.trust_level, TrustLevelDto::Trusted)
-        && !same_git_common_dir(repo_path, &repo.path)
-    {
-        return Ok(TrustLevelDto::Standard);
+    let common_dir = canonical_git_common_dir(repo_path);
+    let main_checkout = common_dir
+        .as_deref()
+        .and_then(std::path::Path::parent)
+        .map(|path| path.to_string_lossy().into_owned());
+
+    let mut fallback = TrustLevelDto::Standard;
+    for path in std::iter::once(repo_path.to_string()).chain(main_checkout) {
+        let Some(repo) = db::repos::find_deepest_repo_containing_path(db, &path, None)? else {
+            continue;
+        };
+        if common_dir.is_some() && canonical_git_common_dir(&repo.path) == common_dir {
+            return Ok(repo.trust_level);
+        }
+        if matches!(repo.trust_level, TrustLevelDto::Restricted) {
+            fallback = TrustLevelDto::Restricted;
+        }
     }
-    Ok(repo.trust_level)
+    Ok(fallback)
 }
 
-fn same_git_common_dir(a: &str, b: &str) -> bool {
-    let resolve = |path: &str| {
-        worktree::git_common_dir(path)
-            .ok()
-            .and_then(|dir| dir.canonicalize().ok())
-    };
-    matches!((resolve(a), resolve(b)), (Some(a), Some(b)) if a == b)
+fn canonical_git_common_dir(path: &str) -> Option<std::path::PathBuf> {
+    worktree::git_common_dir(path)
+        .ok()
+        .and_then(|dir| dir.canonicalize().ok())
 }
 
 #[tauri::command]
@@ -787,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn a_repo_nested_in_a_trusted_repo_is_not_trusted() {
+    fn trust_follows_the_repository_git_opens() {
         let repo = TestRepo::init();
         // Registered paths are canonical, as the workspace scan stores them.
         let root = repo.path.canonicalize().expect("canonical repo path");
@@ -811,16 +820,43 @@ mod tests {
         fs::create_dir_all(&nested).expect("create nested repo dir");
         run_git(nested.to_str().unwrap(), &["init", "-q"]).expect("init nested repo");
 
+        let outside = root.with_file_name(format!(
+            "{}-outside",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        worktree::add_worktree(
+            root.to_str().unwrap(),
+            outside.to_str().unwrap(),
+            "outside",
+            None,
+        )
+        .expect("add worktree outside the repo");
+        let outside_str = outside.to_str().unwrap().to_string();
+
         let trust = |path: &str| repo_trust_level(&repo.state.db, path).expect("trust level");
         assert!(matches!(
             trust(root.to_str().unwrap()),
             TrustLevelDto::Trusted
         ));
         assert!(matches!(trust(&worktree), TrustLevelDto::Trusted));
+        assert!(matches!(trust(&outside_str), TrustLevelDto::Trusted));
         assert!(matches!(
             trust(nested.to_str().unwrap()),
             TrustLevelDto::Standard
         ));
+
+        crate::db::repos::set_repo_trust_level(
+            &repo.state.db,
+            &registered.id,
+            TrustLevelDto::Restricted,
+        )
+        .expect("restrict repo");
+        assert!(matches!(trust(&outside_str), TrustLevelDto::Restricted));
+        assert!(matches!(
+            trust(nested.to_str().unwrap()),
+            TrustLevelDto::Restricted
+        ));
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[tokio::test]
