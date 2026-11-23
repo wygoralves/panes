@@ -14,10 +14,14 @@ use crate::models::{
     FileTreeEntryDto, FileTreePageDto, GitBranchDto, GitBranchPageDto, GitBranchScopeDto,
     GitChangeTypeDto, GitCommitDto, GitCommitPageDto, GitCompareSourceDto, GitDiffPreviewDto,
     GitFileCompareDto, GitFileStatusDto, GitInitRepoStatusDto, GitStashDto, GitStatusDto,
+    TrustLevelDto,
 };
 use crate::path_utils;
 
-use super::cli_fallback::{run_git, run_git_network, run_git_read, GIT_NETWORK_TIMEOUT};
+use super::cli_fallback::{
+    hooks_disabled_config, repo_scoped_config_keys, run_git, run_git_network, run_git_read,
+    GIT_NETWORK_TIMEOUT,
+};
 
 const FILE_TREE_DEFAULT_PAGE_SIZE: usize = 2000;
 const FILE_TREE_MAX_PAGE_SIZE: usize = 5000;
@@ -481,18 +485,72 @@ pub fn soft_reset_last_commit(repo_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn fetch_repo(repo_path: &str) -> anyhow::Result<()> {
+/// Repo config keys that make fetch, pull or push run a program: an ssh or
+/// proxy command, an upload or receive pack path, a credential helper, an
+/// askpass or signing program, or a protocol allow rule that enables `ext::`.
+const NETWORK_COMMAND_CONFIG_KEYS: &str = r"^(core\.(sshcommand|gitproxy|askpass)|remote\..+\.(uploadpack|receivepack)|credential\.(.+\.)?helper|protocol\.(.+\.)?allow|gpg\.(.+\.)?program)$";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NetworkCommand {
+    Fetch,
+    PullOrPush,
+}
+
+/// Checks a repo's own config before a network command and returns the `-c`
+/// overrides to run it with. Trusted repos run as configured. For standard
+/// and restricted repos, a command named in the repo's own config (as
+/// opposed to the user's global config) is refused, and hooks are turned off
+/// for fetch and, in restricted repos, for pull and push too.
+fn network_config_overrides(
+    repo_path: &str,
+    trust: &TrustLevelDto,
+    command: NetworkCommand,
+) -> anyhow::Result<Vec<String>> {
+    if matches!(trust, TrustLevelDto::Trusted) {
+        return Ok(Vec::new());
+    }
+
+    let keys = repo_scoped_config_keys(repo_path, NETWORK_COMMAND_CONFIG_KEYS)
+        .context("failed to check the repository git config")?;
+    if !keys.is_empty() {
+        anyhow::bail!(
+            "this repository's own git config sets {}, which can run a program on fetch, pull and push; mark the repository as Trusted to allow it",
+            keys.join(", ")
+        );
+    }
+
+    if command == NetworkCommand::Fetch || matches!(trust, TrustLevelDto::Restricted) {
+        return Ok(vec!["-c".to_string(), hooks_disabled_config()?]);
+    }
+    Ok(Vec::new())
+}
+
+fn with_overrides<'a>(overrides: &'a [String], args: &[&'a str]) -> Vec<&'a str> {
+    overrides
+        .iter()
+        .map(String::as_str)
+        .chain(args.iter().copied())
+        .collect()
+}
+
+pub fn fetch_repo(repo_path: &str, trust: &TrustLevelDto) -> anyhow::Result<()> {
+    let overrides = network_config_overrides(repo_path, trust, NetworkCommand::Fetch)?;
     run_git_network(
         repo_path,
-        &["fetch", "--all", "--prune"],
+        &with_overrides(&overrides, &["fetch", "--all", "--prune"]),
         GIT_NETWORK_TIMEOUT,
     )
     .context("failed to fetch from remotes")?;
     Ok(())
 }
 
-pub fn pull_repo(repo_path: &str) -> anyhow::Result<()> {
-    match run_git_network(repo_path, &["pull", "--ff-only"], GIT_NETWORK_TIMEOUT) {
+pub fn pull_repo(repo_path: &str, trust: &TrustLevelDto) -> anyhow::Result<()> {
+    let overrides = network_config_overrides(repo_path, trust, NetworkCommand::PullOrPush)?;
+    match run_git_network(
+        repo_path,
+        &with_overrides(&overrides, &["pull", "--ff-only"]),
+        GIT_NETWORK_TIMEOUT,
+    ) {
         Ok(_) => Ok(()),
         Err(error) => {
             if is_no_upstream_error(&error) {
@@ -505,8 +563,13 @@ pub fn pull_repo(repo_path: &str) -> anyhow::Result<()> {
     }
 }
 
-pub fn push_repo(repo_path: &str) -> anyhow::Result<()> {
-    match run_git_network(repo_path, &["push"], GIT_NETWORK_TIMEOUT) {
+pub fn push_repo(repo_path: &str, trust: &TrustLevelDto) -> anyhow::Result<()> {
+    let overrides = network_config_overrides(repo_path, trust, NetworkCommand::PullOrPush)?;
+    match run_git_network(
+        repo_path,
+        &with_overrides(&overrides, &["push"]),
+        GIT_NETWORK_TIMEOUT,
+    ) {
         Ok(_) => Ok(()),
         Err(error) => {
             if !is_no_upstream_error(&error) {
@@ -526,8 +589,12 @@ pub fn push_repo(repo_path: &str) -> anyhow::Result<()> {
                 remote_name.as_str(),
                 branch_name.as_str(),
             ];
-            run_git_network(repo_path, &push_args, GIT_NETWORK_TIMEOUT)
-                .context("failed to push current branch and set upstream")?;
+            run_git_network(
+                repo_path,
+                &with_overrides(&overrides, &push_args),
+                GIT_NETWORK_TIMEOUT,
+            )
+            .context("failed to push current branch and set upstream")?;
             Ok(())
         }
     }
@@ -1716,12 +1783,12 @@ mod tests {
     use std::fs;
 
     use super::{
-        build_diff_preview, checkout_git_branch, discard_files, get_commit_diff, get_file_diff,
-        get_git_status, get_workspace_file_tree_page, is_diff_preview_metadata_line,
+        build_diff_preview, checkout_git_branch, discard_files, fetch_repo, get_commit_diff,
+        get_file_diff, get_git_status, get_workspace_file_tree_page, is_diff_preview_metadata_line,
         parse_porcelain_v1_status, run_git, search_workspace_files, truncate_utf8_prefix,
         FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
     };
-    use crate::models::FileTreeEntryDto;
+    use crate::models::{FileTreeEntryDto, TrustLevelDto};
     use uuid::Uuid;
 
     struct TempRepo {
@@ -1822,6 +1889,72 @@ mod tests {
         assert!(
             !repo.path.join("newdir").exists(),
             "untracked directory must be removed"
+        );
+    }
+
+    /// A repo with one commit and an `origin` remote pointing at a bare
+    /// clone of it over file://.
+    fn repo_with_file_remote() -> (TempRepo, std::path::PathBuf) {
+        let repo = TempRepo::init();
+        repo.write("a.txt", "a\n");
+        repo.commit_all("init");
+        let remote = repo.path.join("remote.git");
+        run_git(
+            repo.path_str(),
+            &["clone", "--bare", "-q", ".", remote.to_str().unwrap()],
+        )
+        .expect("bare clone");
+        let url = format!("file://{}", remote.display());
+        run_git(repo.path_str(), &["remote", "add", "origin", &url]).expect("add remote");
+        (repo, remote)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_refuses_a_command_named_in_repo_config_unless_trusted() {
+        let (repo, _remote) = repo_with_file_remote();
+        let marker = repo.path.join("uploadpack-ran");
+        let uploadpack = format!("touch {}; git-upload-pack", marker.display());
+        run_git(
+            repo.path_str(),
+            &["config", "remote.origin.uploadpack", &uploadpack],
+        )
+        .expect("set uploadpack");
+
+        for trust in [TrustLevelDto::Standard, TrustLevelDto::Restricted] {
+            let error = fetch_repo(repo.path_str(), &trust).expect_err("fetch must be refused");
+            assert!(
+                error.to_string().contains("remote.origin.uploadpack"),
+                "{error}"
+            );
+            assert!(!marker.exists(), "uploadpack ran for {}", trust.as_str());
+        }
+
+        fetch_repo(repo.path_str(), &TrustLevelDto::Trusted).expect("trusted fetch runs");
+        assert!(marker.exists(), "trusted repos keep their own config");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_on_a_standard_repo_runs_without_repo_hooks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (repo, _remote) = repo_with_file_remote();
+        let marker = repo.path.join("hook-ran");
+        let hook = repo.path.join(".git/hooks/reference-transaction");
+        fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker.display())).expect("hook");
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("chmod hook");
+
+        fetch_repo(repo.path_str(), &TrustLevelDto::Standard).expect("fetch");
+
+        assert!(
+            !marker.exists(),
+            "fetch ran the repo's reference-transaction hook"
+        );
+        let refs = run_git(repo.path_str(), &["branch", "-r"]).expect("list remote branches");
+        assert!(
+            refs.contains("origin/main"),
+            "fetch must still update refs: {refs}"
         );
     }
 

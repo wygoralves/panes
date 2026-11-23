@@ -146,6 +146,54 @@ fn kill_process_tree(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
+/// Lists config keys matching `key_regex` that come from the repository
+/// itself (`.git/config`, its worktree config, or files they include), as
+/// opposed to the user's global or system config. Uses git rather than
+/// libgit2 so conditional includes resolve exactly as they would for git.
+pub fn repo_scoped_config_keys(repo_path: &str, key_regex: &str) -> anyhow::Result<Vec<String>> {
+    let args = ["config", "--show-scope", "-z", "--get-regexp", key_regex];
+    let output = git_command(repo_path)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run git command: {}", describe(repo_path, &args)))?;
+
+    // `git config --get-regexp` exits with 1 when nothing matches.
+    if output.status.code() == Some(1) {
+        return Ok(Vec::new());
+    }
+    let stdout = into_stdout(output).context("failed to read repository git config")?;
+
+    let mut keys = Vec::new();
+    let mut fields = stdout.split('\0');
+    while let (Some(scope), Some(entry)) = (fields.next(), fields.next()) {
+        if scope != "local" && scope != "worktree" {
+            continue;
+        }
+        let key = entry.split_once('\n').map_or(entry, |(key, _)| key);
+        if !keys.iter().any(|existing| existing == key) {
+            keys.push(key.to_string());
+        }
+    }
+    Ok(keys)
+}
+
+/// A `-c` value that turns off every hook for one git call, including the
+/// ones a repo ships in `.git/hooks` or points at with `core.hooksPath`.
+pub fn hooks_disabled_config() -> anyhow::Result<String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Hooks are looked up as `<hooksPath>/<name>`, which never exists
+        // under a file.
+        Ok("core.hooksPath=/dev/null".to_string())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let dir = crate::runtime_env::app_data_dir().join("empty-hooks");
+        std::fs::create_dir_all(&dir).context("failed to prepare an empty hooks directory")?;
+        Ok(format!("core.hooksPath={}", dir.display()))
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use std::time::{Duration, Instant};

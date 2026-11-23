@@ -8,7 +8,7 @@ use crate::{
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
         GitCompareSourceDto, GitDiffPreviewDto, GitFileCompareDto, GitInitRepoStatusDto,
-        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, ThreadStatusDto,
+        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
 };
@@ -125,25 +125,50 @@ pub async fn soft_reset_last_commit(
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
-pub async fn fetch_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || repo::fetch_repo(&repo_path).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+/// The trust level of the repo that holds `repo_path`. A path Panes does not
+/// know (for example a worktree outside the repo) counts as standard.
+fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustLevelDto> {
+    Ok(
+        db::repos::find_deepest_repo_containing_path(db, repo_path, None)?
+            .map(|repo| repo.trust_level)
+            .unwrap_or(TrustLevelDto::Standard),
+    )
 }
 
 #[tauri::command]
-pub async fn pull_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || repo::pull_repo(&repo_path).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+pub async fn fetch_git(state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let trust = repo_trust_level(&db, &repo_path)?;
+        repo::fetch_repo(&repo_path, &trust)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err_to_string)
 }
 
 #[tauri::command]
-pub async fn push_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || repo::push_repo(&repo_path).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+pub async fn pull_git(state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let trust = repo_trust_level(&db, &repo_path)?;
+        repo::pull_repo(&repo_path, &trust)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn push_git(state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let trust = repo_trust_level(&db, &repo_path)?;
+        repo::push_repo(&repo_path, &trust)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err_to_string)
 }
 
 #[tauri::command]
