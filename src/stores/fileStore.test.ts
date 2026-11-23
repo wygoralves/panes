@@ -592,4 +592,36 @@ describe("fileStore", () => {
     expect(tab.isDirty).toBe(false);
     expect(tab.diskConflict ?? null).toBeNull();
   });
+
+  it("does not write when the disk check fails or finds a binary file", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "mine\n");
+
+    mockIpc.readFile.mockRejectedValueOnce(new Error("file too large"));
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+    expect(useFileStore.getState().tabs[0]!.diskConflict).toEqual({ diskContent: "" });
+
+    useFileStore.setState((state) => ({
+      tabs: state.tabs.map((t) => ({ ...t, diskConflict: null })),
+    }));
+    mockIpc.readFile.mockResolvedValueOnce(makeReadFileResult("", { isBinary: true }));
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+
+    expect(mockIpc.writeFile).not.toHaveBeenCalled();
+    expect(useFileStore.getState().tabs[0]!.content).toBe("mine\n");
+  });
+
+  it("keeps the line ending the file has on disk when only its endings changed", async () => {
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("a\nb\n"));
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "a\nb\nc\n");
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("a\r\nb\r\n"));
+
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
+
+    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "a\r\nb\r\nc\r\n", "ws-1");
+    expect(useFileStore.getState().tabs[0]!.lineEnding).toBe("\r\n");
+  });
 });

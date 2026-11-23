@@ -650,22 +650,30 @@ async function writeTabToDisk(
   const tab = getState().tabs.find((t) => t.id === tabId);
   if (!tab) return false;
 
+  let lineEnding = tab.lineEnding;
   if (options.checkDisk) {
-    // Check if the file was modified externally since we loaded/last-saved it
+    // Check if the file was modified externally since we loaded/last-saved it.
+    // A failed read (deleted, too large, unreadable) or a binary file counts as
+    // a change too: only an explicit Keep mine may write over it.
+    let diskContent = "";
+    let unchanged = false;
     try {
       const disk = await ipc.readFile(tab.rootPath, tab.filePath);
-      const diskContent = normalizeLineEndings(disk.content);
-      if (!disk.isBinary && diskContent !== tab.savedContent) {
-        toast.warning(t("app:editor.toasts.modifiedExternally", { name: tab.fileName }));
-        setState((state) => ({
-          tabs: state.tabs.map((t) =>
-            t.id === tabId ? { ...t, diskConflict: { diskContent } } : t,
-          ),
-        }));
-        return false;
-      }
+      diskContent = normalizeLineEndings(disk.content);
+      unchanged = !disk.isBinary && diskContent === tab.savedContent;
+      // Same text: keep the line ending the file has on disk now.
+      lineEnding = detectLineEnding(disk.content);
     } catch {
-      // File may have been deleted — proceed with save
+      // Treated as a conflict below.
+    }
+    if (!unchanged) {
+      toast.warning(t("app:editor.toasts.modifiedExternally", { name: tab.fileName }));
+      setState((state) => ({
+        tabs: state.tabs.map((t) =>
+          t.id === tabId ? { ...t, diskConflict: { diskContent } } : t,
+        ),
+      }));
+      return false;
     }
   }
 
@@ -677,7 +685,7 @@ async function writeTabToDisk(
     await ipc.writeFile(
       current.rootPath,
       current.filePath,
-      applyLineEnding(contentToSave, current.lineEnding),
+      applyLineEnding(contentToSave, lineEnding),
       current.workspaceId,
     );
     setState((state) => ({
@@ -685,6 +693,7 @@ async function writeTabToDisk(
         t.id === tabId
           ? {
               ...t,
+              lineEnding,
               savedContent: contentToSave,
               isDirty: t.content !== contentToSave,
               diskConflict: null,
