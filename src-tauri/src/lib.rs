@@ -125,8 +125,22 @@ pub fn run() {
                 main_window_config
             };
 
+            // In release builds the frontend is served from the app's own
+            // protocol, so the dev server origin is only allowed in debug.
+            let dev_url = if cfg!(debug_assertions) {
+                app.config().build.dev_url.clone()
+            } else {
+                None
+            };
             let main_window = WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
                 .enable_clipboard_access()
+                .on_navigation(move |url| {
+                    let allowed = is_app_navigation(url, dev_url.as_ref());
+                    if !allowed {
+                        log::warn!("blocked main window navigation to {url}");
+                    }
+                    allowed
+                })
                 .build()?;
             #[cfg(not(target_os = "linux"))]
             let _ = &main_window;
@@ -372,6 +386,23 @@ struct ThreadUpdatedEvent {
     workspace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     thread: Option<ThreadDto>,
+}
+
+/// Whether the main window may navigate to `url`. Only the app's own origin
+/// (and the dev server in debug builds) is allowed, so a stray link or script
+/// can never replace the Panes UI with another page.
+fn is_app_navigation(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
+    if url.as_str() == "about:blank" {
+        return true;
+    }
+    let host = url.host_str();
+    match url.scheme() {
+        // macOS and Linux serve the frontend from tauri://localhost.
+        "tauri" => host == Some("localhost"),
+        // Windows serves it from http(s)://tauri.localhost.
+        "http" | "https" if host == Some("tauri.localhost") => url.port().is_none(),
+        _ => dev_url.is_some_and(|dev_url| dev_url.origin() == url.origin()),
+    }
 }
 
 async fn run_codex_runtime_bridge(app: tauri::AppHandle, state: AppState) {
@@ -1014,4 +1045,60 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
 
     #[allow(unreachable_code)]
     Menu::with_items(handle, &[])
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::is_app_navigation;
+
+    fn url(value: &str) -> tauri::Url {
+        value.parse().expect("valid url")
+    }
+
+    #[test]
+    fn allows_the_app_origin_on_every_platform() {
+        assert!(is_app_navigation(&url("tauri://localhost/"), None));
+        assert!(is_app_navigation(
+            &url("tauri://localhost/index.html"),
+            None
+        ));
+        assert!(is_app_navigation(&url("http://tauri.localhost/"), None));
+        assert!(is_app_navigation(&url("https://tauri.localhost/x"), None));
+        assert!(is_app_navigation(&url("about:blank"), None));
+    }
+
+    #[test]
+    fn allows_the_dev_server_only_when_given() {
+        let dev = url("http://localhost:1420");
+        assert!(is_app_navigation(
+            &url("http://localhost:1420/"),
+            Some(&dev)
+        ));
+        assert!(!is_app_navigation(&url("http://localhost:1420/"), None));
+        assert!(!is_app_navigation(
+            &url("http://localhost:8080/"),
+            Some(&dev)
+        ));
+    }
+
+    #[test]
+    fn blocks_every_other_destination() {
+        let dev = url("http://localhost:1420");
+        for target in [
+            "http://evil.example/login",
+            "https://evil.example/",
+            "tauri://evil.example/",
+            "http://tauri.localhost.evil.example/",
+            "http://tauri.localhost:8080/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "about:srcdoc",
+        ] {
+            assert!(
+                !is_app_navigation(&url(target), Some(&dev)),
+                "{target} should be blocked"
+            );
+        }
+    }
 }
