@@ -98,12 +98,18 @@ pub fn run() {
         file_tree_cache: Arc::new(FileTreeCache::new()),
     };
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init());
+    // A Flatpak is updated by its remote, and the self-updater would try to
+    // overwrite the read-only /app/bin/Panes. Without the plugin, the
+    // frontend's update check fails quietly and never offers an update.
+    if runtime_env::self_update_supported() {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    let app = builder
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .menu(move |handle| build_app_menu(handle, app_locale))

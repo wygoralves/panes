@@ -51,6 +51,12 @@ pub fn is_flatpak() -> bool {
     env::var_os("FLATPAK_ID").is_some()
 }
 
+/// Whether the built-in Tauri updater may run. A Flatpak is updated through
+/// its remote, and its /app is read-only, so self-updates cannot apply there.
+pub fn self_update_supported() -> bool {
+    !is_flatpak()
+}
+
 pub fn app_data_dir() -> PathBuf {
     if is_flatpak() {
         return flatpak_app_data_dir_for(
@@ -1661,6 +1667,26 @@ mod tests {
 
         std::env::set_var("FLATPAK_ID", "com.panes.app");
         assert!(is_flatpak());
+
+        match original {
+            Some(value) => std::env::set_var("FLATPAK_ID", value),
+            None => std::env::remove_var("FLATPAK_ID"),
+        }
+    }
+
+    #[test]
+    fn self_update_is_disabled_inside_flatpak() {
+        let _app_data_guard = crate::config::app_config::app_data_env_lock()
+            .lock()
+            .expect("app data env lock poisoned");
+        let _env_guard = env_lock().lock().expect("env lock poisoned");
+        let original = std::env::var_os("FLATPAK_ID");
+
+        std::env::remove_var("FLATPAK_ID");
+        assert!(self_update_supported());
+
+        std::env::set_var("FLATPAK_ID", "com.panes.app");
+        assert!(!self_update_supported());
 
         match original {
             Some(value) => std::env::set_var("FLATPAK_ID", value),
