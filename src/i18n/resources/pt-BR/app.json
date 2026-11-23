@@ -471,6 +471,13 @@
       "reload": "Recarregar do disco",
       "keepMine": "Manter a minha"
     },
+    "unsavedOnExit": {
+      "title": "Alterações não salvas",
+      "message": "Estes arquivos têm alterações não salvas: {{names}}.",
+      "saveAll": "Salvar todos",
+      "discard": "Descartar",
+      "cancel": "Cancelar"
+    },
     "gitDiff": {
       "unavailable": "A comparação Git não está disponível para esta aba.",
       "sourceChanges": "Alterações",

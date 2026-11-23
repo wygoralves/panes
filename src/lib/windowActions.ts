@@ -3,6 +3,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFileStore } from "../stores/fileStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import {
+  confirmDiscardUnsavedWork,
+  registerUnsavedChangesCloseGuard,
+} from "./unsavedChangesGuard";
 
 const APP_SHORTCUTS_ALLOWED_WHILE_TERMINAL_FOCUSED = new Set(["d", "e", "k", "p", "t"]);
 
@@ -65,8 +69,16 @@ export async function closeCurrentWindow(): Promise<void> {
     if (import.meta.env.DEV) {
       console.warn("[windowActions] Failed to close current window, forcing destroy", error);
     }
+    // destroy() skips the close-requested guard, so ask about unsaved tabs here.
+    if (!(await confirmDiscardUnsavedWork())) return;
     await currentWindow.destroy();
   }
+}
+
+/** Desktop only: every native close (button, Cmd+W, quit menu) asks about unsaved tabs first. */
+export async function installUnsavedChangesCloseGuard(): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  return registerUnsavedChangesCloseGuard(getCurrentWindow());
 }
 
 export async function minimizeCurrentWindow(): Promise<void> {

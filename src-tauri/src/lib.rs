@@ -172,8 +172,8 @@ pub fn run() {
                 match id {
                     "toggle-sidebar" | "toggle-git-panel" | "toggle-focus-mode"
                     | "toggle-fullscreen" | "toggle-search" | "toggle-terminal"
-                    | "close-window" | "edit-undo" | "edit-redo" | "edit-cut" | "edit-copy"
-                    | "edit-paste" | "edit-select-all" => {
+                    | "close-window" | "quit" | "edit-undo" | "edit-redo" | "edit-cut"
+                    | "edit-copy" | "edit-paste" | "edit-select-all" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -903,6 +903,10 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
     {
         let strings = native_strings(locale);
 
+        // A custom item instead of the predefined quit, so Cmd+Q goes through the
+        // frontend's unsaved-changes prompt before the window closes.
+        let quit = MenuItem::with_id(handle, "quit", strings.quit, true, Some("CmdOrCtrl+Q"))?;
+
         let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
             .about(Some(AboutMetadata {
                 name: Some("Panes".to_string()),
@@ -929,7 +933,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
             .hide_others()
             .show_all()
             .separator()
-            .quit()
+            .item(&quit)
             .build()?;
 
         let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)

@@ -9,6 +9,9 @@ interface Props {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Optional third action rendered between cancel and confirm. */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
   onConfirm: () => void;
   onCancel: () => void;
   onDismiss?: () => void;
@@ -20,6 +23,8 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   cancelLabel,
+  secondaryLabel,
+  onSecondary,
   onConfirm,
   onCancel,
   onDismiss,
@@ -70,6 +75,15 @@ export function ConfirmDialog({
           >
             {resolvedCancelLabel}
           </button>
+          {secondaryLabel && onSecondary ? (
+            <button
+              type="button"
+              className="btn btn-outline confirm-dialog-btn-cancel"
+              onClick={onSecondary}
+            >
+              {secondaryLabel}
+            </button>
+          ) : null}
           <button
             ref={confirmRef}
             type="button"

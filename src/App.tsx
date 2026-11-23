@@ -32,6 +32,7 @@ import { toast } from "./stores/toastStore";
 import type { ChatEngineId, RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
+import { UnsavedChangesDialog } from "./components/editor/UnsavedChangesDialog";
 import { startEditorDiskSync } from "./lib/editorDiskSync";
 import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
@@ -56,6 +57,8 @@ import {
   toggleWorkspaceEditorLayout,
 } from "./lib/workspacePaneNavigation";
 import {
+  closeCurrentWindow,
+  installUnsavedChangesCloseGuard,
   usesCustomWindowFrame,
   isTerminalInputFocused,
   requestWindowClose,
@@ -384,6 +387,19 @@ export function App() {
   useEffect(() => startEditorDiskSync(), []);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void installUnsavedChangesCloseGuard().then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     function onBeforeUnload() {
       const wsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (wsId) {
@@ -677,6 +693,10 @@ export function App() {
           void requestWindowClose();
           break;
         }
+        case "quit":
+          // Closing the only window exits the app, through the unsaved-changes guard.
+          void closeCurrentWindow();
+          break;
         case "edit-undo":
         case "edit-redo":
         case "edit-cut":
@@ -719,6 +739,7 @@ export function App() {
       <TerminalNotificationSettingsModal />
       <UsageLimitsModal />
       <OnboardingWizard />
+      <UnsavedChangesDialog />
       <ToastContainer />
     </div>
   );

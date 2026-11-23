@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const updaterMocks = vi.hoisted(() => ({
   check: vi.fn(),
   relaunch: vi.fn(),
+  confirmDiscardUnsavedWork: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-updater", () => ({
@@ -11,6 +12,10 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 
 vi.mock("@tauri-apps/plugin-process", () => ({
   relaunch: updaterMocks.relaunch,
+}));
+
+vi.mock("../lib/unsavedChangesGuard", () => ({
+  confirmDiscardUnsavedWork: updaterMocks.confirmDiscardUnsavedWork,
 }));
 
 import { useUpdateStore } from "./updateStore";
@@ -29,6 +34,17 @@ describe("updateStore", () => {
       snoozed: false,
     });
     updaterMocks.relaunch.mockResolvedValue(undefined);
+    updaterMocks.confirmDiscardUnsavedWork.mockResolvedValue(true);
+  });
+
+  it("does not start the install when the user keeps unsaved editor changes", async () => {
+    updaterMocks.confirmDiscardUnsavedWork.mockResolvedValue(false);
+
+    await useUpdateStore.getState().downloadAndInstall();
+
+    expect(updaterMocks.check).not.toHaveBeenCalled();
+    expect(updaterMocks.relaunch).not.toHaveBeenCalled();
+    expect(useUpdateStore.getState().status).toBe("idle");
   });
 
   it("tracks determinate download progress before installation", async () => {

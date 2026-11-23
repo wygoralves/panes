@@ -471,6 +471,13 @@
       "reload": "Reload from disk",
       "keepMine": "Keep mine"
     },
+    "unsavedOnExit": {
+      "title": "Unsaved changes",
+      "message": "These files have unsaved changes: {{names}}.",
+      "saveAll": "Save all",
+      "discard": "Discard",
+      "cancel": "Cancel"
+    },
     "gitDiff": {
       "unavailable": "Git compare is unavailable for this tab.",
       "sourceChanges": "Changes",

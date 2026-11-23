@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { confirmDiscardUnsavedWork } from "../lib/unsavedChangesGuard";
 
 type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
 type DownloadPhase = "idle" | "downloading" | "installing";
@@ -55,6 +56,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   downloadAndInstall: async () => {
+    // On Windows the installer exits the app inside downloadAndInstall, and the
+    // relaunch elsewhere skips the window close guard, so ask first.
+    if (!(await confirmDiscardUnsavedWork())) return;
     set({
       status: "downloading",
       error: null,
