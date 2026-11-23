@@ -39,10 +39,11 @@ describe("updateStore", () => {
 
   it("asks about unsaved editor changes after the download and before installing", async () => {
     const install = vi.fn();
+    const close = vi.fn();
     const download = vi.fn(async () => {
       expect(updaterMocks.confirmDiscardUnsavedWork).not.toHaveBeenCalled();
     });
-    updaterMocks.check.mockResolvedValue({ download, install });
+    updaterMocks.check.mockResolvedValue({ download, install, close });
     updaterMocks.confirmDiscardUnsavedWork.mockResolvedValue(false);
 
     await useUpdateStore.getState().downloadAndInstall();
@@ -50,6 +51,7 @@ describe("updateStore", () => {
     expect(download).toHaveBeenCalledOnce();
     expect(updaterMocks.confirmDiscardUnsavedWork).toHaveBeenCalledOnce();
     expect(install).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
     expect(updaterMocks.relaunch).not.toHaveBeenCalled();
     expect(useUpdateStore.getState()).toMatchObject({ status: "available", downloadPhase: "idle" });
   });

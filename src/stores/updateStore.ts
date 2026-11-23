@@ -98,6 +98,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       // the installer exits the app inside install(), and relaunch() skips the
       // window close guard.
       if (!(await confirmDiscardUnsavedWork())) {
+        // The downloaded installer stays in native memory until released.
+        await update.close();
         set({ status: "available", downloadPhase: "idle", downloadedBytes: 0, totalBytes: null });
         return;
       }
