@@ -1,10 +1,13 @@
+use std::path::PathBuf;
+
+use anyhow::Context;
 use serde::Serialize;
 use tauri::Emitter;
 use tauri::State;
 
 use crate::{
     db,
-    git::{repo, worktree},
+    git::{cli_fallback::run_git_read, repo, worktree},
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
         GitCompareSourceDto, GitDiffPreviewDto, GitFileCompareDto, GitInitRepoStatusDto,
@@ -127,36 +130,70 @@ pub async fn soft_reset_last_commit(
 
 /// The trust level of the repository git opens at `repo_path`. Trust covers
 /// the repository the user marked and its worktrees, which share its config,
-/// so the repo row is found through git's common dir: its parent is the main
-/// checkout, which also finds a worktree outside the repo or a path reached
-/// through a symlink. Another repository nested inside a trusted one gets no
-/// trust from it, while one nested inside a restricted one stays restricted.
+/// so repo rows are matched by git's common dir. That finds a worktree
+/// outside the repo, a separate git dir or a symlinked path, and gives a
+/// different repository nested inside a trusted one no trust from it; one
+/// nested inside a restricted repo stays restricted. When the same repository
+/// has several rows, the least trusted wins.
 fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustLevelDto> {
-    let common_dir = canonical_git_common_dir(repo_path);
-    let main_checkout = common_dir
-        .as_deref()
-        .and_then(std::path::Path::parent)
-        .map(|path| path.to_string_lossy().into_owned());
+    let common_dir = canonicalize_dir(worktree::git_common_dir(repo_path)?)?;
+    let git_dir = canonicalize_dir(PathBuf::from(
+        run_git_read(repo_path, &["rev-parse", "--absolute-git-dir"])?.trim(),
+    ))?;
 
-    let mut fallback = TrustLevelDto::Standard;
-    for path in std::iter::once(repo_path.to_string()).chain(main_checkout) {
-        let Some(repo) = db::repos::find_deepest_repo_containing_path(db, &path, None)? else {
-            continue;
-        };
-        if common_dir.is_some() && canonical_git_common_dir(&repo.path) == common_dir {
-            return Ok(repo.trust_level);
-        }
-        if matches!(repo.trust_level, TrustLevelDto::Restricted) {
-            fallback = TrustLevelDto::Restricted;
+    let mut matched: Option<TrustLevelDto> = None;
+    for repo in db::repos::list_discovered_repos(db)? {
+        if registered_common_dir(&repo.path).as_ref() == Some(&common_dir) {
+            matched = Some(match matched {
+                Some(level) if trust_rank(&level) <= trust_rank(&repo.trust_level) => level,
+                _ => repo.trust_level,
+            });
         }
     }
-    Ok(fallback)
+
+    Ok(match matched {
+        // Trust covers config files under the trusted git dir: the main
+        // checkout's, or a linked worktree's admin dir under `worktrees/`.
+        // A `.git` file can point elsewhere and still share the common dir.
+        Some(TrustLevelDto::Trusted)
+            if git_dir == common_dir
+                || git_dir.parent() == Some(common_dir.join("worktrees").as_path()) =>
+        {
+            TrustLevelDto::Trusted
+        }
+        Some(TrustLevelDto::Trusted) => TrustLevelDto::Standard,
+        Some(level) => level,
+        None => match db::repos::find_deepest_repo_containing_path(db, repo_path, None)? {
+            Some(repo) if matches!(repo.trust_level, TrustLevelDto::Restricted) => {
+                TrustLevelDto::Restricted
+            }
+            _ => TrustLevelDto::Standard,
+        },
+    })
 }
 
-fn canonical_git_common_dir(path: &str) -> Option<std::path::PathBuf> {
-    worktree::git_common_dir(path)
-        .ok()
-        .and_then(|dir| dir.canonicalize().ok())
+/// The common dir of a registered repo, read in process the way git reads
+/// it: a linked worktree's git dir names it in a `commondir` file.
+fn registered_common_dir(path: &str) -> Option<PathBuf> {
+    let git_dir = git2::Repository::open(path).ok()?.path().to_path_buf();
+    let common_dir = match std::fs::read_to_string(git_dir.join("commondir")) {
+        Ok(relative) => git_dir.join(relative.trim()),
+        Err(_) => git_dir,
+    };
+    common_dir.canonicalize().ok()
+}
+
+fn trust_rank(level: &TrustLevelDto) -> u8 {
+    match level {
+        TrustLevelDto::Restricted => 0,
+        TrustLevelDto::Standard => 1,
+        TrustLevelDto::Trusted => 2,
+    }
+}
+
+fn canonicalize_dir(dir: PathBuf) -> anyhow::Result<PathBuf> {
+    dir.canonicalize()
+        .with_context(|| format!("failed to resolve '{}'", dir.display()))
 }
 
 #[tauri::command]
@@ -844,6 +881,93 @@ mod tests {
             trust(nested.to_str().unwrap()),
             TrustLevelDto::Standard
         ));
+
+        // A `.git` file pointing at an admin dir outside the trusted git dir
+        // shares the common dir but brings its own worktree config.
+        let sibling = |suffix: &str| {
+            root.with_file_name(format!(
+                "{}-{suffix}",
+                root.file_name().unwrap().to_string_lossy()
+            ))
+        };
+        let borrowed = sibling("borrowed");
+        let admin = borrowed.join("admin");
+        fs::create_dir_all(&admin).expect("create admin dir");
+        fs::write(
+            admin.join("commondir"),
+            format!("{}\n", root.join(".git").display()),
+        )
+        .expect("commondir");
+        fs::write(admin.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+        fs::write(
+            borrowed.join(".git"),
+            format!("gitdir: {}\n", admin.display()),
+        )
+        .expect(".git file");
+        assert!(matches!(
+            trust(borrowed.to_str().unwrap()),
+            TrustLevelDto::Standard
+        ));
+
+        // A restricted repo with a separate git dir, seen from a worktree.
+        let separate = sibling("separate");
+        let separate_git = sibling("separate.git");
+        run_git(
+            root.to_str().unwrap(),
+            &[
+                "init",
+                "-q",
+                "--separate-git-dir",
+                separate_git.to_str().unwrap(),
+                separate.to_str().unwrap(),
+            ],
+        )
+        .expect("init separate repo");
+        run_git(
+            separate.to_str().unwrap(),
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
+        )
+        .expect("commit");
+        let separate_row = crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "separate",
+            separate.to_str().unwrap(),
+            "main",
+            true,
+        )
+        .expect("register separate repo");
+        crate::db::repos::set_repo_trust_level(
+            &repo.state.db,
+            &separate_row.id,
+            TrustLevelDto::Restricted,
+        )
+        .expect("restrict separate repo");
+        let separate_worktree = sibling("separate-wt");
+        worktree::add_worktree(
+            separate.to_str().unwrap(),
+            separate_worktree.to_str().unwrap(),
+            "wt",
+            None,
+        )
+        .expect("add worktree of the separate repo");
+        assert!(matches!(
+            trust(separate_worktree.to_str().unwrap()),
+            TrustLevelDto::Restricted
+        ));
+        for dir in [&borrowed, &separate, &separate_git, &separate_worktree] {
+            let _ = fs::remove_dir_all(dir);
+        }
 
         crate::db::repos::set_repo_trust_level(
             &repo.state.db,
