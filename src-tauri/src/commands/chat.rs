@@ -1549,21 +1549,27 @@ async fn respond_to_approval_inner(
         )
         .await
     {
-        if let Err(release_error) = run_db(db.clone(), {
+        let released = run_db(db.clone(), {
             let approval_id = approval_id.clone();
-            move |db| db::actions::release_approval_claim(db, &approval_id, decision)
+            move |db| db::actions::release_approval_claim(db, &approval_id)
         })
-        .await
-        {
-            log::warn!("failed to release approval claim {approval_id}: {release_error}");
-        }
-        return Err(err_to_string(error));
+        .await;
+        return match released {
+            // The turn ended meanwhile and expired the claim.
+            Ok(false) => Err(db::actions::APPROVAL_NOT_PENDING_ERROR.to_string()),
+            Ok(true) => Err(err_to_string(error)),
+            Err(release_error) => {
+                log::warn!("failed to release approval claim {approval_id}: {release_error}");
+                Err(err_to_string(error))
+            }
+        };
     }
 
     run_db(db, {
         let approval_id = approval_id.clone();
         let thread_id = thread_id.clone();
         move |db| {
+            db::actions::confirm_approval_answer(db, &approval_id, decision)?;
             if let Some(message_id) = db::actions::find_approval_message_id(db, &approval_id)? {
                 let _ = db::messages::mark_approval_block_answered(
                     db,
@@ -3245,6 +3251,40 @@ async fn process_stream_event(
         _ => {}
     }
 
+    // Store the approval before publishing it: an answer to the card must
+    // find a pending row to claim.
+    if let EngineEvent::ApprovalRequested {
+        approval_id,
+        action_type,
+        summary,
+        details,
+    } = &normalized_event
+    {
+        if let Err(error) = run_db(state.db.clone(), {
+            let approval_id = approval_id.clone();
+            let thread_id = thread.id.clone();
+            let assistant_message_id = assistant_message_id.to_string();
+            let action_type = action_type.clone();
+            let summary = summary.clone();
+            let details = details.clone();
+            move |db| {
+                db::actions::insert_approval(
+                    db,
+                    &approval_id,
+                    &thread_id,
+                    &assistant_message_id,
+                    &action_type,
+                    &summary,
+                    &details,
+                )
+            }
+        })
+        .await
+        {
+            log::warn!("failed to persist approval: {error}");
+        }
+    }
+
     if matches!(normalized_event, EngineEvent::TurnCompleted { .. }) {
         // The view treats the turn as over once it sees this event; a send it
         // makes now waits for the release instead of bouncing.
@@ -3337,36 +3377,6 @@ async fn process_stream_event(
             .await
             {
                 log::warn!("failed to persist action completion: {error}");
-            }
-        }
-        EngineEvent::ApprovalRequested {
-            approval_id,
-            action_type,
-            summary,
-            details,
-        } => {
-            if let Err(error) = run_db(state.db.clone(), {
-                let approval_id = approval_id.clone();
-                let thread_id = thread.id.clone();
-                let assistant_message_id = assistant_message_id.to_string();
-                let action_type = action_type.clone();
-                let summary = summary.clone();
-                let details = details.clone();
-                move |db| {
-                    db::actions::insert_approval(
-                        db,
-                        &approval_id,
-                        &thread_id,
-                        &assistant_message_id,
-                        &action_type,
-                        &summary,
-                        &details,
-                    )
-                }
-            })
-            .await
-            {
-                log::warn!("failed to persist approval: {error}");
             }
         }
         _ => {}
@@ -7019,7 +7029,7 @@ mod tests {
     }
 
     #[test]
-    fn an_approval_is_claimed_once_by_its_own_thread_and_then_cannot_expire() {
+    fn an_approval_is_claimed_once_by_its_own_thread() {
         let state = test_app_state();
         let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
         let approval_id = "approval-claimed";
@@ -7033,6 +7043,8 @@ mod tests {
         assert!(
             db::actions::answer_approval(&state.db, approval_id, &thread.id, "decline").is_err()
         );
+        db::actions::confirm_approval_answer(&state.db, approval_id, "accept")
+            .expect("delivered answer should be confirmed");
         assert!(
             db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
                 .expect("expiry should run")
@@ -7042,6 +7054,26 @@ mod tests {
             approval_row(&state, approval_id),
             ("answered".to_string(), Some("accept".to_string()))
         );
+    }
+
+    #[test]
+    fn a_claim_the_turn_end_expired_stays_expired_when_delivery_fails() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "opencode", "model");
+        let approval_id = "approval-in-flight";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+
+        db::actions::answer_approval(&state.db, approval_id, &thread.id, "accept")
+            .expect("answer should claim the approval");
+        assert_eq!(
+            db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+                .expect("expiry should run"),
+            vec![approval_id.to_string()]
+        );
+        assert!(!db::actions::release_approval_claim(&state.db, approval_id)
+            .expect("release should run"));
+        assert!(db::actions::confirm_approval_answer(&state.db, approval_id, "accept").is_err());
+        assert_eq!(approval_row(&state, approval_id).0, "expired");
     }
 
     #[test]

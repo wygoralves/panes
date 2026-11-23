@@ -1639,6 +1639,7 @@ mod tests {
         )
         .unwrap();
         actions::answer_approval(&db, approval_id, &thread_id, "accept").unwrap();
+        actions::confirm_approval_answer(&db, approval_id, "accept").unwrap();
 
         update_assistant_blocks_json(
             &db,
@@ -1838,6 +1839,7 @@ mod tests {
         )
         .unwrap();
         actions::answer_approval(&db, approval_id, &thread_id, "accept").unwrap();
+        actions::confirm_approval_answer(&db, approval_id, "accept").unwrap();
 
         let conn = db.connect().unwrap();
         conn.execute(

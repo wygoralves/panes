@@ -503,7 +503,7 @@ pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryR
     let approval_message_ids = query_ids(
         &tx,
         "SELECT DISTINCT message_id FROM approvals
-       WHERE status = 'pending'
+       WHERE status IN ('pending', 'answering')
          AND message_id IS NOT NULL",
     )
     .context("failed to load messages with stale pending approvals")?;
@@ -511,7 +511,7 @@ pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryR
         .execute(
             "UPDATE approvals
        SET status = 'expired', answered_at = COALESCE(answered_at, datetime('now'))
-       WHERE status = 'pending'",
+       WHERE status IN ('pending', 'answering')",
             [],
         )
         .context("failed to expire stale pending approvals")?;

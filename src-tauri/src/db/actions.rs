@@ -92,10 +92,10 @@ pub fn insert_approval(
 pub const APPROVAL_NOT_PENDING_ERROR: &str =
     "This approval is no longer pending: the turn that asked for it has ended.";
 
-/// Claims a pending approval of `thread_id` for the user's decision. The
-/// claim happens before the engine hears the answer, so turn-end expiry and a
-/// second answer both lose to it, and an expired approval never reads as
-/// accepted in the audit trail.
+/// Claims a pending approval of `thread_id` for the user's decision. The row
+/// reads 'answering' until the engine took the answer: turn-end expiry and a
+/// second answer both lose to the claim, and expiry and crash recovery treat
+/// an undelivered claim like a pending approval.
 pub fn answer_approval(
     db: &Database,
     approval_id: &str,
@@ -106,7 +106,7 @@ pub fn answer_approval(
     let changed = conn
         .execute(
             "UPDATE approvals
-     SET status = 'answered', decision = ?1, answered_at = datetime('now')
+     SET status = 'answering', decision = ?1, answered_at = datetime('now')
      WHERE id = ?2
        AND thread_id = ?3
        AND status = 'pending'",
@@ -119,24 +119,44 @@ pub fn answer_approval(
     Ok(())
 }
 
-/// Gives a claimed approval back when the engine refused the answer, so the
-/// user can answer it again.
-pub fn release_approval_claim(
+/// Records that the engine took the claimed answer. Fails when the turn
+/// ended first and expired the claim.
+pub fn confirm_approval_answer(
     db: &Database,
     approval_id: &str,
     decision: &str,
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
-    conn.execute(
-        "UPDATE approvals
+    let changed = conn
+        .execute(
+            "UPDATE approvals
+     SET status = 'answered'
+     WHERE id = ?1
+       AND decision = ?2
+       AND status IN ('answering', 'answered')",
+            params![approval_id, decision],
+        )
+        .context("failed to confirm approval answer")?;
+    if changed == 0 {
+        anyhow::bail!(APPROVAL_NOT_PENDING_ERROR);
+    }
+    Ok(())
+}
+
+/// Gives a claim back when the engine refused the answer, so the user can
+/// answer again. Returns false when the turn ended first and expired it.
+pub fn release_approval_claim(db: &Database, approval_id: &str) -> anyhow::Result<bool> {
+    let conn = db.connect()?;
+    let changed = conn
+        .execute(
+            "UPDATE approvals
      SET status = 'pending', decision = NULL, answered_at = NULL
      WHERE id = ?1
-       AND status = 'answered'
-       AND decision = ?2",
-        params![approval_id, decision],
-    )
-    .context("failed to release approval claim")?;
-    Ok(())
+       AND status = 'answering'",
+            params![approval_id],
+        )
+        .context("failed to release approval claim")?;
+    Ok(changed > 0)
 }
 
 /// Marks every approval of a finished turn that nobody answered as expired
@@ -151,7 +171,7 @@ pub fn expire_pending_approvals_for_message(
             "UPDATE approvals
              SET status = 'expired', answered_at = COALESCE(answered_at, datetime('now'))
              WHERE message_id = ?1
-               AND status = 'pending'
+               AND status IN ('pending', 'answering')
              RETURNING id",
         )
         .context("failed to prepare approval expiry")?;

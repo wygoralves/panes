@@ -572,7 +572,7 @@ async fn resolve_codex_runtime_approval(
                     "UPDATE approvals
                  SET status = 'answered', answered_at = COALESCE(answered_at, datetime('now'))
                  WHERE id = ?1
-                   AND status IN ('pending', 'answered')",
+                   AND status IN ('pending', 'answering', 'answered')",
                     rusqlite::params![approval_id],
                 )
                 .context("failed to resolve approval")?;
