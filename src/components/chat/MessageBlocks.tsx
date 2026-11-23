@@ -1486,7 +1486,9 @@ function ToolInputApprovalCard({
         label={
           isPending
             ? t("messageBlocks.approval.pendingQuestions", { count: questions.length })
-            : t("messageBlocks.approval.answeredQuestions", { count: questions.length })
+            : block.status === "expired"
+              ? t("messageBlocks.approval.decision.expired")
+              : t("messageBlocks.approval.answeredQuestions", { count: questions.length })
         }
       />
       {hasAnswers && expanded && (
@@ -1668,6 +1670,11 @@ function ApprovalCard({
               <span className={decisionStatusClass}>
                 <DecisionIcon size={11} />
                 {decisionLabel}
+              </span>
+            ) : block.status === "expired" ? (
+              <span className="msg-block-status">
+                <XCircle size={11} />
+                {t("messageBlocks.approval.decision.expired")}
               </span>
             ) : null}
           </>

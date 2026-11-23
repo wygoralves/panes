@@ -87,16 +87,84 @@ pub fn insert_approval(
     Ok(())
 }
 
+/// Error text for an answer that arrives after its approval left 'pending'.
+/// The frontend matches on "no longer pending" to retire the card.
+pub const APPROVAL_NOT_PENDING_ERROR: &str =
+    "This approval is no longer pending: the turn that asked for it has ended.";
+
+/// Records the user's decision. Only a pending row, or one the Codex runtime
+/// already resolved without a decision, can take it: an expired approval must
+/// never read as accepted in the audit trail.
 pub fn answer_approval(db: &Database, approval_id: &str, decision: &str) -> anyhow::Result<()> {
     let conn = db.connect()?;
-    conn.execute(
-        "UPDATE approvals
+    let changed = conn
+        .execute(
+            "UPDATE approvals
      SET status = 'answered', decision = ?1, answered_at = datetime('now')
-     WHERE id = ?2",
-        params![decision, approval_id],
-    )
-    .context("failed to answer approval")?;
+     WHERE id = ?2
+       AND (status = 'pending' OR (status = 'answered' AND decision IS NULL))",
+            params![decision, approval_id],
+        )
+        .context("failed to answer approval")?;
+    if changed == 0 {
+        anyhow::bail!(APPROVAL_NOT_PENDING_ERROR);
+    }
     Ok(())
+}
+
+pub fn find_approval_status(db: &Database, approval_id: &str) -> anyhow::Result<Option<String>> {
+    let conn = db.connect()?;
+    let status = conn
+        .query_row(
+            "SELECT status FROM approvals WHERE id = ?1",
+            params![approval_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to load approval status")?;
+    Ok(status)
+}
+
+/// Marks every approval of a finished turn that nobody answered as expired
+/// and returns their ids. No engine is waiting on them anymore.
+pub fn expire_pending_approvals_for_message(
+    db: &Database,
+    message_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    let mut conn = db.connect()?;
+    let tx = conn
+        .transaction()
+        .context("failed to start approval expiry transaction")?;
+    let expired = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT id FROM approvals
+                 WHERE message_id = ?1
+                   AND status = 'pending'",
+            )
+            .context("failed to prepare pending approval lookup")?;
+        let rows = stmt
+            .query_map(params![message_id], |row| row.get::<_, String>(0))
+            .context("failed to query pending approvals")?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.context("failed to decode pending approval id")?);
+        }
+        out
+    };
+    if !expired.is_empty() {
+        tx.execute(
+            "UPDATE approvals
+             SET status = 'expired', answered_at = COALESCE(answered_at, datetime('now'))
+             WHERE message_id = ?1
+               AND status = 'pending'",
+            params![message_id],
+        )
+        .context("failed to expire pending approvals")?;
+    }
+    tx.commit()
+        .context("failed to commit approval expiry transaction")?;
+    Ok(expired)
 }
 
 #[cfg(test)]

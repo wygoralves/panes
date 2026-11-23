@@ -174,6 +174,10 @@ function applyRuntimeStateFromEvent(
     return { status: "streaming", streaming: true };
   }
 
+  if (event.type === "ApprovalExpired") {
+    return { status, streaming };
+  }
+
   if (event.type === "Error" && !event.recoverable) {
     return { status: "error", streaming: false };
   }
@@ -474,6 +478,60 @@ function restoreApprovalInMessages(
   }
 
   return messages;
+}
+
+function expireApprovalsInMessages(messages: Message[], approvalIds: string[]): Message[] {
+  if (approvalIds.length === 0) {
+    return messages;
+  }
+  const expired = new Set(approvalIds);
+  let changed = false;
+  const nextMessages = messages.map((message) => {
+    const blocks = message.blocks;
+    if (!blocks?.some((block) => block.type === "approval" && block.status === "pending" && expired.has(block.approvalId))) {
+      return message;
+    }
+    changed = true;
+    return {
+      ...message,
+      blocks: blocks.map((block) =>
+        block.type === "approval" && block.status === "pending" && expired.has(block.approvalId)
+          ? { ...block, status: "expired" as const }
+          : block,
+      ),
+    };
+  });
+  return changed ? nextMessages : messages;
+}
+
+/**
+ * A stopped turn sends no completion for what it left open: approvals can no
+ * longer be answered, running actions failed, running subagents were cut off.
+ */
+function settleStoppedAssistantBlocks(blocks: ContentBlock[]): ContentBlock[] {
+  const settledAt = Date.now();
+  let changed = false;
+  const nextBlocks = blocks.map((block): ContentBlock => {
+    if (block.type === "approval" && block.status === "pending") {
+      changed = true;
+      return { ...block, status: "expired" };
+    }
+    if (block.type === "action" && (block.status === "running" || block.status === "pending")) {
+      changed = true;
+      return { ...block, status: "error" };
+    }
+    if (block.type === "subagent" && block.status === "running") {
+      changed = true;
+      return {
+        ...block,
+        status: "interrupted",
+        progress: undefined,
+        durationMs: block.startedAt ? settledAt - block.startedAt : block.durationMs,
+      };
+    }
+    return block;
+  });
+  return changed ? nextBlocks : blocks;
 }
 
 function trimActionOutputChunks(
@@ -1566,6 +1624,13 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     return resolveApprovalInMessages(messages, String(event.approval_id ?? ""));
   }
 
+  if (event.type === "ApprovalExpired") {
+    return expireApprovalsInMessages(
+      messages,
+      Array.isArray(event.approval_ids) ? event.approval_ids.map(String) : [],
+    );
+  }
+
   const assistantTarget = resolveAssistantTargetFromEvent(threadId, event);
   const { messages: ensuredMessages, assistantIndex } = ensureAssistantMessage(
     messages,
@@ -1932,16 +1997,26 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     }
     const settledAt = Date.now();
     const settledStatus = subagentStatusFromTurn(status);
-    assistant.blocks = (assistant.blocks ?? []).map((block) =>
-      block.type === "subagent" && block.status === "running"
-        ? {
-            ...block,
-            status: settledStatus,
-            progress: undefined,
-            durationMs: block.startedAt ? settledAt - block.startedAt : block.durationMs,
-          }
-        : block,
-    );
+    const turnCompleted = assistant.status === "completed";
+    assistant.blocks = (assistant.blocks ?? []).map((block) => {
+      if (block.type === "subagent" && block.status === "running") {
+        return {
+          ...block,
+          status: settledStatus,
+          progress: undefined,
+          durationMs: block.startedAt ? settledAt - block.startedAt : block.durationMs,
+        };
+      }
+      // A turn that did not complete sends no completion for its open actions.
+      if (
+        !turnCompleted &&
+        block.type === "action" &&
+        (block.status === "running" || block.status === "pending")
+      ) {
+        return { ...block, status: "error" as const };
+      }
+      return block;
+    });
   }
 
   assistant.hydration = "full";
@@ -2552,9 +2627,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (b.type === "action" || b.type === "diff" || b.type === "code" || b.type === "approval") return true;
         return false;
       });
-      const nextMessages = last?.role === "assistant" && !lastHasContent
+      let nextMessages = last?.role === "assistant" && !lastHasContent
         ? messages.slice(0, -1)
         : messages;
+      if (last?.role === "assistant" && lastHasContent && last.blocks) {
+        const settledBlocks = settleStoppedAssistantBlocks(last.blocks);
+        if (settledBlocks !== last.blocks) {
+          nextMessages = [...messages.slice(0, -1), { ...last, blocks: settledBlocks }];
+        }
+      }
       set({ status: "idle", streaming: false, messages: nextMessages });
     } catch (error) {
       set({ error: String(error) });
@@ -2664,12 +2745,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await ipc.respondApproval(threadId, approvalId, response);
       return true;
     } catch (error) {
-      set((state) => ({
-        ...(previousApproval && state.threadId === threadId
-          ? { messages: restoreApprovalInMessages(state.messages, approvalId, previousApproval) }
-          : {}),
-        error: String(error),
-      }));
+      // The backend refuses answers once the approval's turn has ended: the
+      // card is retired instead of offered again.
+      const expired = String(error).includes("no longer pending");
+      set((state) => {
+        if (!previousApproval || state.threadId !== threadId) {
+          return { error: String(error) };
+        }
+        const restored = restoreApprovalInMessages(state.messages, approvalId, previousApproval);
+        return {
+          messages: expired ? expireApprovalsInMessages(restored, [approvalId]) : restored,
+          error: String(error),
+        };
+      });
       return false;
     }
   },

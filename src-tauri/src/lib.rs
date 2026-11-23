@@ -54,12 +54,14 @@ pub fn run() {
             if report.messages_marked_interrupted > 0
                 || report.thread_status_updates > 0
                 || report.message_counts_repaired > 0
+                || report.approvals_expired > 0
             {
                 log::info!(
-                    "runtime recovery applied: interrupted_messages={}, thread_status_updates={}, message_counts_repaired={}",
+                    "runtime recovery applied: interrupted_messages={}, thread_status_updates={}, message_counts_repaired={}, approvals_expired={}",
                     report.messages_marked_interrupted,
                     report.thread_status_updates,
-                    report.message_counts_repaired
+                    report.message_counts_repaired,
+                    report.approvals_expired
                 );
             }
         }

@@ -1892,6 +1892,147 @@ describe("chatStore send", () => {
     ]);
   });
 
+  it("retires an approval card the backend no longer accepts answers for", async () => {
+    mockIpc.respondApproval.mockRejectedValueOnce(
+      new Error("This approval is no longer pending: the turn that asked for it has ended."),
+    );
+    useChatStore.setState({
+      threadId: "thread-1",
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "interrupted",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-1",
+              actionType: "command",
+              summary: "Run command",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      error: undefined,
+    });
+
+    const accepted = await useChatStore
+      .getState()
+      .respondApproval("approval-1", { decision: "accept" }, "thread-1");
+
+    expect(accepted).toBe(false);
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
+      { approvalId: "approval-1", status: "expired" },
+    ]);
+  });
+
+  it("expires approval cards when the backend reports their turn ended", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "assistant-approval",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-stale",
+              actionType: "command",
+              summary: "Run command",
+              details: {},
+              status: "pending",
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+      nextCursor: null,
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    streamHandler!({ type: "ApprovalExpired", approval_ids: ["approval-stale"] });
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
+      { approvalId: "approval-stale", status: "expired" },
+    ]);
+
+    vi.useRealTimers();
+  });
+
+  it("settles open approvals, actions and subagents when the user stops the turn", async () => {
+    mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
+    useChatStore.setState({
+      threadId: "thread-1",
+      status: "streaming",
+      streaming: true,
+      messages: [
+        {
+          id: "assistant-1",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [
+            {
+              type: "approval",
+              approvalId: "approval-1",
+              actionType: "command",
+              summary: "Run command",
+              details: {},
+              status: "pending",
+            },
+            {
+              type: "action",
+              actionId: "action-1",
+              actionType: "command",
+              summary: "ls",
+              details: {},
+              outputChunks: [],
+              status: "running",
+            },
+            {
+              type: "subagent",
+              agentId: "agent-1",
+              description: "explore",
+              status: "running",
+              startedAt: Date.now() - 1000,
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          hydration: "full",
+          hasDeferredContent: false,
+        },
+      ],
+    });
+
+    await useChatStore.getState().cancel();
+
+    expect(useChatStore.getState().messages[0]?.blocks).toMatchObject([
+      { type: "approval", status: "expired" },
+      { type: "action", status: "error" },
+      { type: "subagent", status: "interrupted" },
+    ]);
+  });
+
   it("returns failure and rolls back when an approval response is rejected", async () => {
     mockIpc.respondApproval.mockRejectedValueOnce(new Error("approval failed"));
     useChatStore.setState({

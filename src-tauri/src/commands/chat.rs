@@ -1492,6 +1492,18 @@ async fn respond_to_approval_inner(
     let approval_route =
         load_approval_response_route(db.clone(), thread.engine_id.as_str(), &approval_id).await?;
 
+    // An approval outlives its turn only as a record. Answering it then would
+    // reach no engine (or one that silently drops it) and still log a decision.
+    let approval_status = run_db(db.clone(), {
+        let approval_id = approval_id.clone();
+        move |db| db::actions::find_approval_status(db, &approval_id)
+    })
+    .await?;
+    if state.turns.get(&thread_id).await.is_none() || approval_status.as_deref() != Some("pending")
+    {
+        return Err(db::actions::APPROVAL_NOT_PENDING_ERROR.to_string());
+    }
+
     state
         .engines
         .respond_to_approval(
@@ -1518,7 +1530,7 @@ async fn respond_to_approval_inner(
                     &decision,
                 );
             }
-            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+            db::threads::resume_thread_after_approval(db, &thread_id)?;
             Ok(())
         }
     })
@@ -2177,6 +2189,19 @@ async fn run_turn(
         thread_status_dirty = true;
     }
 
+    if settle_turn_end_blocks(
+        &app,
+        &state,
+        &stream_event_topic,
+        &assistant_message_id,
+        &mut blocks,
+        &message_status,
+    )
+    .await
+    {
+        blocks_dirty = true;
+    }
+
     flush_stream_state(
         &state,
         &thread,
@@ -2748,6 +2773,19 @@ async fn run_codex_review_turn(
         thread_status_dirty = true;
     }
 
+    if settle_turn_end_blocks(
+        &app,
+        &state,
+        &stream_event_topic,
+        &assistant_message_id,
+        &mut blocks,
+        &message_status,
+    )
+    .await
+    {
+        blocks_dirty = true;
+    }
+
     flush_stream_state(
         &state,
         &review_thread,
@@ -2816,6 +2854,82 @@ async fn run_codex_review_turn(
     if let Some(final_review_thread) = final_review_thread.as_ref() {
         emit_chat_turn_finished(&app, final_review_thread, &message_status, &blocks);
     }
+}
+
+/// Closes out what a finished turn left open. Approvals nobody answered are
+/// expired (the engine no longer waits on them) and the open transcript is
+/// told to retire their cards. When the turn did not complete, running actions
+/// and subagents are finalized, since no completion event will arrive for them.
+/// Returns whether `blocks` changed.
+async fn settle_turn_end_blocks(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    stream_event_topic: &str,
+    assistant_message_id: &str,
+    blocks: &mut [ContentBlock],
+    message_status: &MessageStatusDto,
+) -> bool {
+    let mut changed = false;
+    if !matches!(message_status, MessageStatusDto::Completed) {
+        changed |= finalize_running_blocks(blocks, &TurnCompletionStatus::Interrupted);
+    }
+
+    match run_db(state.db.clone(), {
+        let assistant_message_id = assistant_message_id.to_string();
+        move |db| db::actions::expire_pending_approvals_for_message(db, &assistant_message_id)
+    })
+    .await
+    {
+        Ok(expired) if !expired.is_empty() => {
+            changed |= expire_approval_blocks(blocks, &expired);
+            let _ = app.emit(
+                stream_event_topic,
+                serde_json::json!({
+                    "type": "ApprovalExpired",
+                    "approval_ids": expired,
+                }),
+            );
+        }
+        Ok(_) => {}
+        Err(error) => log::warn!("failed to expire pending approvals: {error}"),
+    }
+
+    changed
+}
+
+/// Running actions become errors and running subagents take the turn's fate.
+fn finalize_running_blocks(
+    blocks: &mut [ContentBlock],
+    turn_status: &TurnCompletionStatus,
+) -> bool {
+    let mut changed = finalize_running_subagent_blocks(blocks, turn_status);
+    for block in blocks.iter_mut() {
+        if let ContentBlock::Action { status, .. } = block {
+            if status == "running" || status == "pending" {
+                *status = "error".to_string();
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn expire_approval_blocks(blocks: &mut [ContentBlock], approval_ids: &[String]) -> bool {
+    let mut changed = false;
+    for block in blocks.iter_mut() {
+        if let ContentBlock::Approval {
+            approval_id,
+            status,
+            ..
+        } = block
+        {
+            if status == "pending" && approval_ids.contains(approval_id) {
+                *status = "expired".to_string();
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
@@ -3154,6 +3268,10 @@ fn apply_stream_progress(
         if *thread_status != status {
             *thread_status = status;
             *thread_status_dirty = true;
+        } else if status == ThreadStatusDto::AwaitingApproval {
+            // Answering the previous approval moved the stored status back to
+            // streaming behind this loop's back; the new request must land.
+            *thread_status_dirty = true;
         }
     }
 
@@ -3195,7 +3313,13 @@ async fn flush_stream_state(
 
     let now = Instant::now();
 
-    if *thread_status_dirty && *last_persisted_thread_status == *thread_status {
+    // An answered approval rewrites the stored status outside this loop, so
+    // a repeated awaiting-approval status is written even when it matches.
+    let rewrite_thread_status = *thread_status == ThreadStatusDto::AwaitingApproval;
+    if *thread_status_dirty
+        && !rewrite_thread_status
+        && *last_persisted_thread_status == *thread_status
+    {
         *thread_status_dirty = false;
     }
 
@@ -3281,7 +3405,9 @@ async fn flush_stream_state(
         }
     }
 
-    if *thread_status_dirty && should_flush_state && *last_persisted_thread_status != *thread_status
+    if *thread_status_dirty
+        && should_flush_state
+        && (rewrite_thread_status || *last_persisted_thread_status != *thread_status)
     {
         if let Err(error) = run_db(state.db.clone(), {
             let thread_id = thread.id.clone();
@@ -6595,6 +6721,218 @@ mod tests {
             .is_none());
     }
 
+    fn approval_row(state: &AppState, approval_id: &str) -> (String, Option<String>) {
+        let conn = state.db.connect().expect("failed to open db connection");
+        conn.query_row(
+            "SELECT status, decision FROM approvals WHERE id = ?1",
+            params![approval_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .expect("failed to load approval row")
+    }
+
+    fn thread_status_value(state: &AppState, thread_id: &str) -> String {
+        let conn = state.db.connect().expect("failed to open db connection");
+        conn.query_row(
+            "SELECT status FROM threads WHERE id = ?1",
+            params![thread_id],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("failed to load thread status")
+    }
+
+    #[tokio::test]
+    async fn approval_without_a_running_turn_is_rejected_and_left_unanswered() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-orphaned";
+        insert_pending_approval(&state, &thread, approval_id);
+        db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::Idle)
+            .expect("failed to set thread status");
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected an approval without a turn to be rejected");
+
+        assert!(error.contains("no longer pending"));
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("pending".to_string(), None)
+        );
+        assert_eq!(thread_status_value(&state, &thread.id), "idle");
+    }
+
+    #[tokio::test]
+    async fn expired_approval_is_rejected_even_while_a_turn_runs() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-expired";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+        db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+            .expect("failed to expire approvals");
+        assert!(
+            state
+                .turns
+                .try_register(&thread.id, CancellationToken::new())
+                .await
+        );
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected an expired approval to be rejected");
+
+        assert!(error.contains("no longer pending"));
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("expired".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn answering_a_non_pending_approval_fails() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-twice";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+        db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+            .expect("failed to expire approvals");
+
+        assert!(db::actions::answer_approval(&state.db, approval_id, "accept").is_err());
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("expired".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn turn_end_expires_pending_approval_blocks_only() {
+        let mut blocks = vec![
+            ContentBlock::Approval {
+                approval_id: "a1".to_string(),
+                action_type: "command".to_string(),
+                summary: "Run".to_string(),
+                details: empty_raw_value(),
+                status: "pending".to_string(),
+                decision: None,
+            },
+            ContentBlock::Approval {
+                approval_id: "a2".to_string(),
+                action_type: "command".to_string(),
+                summary: "Run".to_string(),
+                details: empty_raw_value(),
+                status: "answered".to_string(),
+                decision: Some("accept".to_string()),
+            },
+        ];
+
+        assert!(expire_approval_blocks(
+            &mut blocks,
+            &["a1".to_string(), "a2".to_string()]
+        ));
+        let statuses: Vec<&str> = blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Approval { status, .. } => Some(status.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, vec!["expired", "answered"]);
+    }
+
+    #[test]
+    fn stopped_turn_finalizes_running_actions_and_subagents() {
+        let mut blocks = vec![
+            ContentBlock::Action {
+                action_id: "act-1".to_string(),
+                engine_action_id: None,
+                action_type: "command".to_string(),
+                summary: "ls".to_string(),
+                details: empty_raw_value(),
+                output_chunks: Vec::new(),
+                status: "running".to_string(),
+                result: None,
+                agent_id: None,
+            },
+            ContentBlock::Action {
+                action_id: "act-2".to_string(),
+                engine_action_id: None,
+                action_type: "command".to_string(),
+                summary: "pwd".to_string(),
+                details: empty_raw_value(),
+                output_chunks: Vec::new(),
+                status: "done".to_string(),
+                result: None,
+                agent_id: None,
+            },
+            ContentBlock::Subagent {
+                agent_id: "agent-1".to_string(),
+                agent_type: None,
+                description: "explore".to_string(),
+                parent_action_id: None,
+                parent_agent_id: None,
+                status: "running".to_string(),
+                summary: None,
+                started_at: Some(1),
+                duration_ms: None,
+                progress: Some("reading".to_string()),
+            },
+        ];
+
+        assert!(finalize_running_blocks(
+            &mut blocks,
+            &TurnCompletionStatus::Interrupted
+        ));
+        let statuses: Vec<&str> = blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Action { status, .. } | ContentBlock::Subagent { status, .. } => {
+                    Some(status.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, vec!["error", "done", "interrupted"]);
+    }
+
+    #[test]
+    fn a_second_approval_in_one_turn_marks_the_thread_status_dirty() {
+        let mut message_status = MessageStatusDto::Streaming;
+        let mut thread_status = ThreadStatusDto::AwaitingApproval;
+        let mut turn_model_id = "model".to_string();
+        let mut token_usage = None;
+        let mut blocks_dirty = false;
+        let mut message_state_dirty = false;
+        let mut thread_status_dirty = false;
+        let mut turn_model_dirty = false;
+
+        apply_stream_progress(
+            EventProgress {
+                thread_status: Some(ThreadStatusDto::AwaitingApproval),
+                ..EventProgress::default()
+            },
+            &mut message_status,
+            &mut thread_status,
+            &mut turn_model_id,
+            &mut token_usage,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+        );
+
+        assert!(thread_status_dirty);
+    }
+
     #[tokio::test]
     async fn missing_live_codex_approval_request_keeps_approval_pending() {
         let state = test_app_state();
@@ -6609,6 +6947,13 @@ mod tests {
                 "_serverMethod": "item/fileChange/requestApproval",
                 "_rawRequestId": 42
             }),
+        );
+        // The turn is still live; only the engine lost the request.
+        assert!(
+            state
+                .turns
+                .try_register(&thread.id, CancellationToken::new())
+                .await
         );
 
         let error = respond_to_approval_inner(

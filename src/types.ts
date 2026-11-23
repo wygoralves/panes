@@ -354,7 +354,8 @@ export interface ApprovalBlock {
   actionType: ActionType;
   summary: string;
   details: Record<string, unknown>;
-  status: "pending" | "answered";
+  /** `expired`: the turn ended before anyone answered; it can no longer be answered. */
+  status: "pending" | "answered" | "expired";
   decision?:
     | "accept"
     | "accept_for_session"
@@ -1338,6 +1339,11 @@ export interface ApprovalResolvedEvent {
   approval_id: string;
 }
 
+export interface ApprovalExpiredEvent {
+  type: "ApprovalExpired";
+  approval_ids: string[];
+}
+
 export interface ErrorEvent {
   type: "Error";
   message: string;
@@ -1398,6 +1404,7 @@ export type StreamEvent =
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
+  | ApprovalExpiredEvent
   | ModelReroutedEvent
   | NoticeEvent
   | TaskListUpdatedEvent
