@@ -405,11 +405,16 @@ impl Engine for CodexEngine {
             native_plan_mode_active: false,
         };
 
-        if !force_external_sandbox && !self.workspace_probe_passed().await {
-            if self
+        // A full-access thread does not use the OS sandbox, so it neither
+        // probes it nor records a result for other threads.
+        if !force_external_sandbox
+            && sandbox.sandbox_mode.as_deref() != Some("danger-full-access")
+            && !self.workspace_probe_passed().await
+        {
+            let probe_failed = self
                 .detect_workspace_write_sandbox_failure(transport.as_ref(), &cwd, &sandbox)
-                .await
-            {
+                .await;
+            if probe_failed == Some(true) {
                 force_external_sandbox = true;
                 self.fall_back_to_external_sandbox(
                     "the Codex workspace-write sandbox probe failed on this machine",
@@ -421,9 +426,8 @@ impl Engine for CodexEngine {
                 sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
                 sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
                 requested_runtime.sandbox_policy = sandbox_policy.clone();
-            } else if sandbox.sandbox_mode.as_deref() != Some("danger-full-access") {
-                // A full-access thread does not exercise the OS sandbox, so
-                // only a sandboxed probe may skip later probes.
+            } else if probe_failed == Some(false) {
+                // An inconclusive probe runs again before the next turn.
                 self.mark_workspace_probe_passed().await;
             }
         }
@@ -3030,12 +3034,15 @@ impl CodexEngine {
         Some(sandbox_fallback_notice(&reason))
     }
 
+    /// Runs Panes' own fixed probe commands under the thread's sandbox policy.
+    /// `Some(true)` means the sandbox failed, `Some(false)` that it worked, and
+    /// `None` that a transport or protocol error left the answer unknown.
     async fn detect_workspace_write_sandbox_failure(
         &self,
         transport: &CodexTransport,
         cwd: &str,
         sandbox: &SandboxPolicy,
-    ) -> bool {
+    ) -> Option<bool> {
         #[cfg(target_os = "macos")]
         {
             let probe_commands: &[&[&str]] = &[&["/usr/bin/true"], &["/bin/zsh", "-lc", "pwd"]];
@@ -3061,7 +3068,7 @@ impl CodexEngine {
                             log::warn!(
                                 "workspaceWrite command probe returned a failed result payload; forcing externalSandbox fallback (result={result})"
                             );
-                            return true;
+                            return Some(true);
                         }
                     }
                     Err(error) => {
@@ -3070,29 +3077,29 @@ impl CodexEngine {
                             log::warn!(
                                 "workspaceWrite command probe detected sandbox denial: {error}"
                             );
-                            return true;
+                            return Some(true);
                         }
                         if is_opaque_workspace_probe_failure(&error_text) {
                             log::warn!(
                                 "workspaceWrite command probe failed without explicit sandbox signature; forcing externalSandbox fallback (probe_error={error_text})"
                             );
-                            return true;
+                            return Some(true);
                         }
                         log::warn!(
                             "workspaceWrite command probe failed due transport/protocol error; skipping externalSandbox fallback (probe_error={error_text})"
                         );
-                        return false;
+                        return None;
                     }
                 }
             }
 
-            false
+            Some(false)
         }
 
         #[cfg(not(target_os = "macos"))]
         {
             let _ = (transport, cwd, sandbox);
-            false
+            Some(false)
         }
     }
 
