@@ -15,7 +15,9 @@
     "core:window:allow-toggle-maximize",
     "shell:allow-open",
     "dialog:allow-open",
+    "dialog:allow-save",
     "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
     "notification:default",
     "updater:default",
     "process:allow-restart"
