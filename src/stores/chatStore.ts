@@ -115,19 +115,22 @@ const STREAM_EVENT_QUEUE_FLUSH_THRESHOLD = 500;
  */
 let turnFinishedQueueListener: Promise<unknown> | null = null;
 
-/**
- * Releases heard so far, numbered in arrival order, with the latest per
- * thread: a view that was binding when its thread's turn was released applies
- * that release once its snapshot and the buffered events are in place.
- */
-let turnReleaseCount = 0;
-const latestTurnRelease = new Map<
-  string,
-  { order: number; status: TurnCompletionStatus; messageId?: string }
->();
+interface TurnRelease {
+  status: TurnCompletionStatus;
+  messageId?: string;
+}
 
-/** Flushes the open view's queued stream events, so a release lands after them. */
-let openViewStreamFlush: { threadId: string; flush: () => void } | null = null;
+/**
+ * The open view's stream pipeline. While the view binds, a release of its
+ * thread joins the buffered stream events at its arrival position; once
+ * bound, a release first flushes the batched events it follows.
+ */
+interface OpenViewStream {
+  threadId: string;
+  holdRelease: ((release: TurnRelease) => boolean) | null;
+  flush: (() => void) | null;
+}
+let openViewStream: OpenViewStream | null = null;
 
 function ensureTurnFinishedQueueListener() {
   if (turnFinishedQueueListener) {
@@ -140,13 +143,12 @@ function ensureTurnFinishedQueueListener() {
         : event.status === "interrupted"
           ? "interrupted"
           : "failed";
-    turnReleaseCount += 1;
-    latestTurnRelease.set(event.threadId, {
-      order: turnReleaseCount,
-      status,
-      messageId: event.messageId,
-    });
-    releaseFinishedTurnInView(event.threadId, status, event.messageId);
+    const held =
+      openViewStream?.threadId === event.threadId &&
+      openViewStream.holdRelease?.({ status, messageId: event.messageId });
+    if (!held) {
+      releaseFinishedTurnInView(event.threadId, status, event.messageId);
+    }
     void useChatStore.getState().drainQueue(event.threadId, status);
   }).catch((error) => {
     turnFinishedQueueListener = null;
@@ -165,9 +167,9 @@ function releaseFinishedTurnInView(
   status: TurnCompletionStatus,
   messageId: string | undefined,
 ) {
-  if (openViewStreamFlush?.threadId === threadId) {
+  if (openViewStream?.threadId === threadId) {
     // Stream events of this turn still waiting in the batch come first.
-    openViewStreamFlush.flush();
+    openViewStream.flush?.();
   }
   const state = useChatStore.getState();
   if (state.threadId !== threadId) {
@@ -2170,7 +2172,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     activeThreadBindSeq += 1;
     const bindSeq = activeThreadBindSeq;
-    const releasesBeforeBind = turnReleaseCount;
+    const previousOpenView = openViewStream;
 
     // Tear down the current listener. A thread left mid-turn keeps draining
     // its queue through the turn-finished listener.
@@ -2180,6 +2182,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ensureTurnFinishedQueueListener();
 
     if (!threadId) {
+      openViewStream = null;
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
@@ -2201,6 +2204,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     let releaseStream: (() => void) | null = null;
+    let bindViewStream: OpenViewStream | null = null;
     try {
       const threadState = useThreadStore.getState();
       let activeThread = threadState.threads.find((thread) => thread.id === threadId);
@@ -2384,7 +2388,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // read would otherwise be lost. Each event carries a sequence number, and
       // the snapshot records the last one it covers, so the replay below skips
       // what the snapshot already has instead of applying it twice.
-      let preBindEvents: StreamEvent[] | null = [];
+      let preBindEvents: Array<StreamEvent | { heldRelease: TurnRelease }> | null = [];
+      const viewStream: OpenViewStream = {
+        threadId,
+        holdRelease: (release) => {
+          if (bindSeq !== activeThreadBindSeq || !preBindEvents) {
+            return false;
+          }
+          preBindEvents.push({ heldRelease: release });
+          return true;
+        },
+        flush: null,
+      };
+      openViewStream = viewStream;
+      bindViewStream = viewStream;
       const unlistenStream = await listenThreadEvents(threadId, (event) => {
         if (bindSeq !== activeThreadBindSeq) {
           return;
@@ -2399,6 +2416,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const buffered = preBindEvents ?? [];
         preBindEvents = null;
         for (const event of buffered) {
+          if ("heldRelease" in event) {
+            // The turn was released here: what came before it applies first,
+            // what came after it belongs to the next turn.
+            flushQueuedStreamEvents();
+            releaseFinishedTurnInView(
+              threadId,
+              event.heldRelease.status,
+              event.heldRelease.messageId,
+            );
+            continue;
+          }
           const seq = streamEventSeq(event);
           // Usage updates write no block, so the snapshot never covers them.
           if (
@@ -2422,13 +2450,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       };
 
-      // The view is in place: later releases flush its batch first, and a
-      // release heard while it was binding applies now.
+      // The view is in place: a later release flushes its batch first.
       const finishBind = () => {
-        openViewStreamFlush = { threadId, flush: flushQueuedStreamEvents };
-        const release = latestTurnRelease.get(threadId);
-        if (release && release.order > releasesBeforeBind) {
-          releaseFinishedTurnInView(threadId, release.status, release.messageId);
+        if (openViewStream === viewStream) {
+          viewStream.holdRelease = null;
+          viewStream.flush = flushQueuedStreamEvents;
         }
       };
 
@@ -2486,6 +2512,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // nothing buffered is covered by it.
           replayPreBindEvents(null);
           finishBind();
+        } else {
+          // The existing pipeline stays; releases held for this bind still apply.
+          const held = preBindEvents ?? [];
+          preBindEvents = null;
+          if (openViewStream === viewStream) {
+            openViewStream = previousOpenView?.threadId === threadId ? previousOpenView : null;
+          }
+          for (const entry of held) {
+            if ("heldRelease" in entry) {
+              releaseFinishedTurnInView(
+                threadId,
+                entry.heldRelease.status,
+                entry.heldRelease.messageId,
+              );
+            }
+          }
         }
         return;
       }
@@ -2540,6 +2582,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       // A subscription that never reached the store would leak.
       releaseStream?.();
+      if (bindViewStream && openViewStream === bindViewStream) {
+        openViewStream = null;
+      }
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }

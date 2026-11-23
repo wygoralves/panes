@@ -2468,6 +2468,57 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("keeps a release heard while binding ahead of the next turn's events", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      for (const handler of turnFinishedHandlers) {
+        handler({ threadId: "thread-1", status: "interrupted", messageId: "assistant-old" });
+      }
+      streamHandler!({ type: "TurnStarted", seq: 6 } as StreamEvent);
+      streamHandler!({ type: "TextDelta", content: "Next", seq: 7 } as StreamEvent);
+      return {
+        messages: [
+          {
+            id: "assistant-old",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [{ type: "text", content: "Old" }],
+            createdAt: new Date().toISOString(),
+            streamSeq: 5,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(20);
+
+    const state = useChatStore.getState();
+    const replies = state.messages.filter((message) => message.role === "assistant");
+    expect(replies).toHaveLength(2);
+    expect(replies[0]).toMatchObject({
+      id: "assistant-old",
+      status: "interrupted",
+      blocks: [{ type: "text", content: "Old" }],
+    });
+    expect(replies[1]).toMatchObject({
+      status: "streaming",
+      blocks: [{ type: "text", content: "Next" }],
+    });
+    expect(state.streaming).toBe(true);
+
+    vi.useRealTimers();
+  });
+
   it("settles open approvals, actions and subagents when the user stops the turn", async () => {
     mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
     useChatStore.setState({
