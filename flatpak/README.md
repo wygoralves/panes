@@ -95,17 +95,24 @@ to `~/.var/app/com.panes.app/` on the host. Panes therefore:
   the new dir has no `workspaces.db` and `~/.agent-workspace/workspaces.db`
   is visible in the sandbox. That happens only when an older Flatpak was
   given a home or `~/.agent-workspace` filesystem override, or
-  `--persist=.agent-workspace`. The copy never moves, deletes or changes the
-  source (it may be a host install's live data), keeps any file already in
-  the new dir, and renames the database into place last, so an interrupted
-  copy is retried on the next launch rather than opened half done. After
-  that the two dirs are independent.
+  `--persist=.agent-workspace`. The copy never moves, deletes or rewrites
+  the source (it may be a host install's live data); opening the legacy
+  database read-only can leave SQLite's usual empty `-wal` and `-shm` files
+  beside it. It keeps any file already in the new dir. The database is snapshotted through SQLite, so the copy is
+  consistent and includes what was still in the WAL, and it is renamed into
+  place last, so an interrupted copy is retried on the next launch rather
+  than opened half done. A file that cannot be read is logged and left
+  behind, and a stray `workspaces.db-wal`, `-shm` or `-journal` in the new
+  dir is renamed aside with an `.orphaned-` suffix rather than replayed into
+  the copy. After that the two dirs are not kept in sync. Chat attachments
+  are referenced by absolute path, so images in imported chats still point
+  into `~/.agent-workspace` and stop previewing if that access is removed.
 - Sets `CODEX_HOME` and `CLAUDE_CONFIG_DIR` in `flatpak/panes-wrapper.sh` to
   `$XDG_CONFIG_HOME/codex` and `$XDG_CONFIG_HOME/claude`
   (`~/.var/app/com.panes.app/config/{codex,claude}` on the host), unless they
-  are already set. A per-instance home configured in Panes still wins. Each
-  is also left unset when the sandbox already sees a login in the default
-  home (`~/.codex/auth.json` for Codex, `~/.claude/.credentials.json` for
+  are already set to a non-empty value. A per-instance home configured in
+  Panes still wins. Each is also left unset when the sandbox already sees a
+  login in the default home (`~/.codex/auth.json` for Codex, `~/.claude/.credentials.json` for
   Claude), which happens when a user bind-mounted `~/.codex` or `~/.claude`
   into the sandbox and signed in there; that login keeps working.
 

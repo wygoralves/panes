@@ -914,17 +914,20 @@ fn migrate_legacy_app_data_dir_for(current: &Path, legacy: Option<&Path>) -> std
 }
 
 const DATABASE_FILE_NAME: &str = "workspaces.db";
-const DATABASE_SIDECAR_SUFFIXES: [&str; 2] = ["-wal", "-shm"];
-const IMPORT_STAGING_SUFFIX: &str = ".panes-import";
+const DATABASE_SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
+const IMPORT_STAGING_MARKER: &str = ".panes-import-";
+const IMPORT_LOCK_FILE_NAME: &str = ".legacy-import.lock";
 
 /// Copies a legacy `~/.agent-workspace` into the Flatpak data dir, once.
 ///
 /// It runs only while the target has no database and the legacy dir has
-/// one, so it stops after the first complete copy. Files already in the
-/// target are kept. Every file is copied to a staging name and renamed into
-/// place, and the database goes last, so an interrupted copy leaves no
-/// `workspaces.db` and is retried on the next launch. The legacy dir is only
-/// read.
+/// one, so it stops after the first complete copy, and it holds a lock in
+/// the target so two launches cannot interleave. Nothing in the legacy dir
+/// is moved, deleted or rewritten (opening its database read-only can leave
+/// SQLite's empty `-wal` and `-shm` files beside it). Files already in the target are kept; each new file is written
+/// under a staging name this run created and renamed into place. The
+/// database is snapshotted through SQLite last, so an interrupted copy
+/// leaves no `workspaces.db` and runs again on the next launch.
 fn import_legacy_app_data_into_flatpak(
     current: &Path,
     legacy: Option<&Path>,
@@ -932,10 +935,17 @@ fn import_legacy_app_data_into_flatpak(
     let Some(legacy) = legacy else {
         return Ok(());
     };
-    if current == legacy
-        || !legacy.join(DATABASE_FILE_NAME).is_file()
-        || current.join(DATABASE_FILE_NAME).exists()
-    {
+    let legacy_database = legacy.join(DATABASE_FILE_NAME);
+    let database = current.join(DATABASE_FILE_NAME);
+    if current == legacy || !path_is_present(&legacy_database)? || path_is_present(&database)? {
+        return Ok(());
+    }
+
+    fs::create_dir_all(current)?;
+    let lock = fs::File::create(current.join(IMPORT_LOCK_FILE_NAME))?;
+    lock.lock()?;
+    // Another launch may have finished the import while this one waited.
+    if path_is_present(&database)? {
         return Ok(());
     }
 
@@ -944,9 +954,26 @@ fn import_legacy_app_data_into_flatpak(
         legacy.display(),
         current.display()
     );
-    fs::create_dir_all(current)?;
-    copy_dir_contents_without_overwrite(legacy, current, true)?;
-    import_legacy_database(legacy, current)
+    copy_dir_contents_without_overwrite(legacy, current, true);
+    import_legacy_database(&legacy_database, current)
+}
+
+/// Whether `path` exists. Only a confirmed absence counts as missing: an
+/// unreadable legacy dir must fail the launch rather than let a fresh
+/// database replace the import for good.
+fn path_is_present(path: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn is_import_bookkeeping_file_name(name: &OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    name == IMPORT_LOCK_FILE_NAME || name.contains(IMPORT_STAGING_MARKER)
 }
 
 fn is_database_file_name(name: &OsStr) -> bool {
@@ -959,93 +986,159 @@ fn is_database_file_name(name: &OsStr) -> bool {
             .any(|suffix| name.strip_suffix(suffix) == Some(DATABASE_FILE_NAME))
 }
 
-fn copy_dir_contents_without_overwrite(
-    source: &Path,
-    target: &Path,
-    skip_database_files: bool,
-) -> std::io::Result<()> {
-    fs::create_dir_all(target)?;
+/// Copies everything but the database. A file that cannot be copied is
+/// logged and skipped, so one unreadable log or attachment cannot stop every
+/// launch; the legacy dir keeps it.
+fn copy_dir_contents_without_overwrite(source: &Path, target: &Path, top_level: bool) {
+    if let Err(error) = fs::create_dir_all(target) {
+        log::warn!("skipping legacy dir {}: {error}", source.display());
+        return;
+    }
+    let entries = match fs::read_dir(source) {
+        Ok(entries) => entries,
+        Err(error) => {
+            log::warn!("skipping legacy dir {}: {error}", source.display());
+            return;
+        }
+    };
 
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                log::warn!("skipping an entry of {}: {error}", source.display());
+                continue;
+            }
+        };
         let name = entry.file_name();
-        if skip_database_files && is_database_file_name(&name) {
+        if (top_level && is_database_file_name(&name)) || is_import_bookkeeping_file_name(&name) {
             continue;
         }
         let source_path = entry.path();
         let target_path = target.join(&name);
+        if let Err(error) = copy_entry_without_overwrite(&entry, &source_path, &target_path) {
+            log::warn!("skipping legacy file {}: {error}", source_path.display());
+        }
+    }
+}
 
-        if entry.file_type()?.is_dir() {
-            copy_dir_contents_without_overwrite(&source_path, &target_path, false)?;
-            continue;
+fn copy_entry_without_overwrite(
+    entry: &fs::DirEntry,
+    source: &Path,
+    target: &Path,
+) -> std::io::Result<()> {
+    let file_type = entry.file_type()?;
+    if file_type.is_dir() {
+        copy_dir_contents_without_overwrite(source, target, false);
+        return Ok(());
+    }
+    if path_is_present(target)? {
+        return Ok(());
+    }
+    if file_type.is_symlink() {
+        // Recreate the link rather than follow it: it may point at a
+        // directory the user moved elsewhere.
+        #[cfg(unix)]
+        {
+            return std::os::unix::fs::symlink(fs::read_link(source)?, target);
         }
-        if target_path.symlink_metadata().is_ok() {
-            continue;
+        #[cfg(not(unix))]
+        {
+            return Ok(());
         }
-        let staged = staging_path(&target_path);
-        copy_to_staging(&source_path, &staged)?;
-        if target_path.symlink_metadata().is_ok() {
-            let _ = fs::remove_file(&staged);
-            continue;
-        }
-        fs::rename(&staged, &target_path)?;
     }
 
+    let staging = new_staging_path(target);
+    let result = copy_file_to_new(source, &staging).and_then(|()| publish_staged(&staging, target));
+    if result.is_err() {
+        let _ = fs::remove_file(&staging);
+    }
+    result
+}
+
+/// Snapshots the legacy database through SQLite, so the copy is consistent
+/// even while a host install writes to it and includes what is still in its
+/// WAL, then renames the snapshot into place. A WAL, SHM or journal file
+/// already in the target belongs to no database (there is no
+/// `workspaces.db` there) and SQLite would replay a stale WAL into the
+/// snapshot, so it is renamed aside, never deleted.
+fn import_legacy_database(legacy_database: &Path, current: &Path) -> std::io::Result<()> {
+    let database = current.join(DATABASE_FILE_NAME);
+    let staging = new_staging_path(&database);
+    if let Err(error) = snapshot_sqlite_database(legacy_database, &staging) {
+        let _ = fs::remove_file(&staging);
+        return Err(error);
+    }
+
+    for suffix in DATABASE_SIDECAR_SUFFIXES {
+        let sidecar = current.join(format!("{DATABASE_FILE_NAME}{suffix}"));
+        if path_is_present(&sidecar)? {
+            let mut aside = sidecar.clone().into_os_string();
+            aside.push(format!(".orphaned-{}", uuid::Uuid::new_v4()));
+            log::warn!(
+                "moving {} aside to {:?}: it has no database",
+                sidecar.display(),
+                aside
+            );
+            fs::rename(&sidecar, aside)?;
+        }
+    }
+
+    let result = publish_staged(&staging, &database);
+    if result.is_err() {
+        let _ = fs::remove_file(&staging);
+    }
+    result
+}
+
+fn snapshot_sqlite_database(source: &Path, staging: &Path) -> std::io::Result<()> {
+    let to_io = |error: rusqlite::Error| std::io::Error::other(error);
+    let staging = staging
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("staging path is not valid UTF-8"))?;
+    let connection = rusqlite::Connection::open_with_flags(
+        source,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(to_io)?;
+    connection
+        .busy_timeout(Duration::from_secs(10))
+        .map_err(to_io)?;
+    connection
+        .execute("VACUUM INTO ?1", [staging])
+        .map_err(to_io)?;
     Ok(())
 }
 
-/// Copies the database and its WAL sidecars. The sidecars are read before
-/// the database, so a host install checkpointing meanwhile moves pages into
-/// a database copy that is still to be read rather than out of a WAL already
-/// read. Everything is staged first, and the sidecars are renamed into place
-/// before the database, so `workspaces.db` only appears once its WAL is
-/// beside it. A sidecar already in the target belongs to no database (there
-/// is no `workspaces.db` there), and SQLite would replay a stale WAL into the
-/// copy, so it is replaced, or removed when the legacy dir has none.
-fn import_legacy_database(legacy: &Path, current: &Path) -> std::io::Result<()> {
-    let mut sidecars = Vec::new();
-    for suffix in DATABASE_SIDECAR_SUFFIXES {
-        let name = format!("{DATABASE_FILE_NAME}{suffix}");
-        let source = legacy.join(&name);
-        let target = current.join(&name);
-        if source.is_file() {
-            let staging = staging_path(&target);
-            copy_to_staging(&source, &staging)?;
-            sidecars.push((Some(staging), target));
-        } else {
-            sidecars.push((None, target));
-        }
-    }
-
-    let database = current.join(DATABASE_FILE_NAME);
-    let staged_database = staging_path(&database);
-    copy_to_staging(&legacy.join(DATABASE_FILE_NAME), &staged_database)?;
-
-    for (staging, target) in sidecars {
-        match staging {
-            Some(staging) => fs::rename(staging, target)?,
-            None if target.symlink_metadata().is_ok() => fs::remove_file(target)?,
-            None => {}
-        }
-    }
-    fs::rename(staged_database, database)
-}
-
-fn staging_path(target: &Path) -> PathBuf {
+/// A staging path no earlier run or other launch can be using.
+fn new_staging_path(target: &Path) -> PathBuf {
     let mut name = target
         .file_name()
         .map(OsStr::to_os_string)
         .unwrap_or_default();
-    name.push(IMPORT_STAGING_SUFFIX);
+    name.push(format!("{IMPORT_STAGING_MARKER}{}", uuid::Uuid::new_v4()));
     target.with_file_name(name)
 }
 
-fn copy_to_staging(source: &Path, staging: &Path) -> std::io::Result<()> {
-    if let Err(error) = fs::copy(source, staging) {
+fn copy_file_to_new(source: &Path, staging: &Path) -> std::io::Result<()> {
+    let mut reader = fs::File::open(source)?;
+    let mut writer = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staging)?;
+    std::io::copy(&mut reader, &mut writer)?;
+    writer.sync_all()?;
+    fs::set_permissions(staging, reader.metadata()?.permissions())
+}
+
+/// Renames a staged file into place unless the target appeared meanwhile.
+/// The import lock keeps other launches out, so check then rename is safe.
+fn publish_staged(staging: &Path, target: &Path) -> std::io::Result<()> {
+    if path_is_present(target)? {
         let _ = fs::remove_file(staging);
-        return Err(error);
+        return Ok(());
     }
-    Ok(())
+    fs::rename(staging, target)
 }
 
 fn path_has_entries(path: &Path) -> std::io::Result<bool> {
@@ -1952,31 +2045,60 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    fn write_legacy_install(legacy: &Path) {
+    /// Writes a legacy install whose database still has rows only in its
+    /// WAL. The returned connection keeps the WAL from being checkpointed.
+    fn write_legacy_install(legacy: &Path) -> rusqlite::Connection {
         fs::create_dir_all(legacy.join("logs")).expect("legacy logs dir should exist");
-        fs::write(legacy.join(DATABASE_FILE_NAME), "db").expect("legacy db should be written");
-        fs::write(legacy.join("workspaces.db-wal"), "wal").expect("legacy wal should be written");
-        fs::write(legacy.join("workspaces.db-shm"), "shm").expect("legacy shm should be written");
         fs::write(legacy.join("config.toml"), "theme = \"dark\"\n")
             .expect("legacy config should be written");
         fs::write(legacy.join("logs").join("events.log"), "hello\n")
             .expect("legacy log should be written");
+
+        let connection = rusqlite::Connection::open(legacy.join(DATABASE_FILE_NAME))
+            .expect("legacy db should open");
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .expect("legacy db should use WAL");
+        connection
+            .pragma_update(None, "wal_autocheckpoint", 0)
+            .expect("legacy db autocheckpoint should be off");
+        connection
+            .execute_batch(
+                "CREATE TABLE workspaces (name TEXT);
+                 INSERT INTO workspaces VALUES ('alpha'), ('beta');",
+            )
+            .expect("legacy rows should be written");
+        assert!(legacy.join("workspaces.db-wal").exists());
+        connection
+    }
+
+    fn workspace_names(database: &Path) -> Vec<String> {
+        let connection = rusqlite::Connection::open(database).expect("db should open");
+        let mut statement = connection
+            .prepare("SELECT name FROM workspaces ORDER BY name")
+            .expect("query should prepare");
+        let names = statement
+            .query_map([], |row| row.get(0))
+            .expect("query should run")
+            .collect::<Result<Vec<String>, _>>()
+            .expect("rows should read");
+        names
     }
 
     fn assert_legacy_install_untouched(legacy: &Path) {
-        for (name, contents) in [
-            (DATABASE_FILE_NAME, "db"),
-            ("workspaces.db-wal", "wal"),
-            ("workspaces.db-shm", "shm"),
-            ("config.toml", "theme = \"dark\"\n"),
-            ("logs/events.log", "hello\n"),
-        ] {
-            assert_eq!(
-                fs::read_to_string(legacy.join(name)).expect("legacy file should remain"),
-                contents,
-                "{name}"
-            );
-        }
+        assert_eq!(
+            fs::read_to_string(legacy.join("config.toml")).expect("legacy config should remain"),
+            "theme = \"dark\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(legacy.join("logs").join("events.log"))
+                .expect("legacy log should remain"),
+            "hello\n"
+        );
+        assert_eq!(
+            workspace_names(&legacy.join(DATABASE_FILE_NAME)),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
     }
 
     fn staged_files_in(dir: &Path) -> Vec<PathBuf> {
@@ -1985,7 +2107,7 @@ mod tests {
             let path = entry.expect("entry should be readable").path();
             if path.is_dir() {
                 found.extend(staged_files_in(&path));
-            } else if path.to_string_lossy().ends_with(IMPORT_STAGING_SUFFIX) {
+            } else if path.to_string_lossy().contains(IMPORT_STAGING_MARKER) {
                 found.push(path);
             }
         }
@@ -2006,24 +2128,17 @@ mod tests {
         let root = std::env::temp_dir().join(format!("panes-flatpak-import-{}", Uuid::new_v4()));
         let legacy = root.join(".agent-workspace");
         let current = root.join("data").join("panes");
-        write_legacy_install(&legacy);
+        let live_legacy = write_legacy_install(&legacy);
         std::env::set_var("HOME", &root);
         std::env::set_var("USERPROFILE", &root);
         std::env::set_var("XDG_DATA_HOME", root.join("data"));
 
         migrate_legacy_app_data_dir_with(true).expect("legacy data should be copied");
 
+        // Rows that were only in the live legacy WAL made it into the copy.
         assert_eq!(
-            fs::read_to_string(current.join(DATABASE_FILE_NAME)).expect("db should be copied"),
-            "db"
-        );
-        assert_eq!(
-            fs::read_to_string(current.join("workspaces.db-wal")).expect("wal should be copied"),
-            "wal"
-        );
-        assert_eq!(
-            fs::read_to_string(current.join("workspaces.db-shm")).expect("shm should be copied"),
-            "shm"
+            workspace_names(&current.join(DATABASE_FILE_NAME)),
+            vec!["alpha".to_string(), "beta".to_string()]
         );
         assert!(current.join("config.toml").exists());
         assert!(current.join("logs").join("events.log").exists());
@@ -2031,19 +2146,26 @@ mod tests {
         assert_legacy_install_untouched(&legacy);
 
         // A second launch must not copy over what the app has written since.
-        fs::write(current.join(DATABASE_FILE_NAME), "newer").expect("db should be writable");
+        rusqlite::Connection::open(current.join(DATABASE_FILE_NAME))
+            .expect("copied db should open")
+            .execute("INSERT INTO workspaces VALUES ('gamma')", [])
+            .expect("copied db should accept writes");
+        live_legacy
+            .execute("DELETE FROM workspaces", [])
+            .expect("legacy db should accept writes");
         fs::write(legacy.join("config.toml"), "theme = \"light\"\n")
             .expect("legacy config should be writable");
         migrate_legacy_app_data_dir_with(true).expect("second run should be a no-op");
         assert_eq!(
-            fs::read_to_string(current.join(DATABASE_FILE_NAME)).expect("db should remain"),
-            "newer"
+            workspace_names(&current.join(DATABASE_FILE_NAME)),
+            vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()]
         );
         assert_eq!(
             fs::read_to_string(current.join("config.toml")).expect("config should remain"),
             "theme = \"dark\"\n"
         );
 
+        drop(live_legacy);
         for (key, value) in saved {
             match value {
                 Some(value) => std::env::set_var(key, value),
@@ -2058,7 +2180,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("panes-flatpak-keep-{}", Uuid::new_v4()));
         let legacy = root.join(".agent-workspace");
         let current = root.join("data").join("panes");
-        write_legacy_install(&legacy);
+        let _live_legacy = write_legacy_install(&legacy);
         fs::create_dir_all(current.join("logs")).expect("target logs dir should exist");
         fs::write(current.join("config.toml"), "theme = \"light\"\n")
             .expect("target config should be written");
@@ -2087,7 +2209,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("panes-flatpak-skip-{}", Uuid::new_v4()));
         let legacy = root.join(".agent-workspace");
         let current = root.join("data").join("panes");
-        write_legacy_install(&legacy);
+        let _live_legacy = write_legacy_install(&legacy);
         fs::create_dir_all(&current).expect("target dir should exist");
         fs::write(current.join(DATABASE_FILE_NAME), "mine").expect("target db should be written");
 
@@ -2099,62 +2221,102 @@ mod tests {
             "mine"
         );
         assert!(!current.join("config.toml").exists());
-        assert!(!current.join("workspaces.db-wal").exists());
 
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn flatpak_import_replaces_sidecars_that_have_no_database() {
+    fn flatpak_import_moves_sidecars_without_a_database_aside() {
         let root = std::env::temp_dir().join(format!("panes-flatpak-stale-{}", Uuid::new_v4()));
         let legacy = root.join(".agent-workspace");
         let current = root.join("data").join("panes");
-        write_legacy_install(&legacy);
-        fs::remove_file(legacy.join("workspaces.db-shm")).expect("legacy shm should be removed");
+        let _live_legacy = write_legacy_install(&legacy);
         fs::create_dir_all(&current).expect("target dir should exist");
         fs::write(current.join("workspaces.db-wal"), "stale").expect("stale wal should be written");
-        fs::write(current.join("workspaces.db-shm"), "stale").expect("stale shm should be written");
 
         import_legacy_app_data_into_flatpak(&current, Some(&legacy))
             .expect("legacy data should be copied");
 
+        assert!(!current.join("workspaces.db-wal").exists());
+        let aside: Vec<String> = fs::read_dir(&current)
+            .expect("target dir should be readable")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.starts_with("workspaces.db-wal.orphaned-"))
+            .collect();
+        assert_eq!(aside.len(), 1);
         assert_eq!(
-            fs::read_to_string(current.join("workspaces.db-wal")).expect("wal should be copied"),
-            "wal"
+            fs::read_to_string(current.join(&aside[0])).expect("stale wal should be kept"),
+            "stale"
         );
-        assert!(!current.join("workspaces.db-shm").exists());
-        assert!(current.join(DATABASE_FILE_NAME).exists());
+        assert_eq!(
+            workspace_names(&current.join(DATABASE_FILE_NAME)),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn flatpak_import_failure_leaves_no_database_and_the_legacy_dir_intact() {
+        let root = std::env::temp_dir().join(format!("panes-flatpak-fail-{}", Uuid::new_v4()));
+        let legacy = root.join(".agent-workspace");
+        let current = root.join("data").join("panes");
+        fs::create_dir_all(&legacy).expect("legacy dir should exist");
+        fs::write(legacy.join(DATABASE_FILE_NAME), "not a database")
+            .expect("legacy db should be written");
+        fs::write(legacy.join("config.toml"), "theme = \"dark\"\n")
+            .expect("legacy config should be written");
+
+        let result = import_legacy_app_data_into_flatpak(&current, Some(&legacy));
+
+        assert!(result.is_err());
+        assert!(!current.join(DATABASE_FILE_NAME).exists());
+        assert!(staged_files_in(&current).is_empty());
+        assert_eq!(
+            fs::read_to_string(legacy.join(DATABASE_FILE_NAME)).expect("legacy db should remain"),
+            "not a database"
+        );
+        assert!(legacy.join("config.toml").exists());
 
         let _ = fs::remove_dir_all(&root);
     }
 
     #[cfg(unix)]
     #[test]
-    fn flatpak_import_failure_leaves_no_database_and_the_legacy_dir_intact() {
+    fn flatpak_import_skips_unreadable_files_and_keeps_symlinks() {
         use std::os::unix::fs::PermissionsExt;
 
-        let root = std::env::temp_dir().join(format!("panes-flatpak-fail-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("panes-flatpak-odd-{}", Uuid::new_v4()));
         let legacy = root.join(".agent-workspace");
         let current = root.join("data").join("panes");
-        write_legacy_install(&legacy);
+        let moved = root.join("moved-attachments");
+        let _live_legacy = write_legacy_install(&legacy);
+        fs::create_dir_all(&moved).expect("moved dir should exist");
+        std::os::unix::fs::symlink(&moved, legacy.join("attachments"))
+            .expect("attachments link should be created");
         let unreadable = legacy.join("logs").join("locked.log");
         fs::write(&unreadable, "secret").expect("locked log should be written");
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000))
             .expect("locked log permissions should change");
-        if fs::read(&unreadable).is_ok() {
-            // Running as root: permissions cannot force a copy failure.
-            let _ = fs::remove_dir_all(&root);
-            return;
-        }
 
         let result = import_legacy_app_data_into_flatpak(&current, Some(&legacy));
 
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600))
             .expect("locked log permissions should be restored");
-        assert!(result.is_err());
-        assert!(!current.join(DATABASE_FILE_NAME).exists());
+        result.expect("one unreadable file must not stop the import");
+        assert_eq!(
+            fs::read_link(current.join("attachments")).expect("link should be recreated"),
+            moved
+        );
+        assert!(current.join("logs").join("events.log").exists());
+        assert!(current.join(DATABASE_FILE_NAME).exists());
         assert!(staged_files_in(&current).is_empty());
-        assert_legacy_install_untouched(&legacy);
 
         let _ = fs::remove_dir_all(&root);
     }
