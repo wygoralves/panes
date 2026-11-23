@@ -77,7 +77,7 @@ body:
     attributes:
       label: Logs
       description: |
-        Relevant lines from the Panes log directory: `~/.agent-workspace/logs` on macOS and Linux, `%LOCALAPPDATA%\Panes\logs` on Windows. Remove anything private before pasting.
+        Any error message Panes showed, or the terminal output if you started Panes from a terminal. Remove anything private before pasting.
       render: text
     validations:
       required: false
