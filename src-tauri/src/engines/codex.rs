@@ -3802,14 +3802,29 @@ fn codex_fix_commands(
 }
 
 /// `launchctl setenv PATH` replaces the PATH every later GUI app inherits, so
-/// keep Homebrew and the system directories after Codex's own directory. The
-/// directory is single-quoted because this string runs through `$SHELL -lc`.
-fn launchctl_set_path_fix(bin_dir: &Path) -> String {
-    let path = format!(
-        "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        bin_dir.display()
-    );
-    format!("launchctl setenv PATH '{}'", path.replace('\'', r#"'\''"#))
+/// keep Homebrew, the system directories and the entries Panes inherited
+/// (launchd's PATH for a Finder launch) after Codex's own directory. The value
+/// is single-quoted because this string runs through `$SHELL -lc`.
+fn launchctl_set_path_fix(bin_dir: &Path, app_path: Option<&str>) -> String {
+    let system = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    let inherited = app_path
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .filter(|entry| entry.is_absolute());
+    let mut path: Vec<String> = Vec::new();
+    for entry in std::iter::once(bin_dir.to_path_buf())
+        .chain(std::env::split_paths(system))
+        .chain(inherited)
+    {
+        let entry = entry.display().to_string();
+        if !path.contains(&entry) {
+            path.push(entry);
+        }
+    }
+    format!(
+        "launchctl setenv PATH '{}'",
+        path.join(":").replace('\'', r#"'\''"#)
+    )
 }
 
 fn codex_fix_commands_for_platform(
@@ -3822,7 +3837,10 @@ fn codex_fix_commands_for_platform(
         if resolution.executable.is_none() {
             if let Some(shell_path) = &resolution.login_shell_executable {
                 if let Some(bin_dir) = shell_path.parent() {
-                    fixes.push(launchctl_set_path_fix(bin_dir));
+                    fixes.push(launchctl_set_path_fix(
+                        bin_dir,
+                        resolution.app_path.as_deref(),
+                    ));
                     fixes.push("open -a Panes".to_string());
                 }
             } else {
@@ -3832,7 +3850,10 @@ fn codex_fix_commands_for_platform(
         } else if execution_error.is_some() {
             if let Some(executable) = resolution.executable.as_ref() {
                 if let Some(bin_dir) = executable.parent() {
-                    fixes.push(launchctl_set_path_fix(bin_dir));
+                    fixes.push(launchctl_set_path_fix(
+                        bin_dir,
+                        resolution.app_path.as_deref(),
+                    ));
                 }
             }
             fixes.push(
@@ -8998,7 +9019,7 @@ mod tests {
             &CodexExecutableResolution {
                 executable: None,
                 source: "unavailable",
-                app_path: Some("/usr/bin:/bin".to_string()),
+                app_path: Some("/usr/bin:/Users/panes/.cargo/bin:relative/bin:/bin".to_string()),
                 login_shell_executable: Some(std::path::PathBuf::from(
                     "/Users/panes/it's $(touch x)/bin/codex",
                 )),
@@ -9008,7 +9029,7 @@ mod tests {
 
         assert_eq!(
             fixes[0],
-            r#"launchctl setenv PATH '/Users/panes/it'\''s $(touch x)/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'"#
+            r#"launchctl setenv PATH '/Users/panes/it'\''s $(touch x)/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/panes/.cargo/bin'"#
         );
         assert_eq!(fixes[1], "open -a Panes");
     }
