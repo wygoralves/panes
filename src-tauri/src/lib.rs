@@ -125,17 +125,18 @@ pub fn run() {
                 main_window_config
             };
 
-            // In release builds the frontend is served from the app's own
-            // protocol, so the dev server origin is only allowed in debug.
-            let dev_url = if cfg!(debug_assertions) {
+            // `tauri dev` serves the frontend from the dev server; every other
+            // build serves it from the app's own protocol.
+            let app_url = if tauri::is_dev() {
                 app.config().build.dev_url.clone()
             } else {
                 None
-            };
+            }
+            .unwrap_or_else(|| app_protocol_url(main_window_config.use_https_scheme));
             let main_window = WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
                 .enable_clipboard_access()
                 .on_navigation(move |url| {
-                    let allowed = is_app_navigation(url, dev_url.as_ref());
+                    let allowed = is_app_navigation(url, &app_url);
                     if !allowed {
                         log::warn!("blocked main window navigation to {url}");
                     }
@@ -388,21 +389,29 @@ struct ThreadUpdatedEvent {
     thread: Option<ThreadDto>,
 }
 
-/// Whether the main window may navigate to `url`. Only the app's own origin
-/// (and the dev server in debug builds) is allowed, so a stray link or script
-/// can never replace the Panes UI with another page.
-fn is_app_navigation(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
-    if url.as_str() == "about:blank" {
-        return true;
-    }
-    let host = url.host_str();
-    match url.scheme() {
-        // macOS and Linux serve the frontend from tauri://localhost.
-        "tauri" => host == Some("localhost"),
-        // Windows serves it from http(s)://tauri.localhost.
-        "http" | "https" if host == Some("tauri.localhost") => url.port().is_none(),
-        _ => dev_url.is_some_and(|dev_url| dev_url.origin() == url.origin()),
-    }
+/// The origin Tauri serves bundled frontend assets from on this platform.
+fn app_protocol_url(https: bool) -> tauri::Url {
+    let url = if cfg!(windows) || cfg!(target_os = "android") {
+        if https {
+            "https://tauri.localhost"
+        } else {
+            "http://tauri.localhost"
+        }
+    } else {
+        "tauri://localhost"
+    };
+    url.parse().expect("valid app protocol url")
+}
+
+/// Whether the main window may navigate to `url`. Only the origin the app is
+/// served from is allowed, so a stray link or script can never replace the
+/// Panes UI with another page.
+fn is_app_navigation(url: &tauri::Url, app_url: &tauri::Url) -> bool {
+    // Custom schemes have opaque origins, so compare the parts directly.
+    url.as_str() == "about:blank"
+        || (url.scheme() == app_url.scheme()
+            && url.host_str() == app_url.host_str()
+            && url.port_or_known_default() == app_url.port_or_known_default())
 }
 
 async fn run_codex_runtime_bridge(app: tauri::AppHandle, state: AppState) {
@@ -1056,49 +1065,66 @@ mod navigation_tests {
     }
 
     #[test]
-    fn allows_the_app_origin_on_every_platform() {
-        assert!(is_app_navigation(&url("tauri://localhost/"), None));
+    fn allows_only_the_app_protocol_origin() {
+        let mac_linux = url("tauri://localhost");
+        assert!(is_app_navigation(&url("tauri://localhost/"), &mac_linux));
         assert!(is_app_navigation(
             &url("tauri://localhost/index.html"),
-            None
+            &mac_linux
         ));
-        assert!(is_app_navigation(&url("http://tauri.localhost/"), None));
-        assert!(is_app_navigation(&url("https://tauri.localhost/x"), None));
-        assert!(is_app_navigation(&url("about:blank"), None));
+        assert!(is_app_navigation(&url("about:blank"), &mac_linux));
+        assert!(!is_app_navigation(
+            &url("http://tauri.localhost/"),
+            &mac_linux
+        ));
+        assert!(!is_app_navigation(
+            &url("tauri://localhost:8080/"),
+            &mac_linux
+        ));
+
+        let windows = url("http://tauri.localhost");
+        assert!(is_app_navigation(
+            &url("http://tauri.localhost/x"),
+            &windows
+        ));
+        assert!(!is_app_navigation(
+            &url("https://tauri.localhost/x"),
+            &windows
+        ));
+        assert!(!is_app_navigation(&url("tauri://localhost/"), &windows));
+        assert!(!is_app_navigation(
+            &url("http://tauri.localhost:8080/"),
+            &windows
+        ));
     }
 
     #[test]
-    fn allows_the_dev_server_only_when_given() {
+    fn allows_the_dev_server_origin_when_it_serves_the_app() {
         let dev = url("http://localhost:1420");
-        assert!(is_app_navigation(
-            &url("http://localhost:1420/"),
-            Some(&dev)
-        ));
-        assert!(!is_app_navigation(&url("http://localhost:1420/"), None));
-        assert!(!is_app_navigation(
-            &url("http://localhost:8080/"),
-            Some(&dev)
-        ));
+        assert!(is_app_navigation(&url("http://localhost:1420/"), &dev));
+        assert!(!is_app_navigation(&url("http://localhost:8080/"), &dev));
+        assert!(!is_app_navigation(&url("tauri://localhost/"), &dev));
     }
 
     #[test]
     fn blocks_every_other_destination() {
-        let dev = url("http://localhost:1420");
-        for target in [
-            "http://evil.example/login",
-            "https://evil.example/",
-            "tauri://evil.example/",
-            "http://tauri.localhost.evil.example/",
-            "http://tauri.localhost:8080/",
-            "file:///etc/passwd",
-            "javascript:alert(1)",
-            "data:text/html,hi",
-            "about:srcdoc",
-        ] {
-            assert!(
-                !is_app_navigation(&url(target), Some(&dev)),
-                "{target} should be blocked"
-            );
+        for app_url in ["tauri://localhost", "http://tauri.localhost"] {
+            let app_url = url(app_url);
+            for target in [
+                "http://evil.example/login",
+                "https://evil.example/",
+                "tauri://evil.example/",
+                "http://tauri.localhost.evil.example/",
+                "file:///etc/passwd",
+                "javascript:alert(1)",
+                "data:text/html,hi",
+                "about:srcdoc",
+            ] {
+                assert!(
+                    !is_app_navigation(&url(target), &app_url),
+                    "{target} should be blocked"
+                );
+            }
         }
     }
 }
