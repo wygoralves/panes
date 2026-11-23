@@ -238,28 +238,49 @@ pub fn list_worktrees(repo_path: &str) -> anyhow::Result<Vec<GitWorktreeDto>> {
     Ok(worktrees)
 }
 
-/// Removes a linked worktree. Use `force` to remove even with uncommitted changes.
+/// What happened to the branch after its worktree was removed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RemoveWorktreeOutcome {
+    /// Set when the worktree is gone but git refused to delete its branch,
+    /// usually because the branch has commits not merged into HEAD.
+    pub branch_delete_error: Option<String>,
+}
+
+/// Removes a linked worktree. `force` removes it even with uncommitted or
+/// untracked files; `force_branch_delete` deletes the branch with `-D` even
+/// when it holds unmerged commits. The two are separate so forcing the
+/// directory never implies discarding commits.
+///
+/// Once the worktree is gone, a refused branch delete is reported in the
+/// outcome instead of as an error, so callers can still treat the worktree
+/// as removed.
 pub fn remove_worktree(
     repo_path: &str,
     worktree_path: &str,
     force: bool,
     branch_name: Option<&str>,
     delete_branch: bool,
-) -> anyhow::Result<()> {
+    force_branch_delete: bool,
+) -> anyhow::Result<RemoveWorktreeOutcome> {
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
     }
     args.push(worktree_path);
     run_git(repo_path, &args).context("failed to remove worktree")?;
+
+    let mut outcome = RemoveWorktreeOutcome::default();
     if delete_branch {
         if let Some(branch) = branch_name {
-            let flag = if force { "-D" } else { "-d" };
-            run_git(repo_path, &["branch", flag, branch])
-                .with_context(|| format!("failed to delete worktree branch '{branch}'"))?;
+            let flag = if force_branch_delete { "-D" } else { "-d" };
+            if let Err(error) = run_git(repo_path, &["branch", flag, branch]) {
+                outcome.branch_delete_error = Some(format!(
+                    "failed to delete worktree branch '{branch}': {error:#}"
+                ));
+            }
         }
     }
-    Ok(())
+    Ok(outcome)
 }
 
 /// Prunes stale worktree admin files for worktrees whose directories no longer exist.
@@ -390,6 +411,128 @@ mod tests {
             !worktree_path.join(".git/info/exclude").exists(),
             "linked worktrees must not get their own exclude file"
         );
+    }
+
+    fn add_panes_worktree(repo: &TempRepo, branch: &str) -> String {
+        let worktree_path = repo.path.join(".panes/worktrees").join(branch);
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+        let worktree_path = worktree_path
+            .to_str()
+            .expect("utf-8 worktree path")
+            .to_string();
+        add_worktree(repo.path_str(), &worktree_path, branch, None).expect("add worktree");
+        worktree_path
+    }
+
+    fn commit_in(worktree_path: &str, file: &str) {
+        fs::write(Path::new(worktree_path).join(file), "agent work\n").expect("write file");
+        run_git(worktree_path, &["add", "-A"]).expect("git add");
+        run_git(worktree_path, &["commit", "-m", "agent work"]).expect("git commit");
+    }
+
+    fn branch_exists(repo: &TempRepo, branch: &str) -> bool {
+        run_git(
+            repo.path_str(),
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .is_ok()
+    }
+
+    #[test]
+    fn unforced_removal_keeps_a_worktree_with_untracked_files() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        fs::write(Path::new(&worktree_path).join("new.txt"), "unsaved\n").expect("write");
+
+        remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect_err("git must refuse removing a worktree with untracked files");
+
+        assert!(Path::new(&worktree_path).join("new.txt").is_file());
+        assert!(branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn forced_worktree_removal_keeps_an_unmerged_branch_unless_branch_delete_is_forced() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        fs::write(Path::new(&worktree_path).join("scratch.txt"), "unsaved\n").expect("write");
+
+        let outcome = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            true,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect("forced worktree removal succeeds");
+
+        assert!(!Path::new(&worktree_path).exists());
+        assert!(
+            branch_exists(&repo, "agent"),
+            "forcing the directory must not imply -D on the branch"
+        );
+        assert!(
+            outcome.branch_delete_error.is_some(),
+            "the refused branch delete must be reported"
+        );
+    }
+
+    #[test]
+    fn removal_reports_a_refused_branch_delete_after_removing_the_worktree() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+
+        let outcome = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect("a refused branch delete is not a failed removal");
+
+        assert!(!Path::new(&worktree_path).exists());
+        assert!(branch_exists(&repo, "agent"));
+        assert!(outcome
+            .branch_delete_error
+            .as_deref()
+            .is_some_and(|error| error.contains("agent")));
+    }
+
+    #[test]
+    fn forced_branch_delete_drops_an_unmerged_branch() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+
+        let outcome = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            true,
+            Some("agent"),
+            true,
+            true,
+        )
+        .expect("forced removal succeeds");
+
+        assert_eq!(outcome, RemoveWorktreeOutcome::default());
+        assert!(!branch_exists(&repo, "agent"));
     }
 
     #[test]

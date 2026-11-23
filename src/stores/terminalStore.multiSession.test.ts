@@ -217,6 +217,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
       true,
       "panes/r1/agent-1",
       true,
+      true,
     );
     expect(mockIpc.removeGitWorktree).toHaveBeenNthCalledWith(
       2,
@@ -224,6 +225,7 @@ describe("terminalStore.createMultiSessionGroup", () => {
       "/repo/.panes/worktrees/r1/agent-2",
       true,
       "panes/r1/agent-2",
+      true,
       true,
     );
   });

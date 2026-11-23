@@ -927,6 +927,11 @@ export interface WorktreeSessionInfo {
   branch: string;
 }
 
+export interface GitWorktreeRemoval {
+  /** Set when the worktree was removed but git kept its branch. */
+  branchDeleteError: string | null;
+}
+
 export interface FileTreeEntry {
   path: string;
   isDir: boolean;

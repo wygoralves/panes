@@ -677,6 +677,7 @@ async function removeWorktreesSequential(worktrees: WorktreeSessionInfo[]): Prom
         true,
         worktree.branch,
         true,
+        true,
       );
     } catch (error) {
       failures.push(`${worktree.branch || worktree.worktreePath}: ${String(error)}`);

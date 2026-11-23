@@ -842,6 +842,13 @@ pub struct GitWorktreeDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitWorktreeRemovalDto {
+    /// Set when the worktree was removed but git kept its branch.
+    pub branch_delete_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileTreeEntryDto {
     pub path: String,
     pub is_dir: bool,
