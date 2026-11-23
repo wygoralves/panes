@@ -2318,7 +2318,7 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "/dev/null"));
         assert!(args
             .iter()
-            .any(|arg| arg == format!("--pid={}", std::process::id())));
+            .any(|arg| *arg == format!("--pid={}", std::process::id())));
     }
 
     #[test]
