@@ -112,6 +112,8 @@ Quem mantém o release pode ver a configuração do tap e da automação em [doc
 
 Baixe o instalador `*-setup.exe` mais recente em [GitHub Releases](https://github.com/wygoralves/panes/releases/latest) e execute-o. As próximas versões passam a chegar pelo updater embutido do Tauri.
 
+O instalador para Windows ainda não tem assinatura de código, então o Microsoft Defender SmartScreen pode mostrar um aviso de "aplicativo não reconhecido" na primeira execução. Escolha **Mais informações** e depois **Executar assim mesmo** para continuar.
+
 Neste release para Windows, o escopo validado cobre instalador, updater, inicialização do app e compatibilidade do runtime empacotado. Isso ainda não garante validação completa de ponta a ponta do Codex e do Claude dentro do fluxo de chat do app, então ainda pode haver arestas nessa parte.
 
 ### Instalar no Linux
