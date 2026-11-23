@@ -250,11 +250,11 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout release branch with full history
+      - name: Checkout tested commit with full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
           token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           persist-credentials: false
 
@@ -313,18 +313,21 @@ jobs:
 
       # Release only the commit the gating jobs tested. When the branch has
       # moved on, the run queued for the newer commit tests and releases it.
+      # release-it needs a named branch with an upstream, so the tested commit
+      # is attached to the branch only once it is still the tip.
       - name: Confirm the branch still points at the tested commit
         id: tested_commit
         if: steps.release_check.outputs.should_release == 'true'
         run: |
-          git fetch --no-tags origin "refs/heads/${GITHUB_REF_NAME}"
-          remote_sha="$(git rev-parse FETCH_HEAD)"
-          local_sha="$(git rev-parse HEAD)"
-          if [ "$remote_sha" != "$GITHUB_SHA" ] || [ "$local_sha" != "$GITHUB_SHA" ]; then
+          git fetch --no-tags origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
+          remote_sha="$(git rev-parse "origin/${GITHUB_REF_NAME}")"
+          if [ "$remote_sha" != "$GITHUB_SHA" ]; then
             echo "::notice::Skipping release: ${GITHUB_REF_NAME} moved from the tested commit ${GITHUB_SHA} to ${remote_sha}. The run for the newer commit releases it."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          git checkout -B "$GITHUB_REF_NAME" "$GITHUB_SHA"
+          git branch --set-upstream-to "origin/${GITHUB_REF_NAME}"
           echo "should_release=true" >> "$GITHUB_OUTPUT"
 
       - name: Configure git user for release commit
