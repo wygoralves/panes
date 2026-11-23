@@ -2027,7 +2027,17 @@ function allowWriteRootsForSandbox(sandboxMode, writableRoots) {
   return writableRoots;
 }
 
-function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
+function denyWriteRootsForSandbox(cwd, sandboxMode, writableRoots) {
+  if (sandboxMode !== "read-only") {
+    return [];
+  }
+
+  // The sandbox lets commands write the working directory by default, and
+  // allowWrite only adds paths, so read-only has to deny the roots outright.
+  return [...new Set([path.resolve(cwd), ...writableRoots])];
+}
+
+function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork, { cwd, permissionMode }) {
   if (sandboxMode === "danger-full-access") {
     // Full access runs the CLI without the OS sandbox: unrestricted
     // filesystem writes, and network follows the thread's allowNetwork flag
@@ -2038,10 +2048,15 @@ function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
   return {
     enabled: true,
     failIfUnavailable: false,
-    autoAllowBashIfSandboxed: true,
+    // Auto-allowed commands skip canUseTool, so only the preset that runs
+    // without asking may use it. The others send every command to approval.
+    autoAllowBashIfSandboxed: permissionMode === "trusted",
     allowUnsandboxedCommands: false,
     filesystem: {
       allowWrite: allowWriteRootsForSandbox(sandboxMode, writableRoots),
+      ...(sandboxMode === "read-only"
+        ? { denyWrite: denyWriteRootsForSandbox(cwd, sandboxMode, writableRoots) }
+        : {}),
     },
     ...(allowNetwork
       ? {}
@@ -2170,6 +2185,7 @@ async function handleQuery(req) {
     const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
     const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
     const networkEnabled = effectiveAllowNetwork(normalizedSandboxMode, allowNetwork);
+    const permissionMode = resolvePermissionMode(approvalPolicy, Boolean(allowNetwork));
     // Only a Trusted repo may run its own settings: hooks, env, apiKeyHelper
     // and .mcp.json servers all execute outside the sandbox and approvals.
     const projectTrusted = projectSettingsTrusted === true;
@@ -2242,6 +2258,7 @@ async function handleQuery(req) {
         normalizedSandboxMode,
         normalizedWritableRoots,
         networkEnabled,
+        { cwd: sessionCwd, permissionMode },
       ),
       settings: {
         permissions: {

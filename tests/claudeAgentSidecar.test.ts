@@ -434,6 +434,52 @@ describe("claude-agent-sdk-server sidecar", () => {
     }
   });
 
+  it("auto-allows sandboxed commands only for the trusted permission mode", async () => {
+    const cases = [
+      { approvalPolicy: "restricted", sandboxMode: "read-only", autoAllow: false },
+      { approvalPolicy: "standard", sandboxMode: "workspace-write", autoAllow: false },
+      { approvalPolicy: "trusted", sandboxMode: "workspace-write", autoAllow: true },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const harness = await spawnHarness({
+        steps: [],
+        emitObservationResult: true,
+        emitQueryOptions: true,
+        sessionId: `session-auto-allow-${index}`,
+      });
+      const queryId = `query-auto-allow-${index}`;
+      harness.send({
+        id: queryId,
+        method: "query",
+        params: {
+          prompt: "inspect sandbox",
+          cwd: repoRoot,
+          approvalPolicy: testCase.approvalPolicy,
+          sandboxMode: testCase.sandboxMode,
+          writableRoots: [repoRoot],
+        },
+      });
+      await harness.waitFor(
+        (event) => event.id === queryId && event.type === "turn_completed",
+      );
+
+      const sandbox = parseObservationResults(harness, queryId)[0]?.result.sandbox as Record<
+        string,
+        unknown
+      >;
+      expect(sandbox.autoAllowBashIfSandboxed).toBe(testCase.autoAllow);
+      const filesystem = sandbox.filesystem as Record<string, unknown>;
+      if (testCase.sandboxMode === "read-only") {
+        expect(filesystem.allowWrite).toEqual([]);
+        expect(filesystem.denyWrite).toEqual([repoRoot]);
+      } else {
+        expect(filesystem.allowWrite).toEqual([repoRoot]);
+        expect(filesystem.denyWrite).toBeUndefined();
+      }
+      await harness.close();
+    }
+  });
+
   it("skips a task update for an id it never saw created", async () => {
     const harness = await spawnHarness({
       steps: [
