@@ -406,7 +406,10 @@ pub async fn set_harness_launch_args(
 
 async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
     if let Some(path) = runtime_env::resolve_executable(def.command) {
-        if let Some(version) = get_command_version(&path, &[def.version_flag]).await {
+        if let Some(version) = get_command_version(&path, &[def.version_flag])
+            .await
+            .filter(|version| version_belongs_to_harness(def, version))
+        {
             return HarnessInfo {
                 id: def.id.to_string(),
                 name: def.name.to_string(),
@@ -422,7 +425,10 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         }
     }
 
-    if let Some((path, version)) = detect_via_login_shell(def.command, def.version_flag).await {
+    if let Some((path, version)) = detect_via_login_shell(def.command, def.version_flag)
+        .await
+        .filter(|(_, version)| version_belongs_to_harness(def, version))
+    {
         return HarnessInfo {
             id: def.id.to_string(),
             name: def.name.to_string(),
@@ -449,6 +455,12 @@ async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
         website: def.website.to_string(),
         native: def.native,
     }
+}
+
+/// AWS Copilot also installs a `copilot` binary. Its `--version` prints
+/// `copilot version v1.x`, while GitHub Copilot CLI prints a bare version.
+fn version_belongs_to_harness(def: &HarnessDef, version: &str) -> bool {
+    !(def.id == "copilot-cli" && version.starts_with("copilot version"))
 }
 
 fn harness_can_auto_install(def: &HarnessDef) -> bool {
@@ -789,6 +801,19 @@ async fn resolve_mise_path() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aws_copilot_is_not_detected_as_github_copilot() {
+        let copilot = HARNESSES
+            .iter()
+            .find(|def| def.id == "copilot-cli")
+            .unwrap();
+        assert!(!version_belongs_to_harness(
+            copilot,
+            "copilot version v1.34.1"
+        ));
+        assert!(version_belongs_to_harness(copilot, "1.0.114"));
+    }
 
     #[test]
     fn npm_package_from_install_args_matches_every_harness_definition() {
