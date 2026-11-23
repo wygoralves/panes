@@ -59,7 +59,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@anthropic-ai/claude-code"],
         install_script: Some("curl -fsSL https://claude.ai/install.sh | bash"),
-        website: "https://docs.anthropic.com/en/docs/claude-code",
+        website: "https://code.claude.com/docs/en/overview",
         native: false,
     },
     HarnessDef {
@@ -119,7 +119,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@kilocode/cli"],
         install_script: None,
-        website: "https://kilocode.ai",
+        website: "https://kilo.ai",
         native: false,
     },
     HarnessDef {
@@ -131,7 +131,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://app.factory.ai/cli | sh"),
-        website: "https://factory.ai",
+        website: "https://factory.com",
         native: false,
     },
 ];
