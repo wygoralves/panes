@@ -1941,6 +1941,14 @@ impl CodexEngine {
         self.resolve_external_sandbox_mode().await
     }
 
+    /// Records a finished sandbox probe without running one.
+    #[cfg(test)]
+    pub(crate) async fn set_sandbox_probe_result_for_test(&self, force_external_sandbox: bool) {
+        let mut state = self.state.lock().await;
+        state.sandbox_probe_completed = true;
+        state.force_external_sandbox = force_external_sandbox;
+    }
+
     pub async fn sandbox_preflight_warning(&self) -> Option<String> {
         if !self.resolve_external_sandbox_mode().await {
             return None;

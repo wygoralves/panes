@@ -872,8 +872,11 @@ async fn create_thread_inner(
     }
 
     if let Some(preset) = initial_autonomy_preset.as_deref() {
-        let codex_external_sandbox =
-            engine_kind(&engine_id) == "codex" && state.engines.codex_uses_external_sandbox().await;
+        let codex_external_sandbox = engine_kind(&engine_id) == "codex"
+            && state
+                .engines
+                .codex_uses_external_sandbox_for(&engine_id)
+                .await;
         let policy = autonomy_policy_for_preset(&engine_id, preset, codex_external_sandbox)?;
         metadata.insert(
             approval_policy_metadata_key(&engine_id).to_string(),
@@ -1647,7 +1650,10 @@ async fn set_thread_execution_policy_inner(
     } else {
         None
     };
-    let external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
+    let external_sandbox_active = state
+        .engines
+        .codex_uses_external_sandbox_for(&thread.engine_id)
+        .await;
 
     if external_sandbox_active
         && engine_kind(&thread.engine_id) == "codex"
@@ -2310,7 +2316,10 @@ async fn build_codex_branch_context(
     .await?;
 
     let workspace_root = workspace.root_path.clone();
-    let codex_external_sandbox_active = state.engines.codex_uses_external_sandbox().await;
+    let codex_external_sandbox_active = state
+        .engines
+        .codex_uses_external_sandbox_for(&thread.engine_id)
+        .await;
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
     let sandbox_mode = sandbox_mode_override.clone().unwrap_or_else(|| {
         default_thread_sandbox_mode(&thread.engine_id, thread.engine_metadata.as_ref()).to_string()

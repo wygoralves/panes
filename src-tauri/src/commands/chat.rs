@@ -559,7 +559,10 @@ async fn prepare_send_message_turn(
     };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
     let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
-        state.engines.codex_uses_external_sandbox().await
+        state
+            .engines
+            .codex_uses_external_sandbox_for(&thread.engine_id)
+            .await
     } else {
         false
     };
