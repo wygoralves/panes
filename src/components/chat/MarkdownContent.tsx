@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import DOMPurify from "dompurify";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import {
   classifyLinkTarget,
@@ -33,6 +34,28 @@ const markdownWorkerCallbacks = new Map<
     reject: (reason?: unknown) => void;
   }
 >();
+
+// Admits web, mail, phone and file links, fragments, relative paths and the
+// local file references the linkifier emits (`src/a.ts:12`, `README.md:4`,
+// `C:\repo\a.ts`, `\\server\share`). Any other scheme, and protocol-relative
+// `//host` links, are dropped.
+const MARKDOWN_ALLOWED_URI_RE =
+  /^(?!\/[\\/]|\\\/)(?:(?:https?|mailto|tel|file):|[a-z]:[\\/]|[^a-z]|[a-z][a-z0-9+.-]*(?:[^a-z0-9+.:-]|$)|[a-z0-9+-]*\.[a-z0-9+.-]*:\d)/i;
+
+// The markdown parser already encodes raw HTML. This is the last barrier
+// before the HTML reaches the DOM, so a parser bug cannot run script.
+function sanitizeMarkdownHtml(html: string): string {
+  if (!DOMPurify.isSupported) {
+    // With no DOM at all (server rendering in tests) nothing can execute the
+    // markup. A DOM that DOMPurify cannot use gets no markup at all.
+    return typeof document === "undefined" ? html : "";
+  }
+  return DOMPurify.sanitize(html, {
+    ALLOWED_URI_REGEXP: MARKDOWN_ALLOWED_URI_RE,
+    FORBID_TAGS: ["style", "form", "iframe", "object", "embed"],
+    FORBID_ATTR: ["style"],
+  });
+}
 
 function computeCacheKey(content: string): string {
   let hash = 2166136261;
@@ -248,7 +271,7 @@ export default function MarkdownContent({
     if (showWorkerPlaceholder) {
       return null;
     }
-    return renderMarkdownToHtml(content);
+    return sanitizeMarkdownHtml(renderMarkdownToHtml(content));
   }, [cachedHtml, content, showWorkerPlaceholder]);
 
   useEffect(() => {
@@ -285,10 +308,11 @@ export default function MarkdownContent({
     parseStartedAtRef.current = performance.now();
 
     parseMarkdownInWorker(content)
-      .then((html) => {
+      .then((rawHtml) => {
         if (disposed) {
           return;
         }
+        const html = sanitizeMarkdownHtml(rawHtml);
         writeCachedMarkdownHtml(cacheKey, html);
         setWorkerHtml(html);
         recordPerfMetric("chat.markdown.worker.ms", performance.now() - parseStartedAtRef.current, {
