@@ -1,7 +1,11 @@
 import { create } from "zustand";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { confirmDiscardUnsavedWork } from "../lib/unsavedChangesGuard";
+import {
+  confirmDiscardUnsavedWork,
+  hasDirtyTabsEditedSince,
+  snapshotDirtyTabs,
+} from "../lib/unsavedChangesGuard";
 
 type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
 type DownloadPhase = "idle" | "downloading" | "installing";
@@ -104,11 +108,16 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         set({ status: "available", downloadPhase: "idle", downloadedBytes: 0, totalBytes: null });
         return;
       }
+      // Discard leaves the approved tabs dirty; remember their text so the
+      // check below does not ask about them twice.
+      const approvedTabs = snapshotDirtyTabs();
       await update.install();
       set({ status: "ready" });
-      // The editor stays usable while install() runs; ask again about edits
-      // made meanwhile. On cancel the update applies at the next launch.
-      if (!(await confirmDiscardUnsavedWork())) return;
+      // The editor stays usable while install() runs; ask again only about
+      // edits made meanwhile. On cancel the update applies at the next launch.
+      if (hasDirtyTabsEditedSince(approvedTabs) && !(await confirmDiscardUnsavedWork())) {
+        return;
+      }
       await relaunch();
     } catch (err) {
       // A failed install leaves the downloaded installer in native memory.

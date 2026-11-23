@@ -6,6 +6,10 @@ const updaterMocks = vi.hoisted(() => ({
   confirmDiscardUnsavedWork: vi.fn(),
 }));
 
+const mockFileState = vi.hoisted(() => ({
+  tabs: [] as Array<{ id: string; content: string; isDirty: boolean }>,
+}));
+
 vi.mock("@tauri-apps/plugin-updater", () => ({
   check: updaterMocks.check,
 }));
@@ -14,7 +18,12 @@ vi.mock("@tauri-apps/plugin-process", () => ({
   relaunch: updaterMocks.relaunch,
 }));
 
-vi.mock("../lib/unsavedChangesGuard", () => ({
+vi.mock("./fileStore", () => ({
+  useFileStore: { getState: () => mockFileState },
+}));
+
+vi.mock("../lib/unsavedChangesGuard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/unsavedChangesGuard")>()),
   confirmDiscardUnsavedWork: updaterMocks.confirmDiscardUnsavedWork,
 }));
 
@@ -35,6 +44,7 @@ describe("updateStore", () => {
     });
     updaterMocks.relaunch.mockResolvedValue(undefined);
     updaterMocks.confirmDiscardUnsavedWork.mockResolvedValue(true);
+    mockFileState.tabs = [];
   });
 
   it("asks about unsaved editor changes after the download and before installing", async () => {
@@ -57,8 +67,10 @@ describe("updateStore", () => {
   });
 
   it("asks again after installing and holds the relaunch when edits made meanwhile are kept", async () => {
+    mockFileState.tabs = [{ id: "notes", content: "draft", isDirty: true }];
     const install = vi.fn(async () => {
       expect(updaterMocks.confirmDiscardUnsavedWork).toHaveBeenCalledOnce();
+      mockFileState.tabs = [{ id: "notes", content: "draft, typed during install", isDirty: true }];
     });
     updaterMocks.check.mockResolvedValue({ download: vi.fn(), install, close: vi.fn() });
     updaterMocks.confirmDiscardUnsavedWork
@@ -71,6 +83,37 @@ describe("updateStore", () => {
     expect(updaterMocks.confirmDiscardUnsavedWork).toHaveBeenCalledTimes(2);
     expect(updaterMocks.relaunch).not.toHaveBeenCalled();
     expect(useUpdateStore.getState().status).toBe("ready");
+  });
+
+  it("does not ask again after installing when the discarded tabs were not edited", async () => {
+    mockFileState.tabs = [
+      { id: "notes", content: "draft", isDirty: true },
+      { id: "clean", content: "saved", isDirty: false },
+    ];
+    const install = vi.fn();
+    updaterMocks.check.mockResolvedValue({ download: vi.fn(), install, close: vi.fn() });
+
+    await useUpdateStore.getState().downloadAndInstall();
+
+    expect(install).toHaveBeenCalledOnce();
+    expect(updaterMocks.confirmDiscardUnsavedWork).toHaveBeenCalledOnce();
+    expect(updaterMocks.relaunch).toHaveBeenCalledOnce();
+  });
+
+  it("asks again after installing when a clean tab was edited during the install", async () => {
+    mockFileState.tabs = [{ id: "clean", content: "saved", isDirty: false }];
+    const install = vi.fn(async () => {
+      mockFileState.tabs = [{ id: "clean", content: "saved!", isDirty: true }];
+    });
+    updaterMocks.check.mockResolvedValue({ download: vi.fn(), install, close: vi.fn() });
+    updaterMocks.confirmDiscardUnsavedWork
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+
+    await useUpdateStore.getState().downloadAndInstall();
+
+    expect(updaterMocks.confirmDiscardUnsavedWork).toHaveBeenCalledTimes(2);
+    expect(updaterMocks.relaunch).not.toHaveBeenCalled();
   });
 
   it("releases the downloaded update when installing fails", async () => {

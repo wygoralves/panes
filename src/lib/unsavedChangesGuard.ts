@@ -81,6 +81,23 @@ export function registerUnsavedChangesCloseGuard(target: CloseRequestedTarget): 
   });
 }
 
+/** The text of every dirty tab now, to compare against after a prompt was answered. */
+export function snapshotDirtyTabs(): Map<string, string> {
+  return new Map(
+    useFileStore
+      .getState()
+      .tabs.filter((tab) => tab.isDirty)
+      .map((tab) => [tab.id, tab.content]),
+  );
+}
+
+/** True when a tab is dirty with text the snapshot does not hold, so it was edited since. */
+export function hasDirtyTabsEditedSince(snapshot: Map<string, string>): boolean {
+  return useFileStore
+    .getState()
+    .tabs.some((tab) => tab.isDirty && snapshot.get(tab.id) !== tab.content);
+}
+
 /**
  * Keeps `report` told whether any editor tab is dirty, sending only changes.
  * The backend uses it to hold a macOS quit that never closes the window.
