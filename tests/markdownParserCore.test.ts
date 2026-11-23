@@ -176,4 +176,12 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain("<hr>");
     expect(html).toContain("&lt;kbd&gt;Cmd&lt;/kbd&gt;");
   });
+
+  it("keeps a br or hr that starts an HTML block when text follows it", () => {
+    expect(renderMarkdownToHtml("<br>\nnext line")).toBe("<br>\nnext line");
+    expect(renderMarkdownToHtml("<hr>\n<img src=x onerror=alert(1)>")).toBe(
+      "<hr>\n&lt;img src=x onerror=alert(1)&gt;",
+    );
+  });
+
 });

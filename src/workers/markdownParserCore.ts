@@ -32,15 +32,16 @@ const SAFE_HTML_TAG_RE = /^<(?:br|hr)\s*\/?>$/i;
 const FENCE_SENTINEL_CHAR = "\uE000";
 
 // micromark encodes every raw HTML fragment as text. The one exception is a
-// lone <br> or <hr>, which is passed through as markup.
+// lone <br> or <hr> (inline, or alone on a line of an HTML block), which is
+// passed through as markup.
 const safeHtmlTagExtension: HtmlExtension = {
-  enter: {
-    htmlFlow(token) {
-      this.lineEndingIfNeeded();
-      if (SAFE_HTML_TAG_RE.test(this.sliceSerialize(token).trim())) {
-        this.setData("ignoreEncode", true);
-      }
+  exit: {
+    htmlFlowData(token) {
+      const value = this.sliceSerialize(token);
+      this.raw(SAFE_HTML_TAG_RE.test(value.trim()) ? value : this.encode(value));
     },
+  },
+  enter: {
     htmlText(token) {
       if (SAFE_HTML_TAG_RE.test(this.sliceSerialize(token))) {
         this.setData("ignoreEncode", true);
