@@ -578,16 +578,26 @@ fn preserve_corrupt_config(path: &std::path::Path, raw: &str) -> bool {
     let mut copy_path = parent.join(format!("{prefix}{timestamp}"));
     let mut attempt = 1;
     let written = loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&copy_path)
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // The config can hold provider API keys, so the copy is owner-only
+        // whatever the umask is.
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&copy_path) {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt < 100 => {
                 copy_path = parent.join(format!("{prefix}{timestamp}-{attempt}"));
                 attempt += 1;
             }
-            opened => break opened.and_then(|mut file| file.write_all(raw.as_bytes())),
+            opened => {
+                break opened.and_then(|mut file| {
+                    file.write_all(raw.as_bytes())?;
+                    file.sync_all()
+                })
+            }
         }
     };
     match written {
@@ -789,6 +799,34 @@ max_action_output_chars = 20000
             copies,
             vec!["first = [".to_string(), "second = [".to_string()]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_copy_of_an_unreadable_config_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("panes-corrupt-config-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("temp dir should exist");
+        let path = dir.join("config.toml");
+
+        assert!(preserve_corrupt_config(&path, "api_key = ["));
+
+        let modes: Vec<u32> = fs::read_dir(&dir)
+            .expect("temp dir should be readable")
+            .flatten()
+            .map(|entry| {
+                entry
+                    .metadata()
+                    .expect("copy should have metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777
+            })
+            .collect();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(modes, vec![0o600]);
     }
 
     #[test]
