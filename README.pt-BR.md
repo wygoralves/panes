@@ -62,7 +62,7 @@ O Panes não é uma IDE completa, mas inclui um editor multiaba embutido para re
 - Terminal PTY nativo com xterm.js + WebGL
 - Grupos de terminal, split panes, resize arrastável e broadcast mode
 - Replay/resume de sessão e diagnósticos de renderer
-- Fluxos de detecção, instalação e abertura de harnesses para Codex CLI, Claude Code, Gemini CLI, Kiro, OpenCode, Kilo Code e Factory Droid
+- Fluxos de detecção, instalação e abertura de harnesses para Codex CLI, Claude Code, Gemini CLI (apenas licenças Enterprise e Cloud), Antigravity CLI, Kiro, OpenCode, Kilo Code e Factory Droid
 - Multi-launch que pode abrir uma sessão por harness, opcionalmente com uma git worktree por sessão
 
 ### Editor e UX Desktop

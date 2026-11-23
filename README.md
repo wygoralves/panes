@@ -62,7 +62,7 @@ Panes is not a full IDE, but it does ship with a built-in multi-tab editor for q
 - Native PTY terminal powered by xterm.js + WebGL
 - Terminal groups, split panes, draggable resize, and broadcast mode
 - Session replay/resume and renderer diagnostics
-- Harness detection, install, and launch flows for Codex CLI, Claude Code, Gemini CLI, Kiro, OpenCode, Kilo Code, and Factory Droid
+- Harness detection, install, and launch flows for Codex CLI, Claude Code, Gemini CLI (Enterprise and Cloud licenses only), Antigravity CLI, Kiro, OpenCode, Kilo Code, and Factory Droid
 - Multi-launch mode that can fan out one session per harness, optionally with one git worktree per session
 
 ### Editor & Desktop UX
