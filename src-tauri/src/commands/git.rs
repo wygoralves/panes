@@ -138,7 +138,8 @@ pub async fn soft_reset_last_commit(
 fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustLevelDto> {
     let common_dir = canonicalize_dir(worktree::git_common_dir(repo_path)?)?;
     let git_dir = canonicalize_dir(PathBuf::from(
-        run_git_read(repo_path, &["rev-parse", "--absolute-git-dir"])?.trim(),
+        run_git_read(repo_path, &["rev-parse", "--absolute-git-dir"])?
+            .trim_end_matches(['\n', '\r']),
     ))?;
 
     let mut matched: Option<TrustLevelDto> = None;
@@ -163,22 +164,38 @@ fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustL
         }
         Some(TrustLevelDto::Trusted) => TrustLevelDto::Standard,
         Some(level) => level,
-        None => match db::repos::find_deepest_repo_containing_path(db, repo_path, None)? {
-            Some(repo) if matches!(repo.trust_level, TrustLevelDto::Restricted) => {
-                TrustLevelDto::Restricted
+        // A repo with no row of its own (the scan stops at the first repo it
+        // finds) stays restricted inside a restricted repo, whether it is
+        // reached through its checkout or through the main checkout beside
+        // its common dir.
+        None => {
+            let main_checkout = common_dir.parent().map(|dir| dir.to_string_lossy());
+            let mut level = TrustLevelDto::Standard;
+            for path in std::iter::once(repo_path.into()).chain(main_checkout) {
+                if let Some(repo) = db::repos::find_deepest_repo_containing_path(db, &path, None)? {
+                    if matches!(repo.trust_level, TrustLevelDto::Restricted) {
+                        level = TrustLevelDto::Restricted;
+                    }
+                }
             }
-            _ => TrustLevelDto::Standard,
-        },
+            level
+        }
     })
 }
 
 /// The common dir of a registered repo, read in process the way git reads
 /// it: a linked worktree's git dir names it in a `commondir` file.
+/// Only a regular file is read, so a pipe planted there cannot block.
 fn registered_common_dir(path: &str) -> Option<PathBuf> {
     let git_dir = git2::Repository::open(path).ok()?.path().to_path_buf();
-    let common_dir = match std::fs::read_to_string(git_dir.join("commondir")) {
-        Ok(relative) => git_dir.join(relative.trim()),
-        Err(_) => git_dir,
+    let commondir = git_dir.join("commondir");
+    let common_dir = if commondir.is_file() {
+        let relative = std::fs::read_to_string(&commondir).ok()?;
+        git_dir.join(relative.trim_end_matches(['\n', '\r']))
+    } else if commondir.exists() {
+        return None;
+    } else {
+        git_dir
     };
     common_dir.canonicalize().ok()
 }
@@ -191,7 +208,14 @@ fn trust_rank(level: &TrustLevelDto) -> u8 {
     }
 }
 
+/// Resolves a directory git printed. A name that was not UTF-8 was changed
+/// when decoded and could resolve to a different directory, so it is refused.
 fn canonicalize_dir(dir: PathBuf) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        !dir.to_string_lossy().contains(char::REPLACEMENT_CHARACTER),
+        "git returned a directory Panes cannot read: {}",
+        dir.display()
+    );
     dir.canonicalize()
         .with_context(|| format!("failed to resolve '{}'", dir.display()))
 }
@@ -980,7 +1004,75 @@ mod tests {
             trust(nested.to_str().unwrap()),
             TrustLevelDto::Restricted
         ));
+        // The nested repo has no row; its own outside worktree stays restricted.
+        run_git(
+            nested.to_str().unwrap(),
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
+        )
+        .expect("commit in nested repo");
+        let nested_outside = sibling("nested-outside");
+        worktree::add_worktree(
+            nested.to_str().unwrap(),
+            nested_outside.to_str().unwrap(),
+            "nested-wt",
+            None,
+        )
+        .expect("add worktree of the nested repo");
+        assert!(matches!(
+            trust(nested_outside.to_str().unwrap()),
+            TrustLevelDto::Restricted
+        ));
+        let _ = fs::remove_dir_all(&nested_outside);
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_in_another_repo_does_not_block_the_trust_lookup() {
+        let repo = TestRepo::init();
+        let other = repo.path.join("other");
+        fs::create_dir_all(&other).expect("create other repo dir");
+        run_git(other.to_str().unwrap(), &["init", "-q"]).expect("init other repo");
+        let fifo = std::ffi::CString::new(other.join(".git/commondir").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0, "mkfifo");
+        crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "other",
+            other.to_str().unwrap(),
+            "main",
+            true,
+        )
+        .expect("register other repo");
+
+        let db = repo.state.db.clone();
+        let path = repo.path_str().to_string();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(repo_trust_level(&db, &path).map(|level| level.as_str()));
+        });
+
+        let result = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the trust lookup must not block");
+        assert!(result.is_ok(), "{result:?}");
+        // Unblock a reader that may still wait on the pipe; with no reader
+        // a non-blocking open fails at once.
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(other.join(".git/commondir"));
     }
 
     #[tokio::test]

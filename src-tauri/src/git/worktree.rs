@@ -65,7 +65,8 @@ pub fn add_worktree(
 pub fn git_common_dir(repo_path: &str) -> anyhow::Result<PathBuf> {
     let output = run_git_read(repo_path, &["rev-parse", "--git-common-dir"])
         .context("failed to resolve the git common directory")?;
-    let resolved = output.trim();
+    // Only git's line ending is stripped: a path can end in a space.
+    let resolved = output.trim_end_matches(['\n', '\r']);
     if resolved.is_empty() {
         anyhow::bail!("git returned an empty common directory for '{repo_path}'");
     }
