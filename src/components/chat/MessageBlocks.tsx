@@ -87,6 +87,7 @@ import {
 } from "../../lib/parseDiff";
 import { getMessageBlockKey } from "./messageBlockKeys";
 import { isVisibleMessageBlock } from "./messageBlockVisibility";
+import { noticeCopy } from "./noticeCopy";
 import { groupSubagentBlocks, subagentDisplayName, subagentTone } from "../../lib/subagentBlocks";
 import {
   VirtualizedDiffBody,
@@ -591,14 +592,16 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
 }
 
 function NoticeBlockView({ block }: { block: NoticeBlock }) {
+  const { t } = useTranslation("chat");
+  const { title, message } = noticeCopy(t, block);
   return (
     <div className="msg-notice">
       <span className="msg-block-tile msg-block-tile--info">
         <Info size={11} />
       </span>
       <div className="msg-notice-content">
-        <div className="msg-notice-title">{block.title}</div>
-        <div className="msg-notice-message">{block.message}</div>
+        <div className="msg-notice-title">{title}</div>
+        <div className="msg-notice-message">{message}</div>
       </div>
     </div>
   );

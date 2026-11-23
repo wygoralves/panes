@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Bridges the Claude Agent SDK to a stdio-based JSON-line protocol for Panes.
 
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -1405,9 +1406,16 @@ function buildPermissionHandler({
   networkEnabled = allowNetwork,
   approvalPolicy,
   allowedTools = [],
+  // False when the thread expects the OS sandbox but it cannot run here.
+  sandboxAvailable = true,
 }) {
   const normalizedRoots = writableRoots.map((root) => path.resolve(root));
-  const permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
+  let permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
+  // "trusted" leans on the sandbox to confine commands. Without it, commands
+  // run with the user's full access, so they wait for approval instead.
+  if (!sandboxAvailable && permissionMode === "trusted") {
+    permissionMode = "standard";
+  }
   const allowedToolNames = new Set(allowedTools);
 
   return async (toolName, input, options) => {
@@ -2070,6 +2078,80 @@ function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork, { cwd, pe
   };
 }
 
+// Test hook that can only make Panes stricter: it reports the OS sandbox as
+// unavailable so the fallback runs on any host.
+const forcedSandboxUnavailableReason =
+  process.env.PANES_CLAUDE_SANDBOX_UNAVAILABLE?.trim() || null;
+const SANDBOX_PROBE_TIMEOUT_MS = 5_000;
+let sandboxAvailabilityPromise = null;
+
+async function isExecutableOnPath(binary) {
+  const directories = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const directory of directories) {
+    try {
+      await access(path.join(directory, binary), fsConstants.X_OK);
+      return true;
+    } catch {
+      // Not in this directory.
+    }
+  }
+  return false;
+}
+
+async function probeSandboxAvailability() {
+  if (forcedSandboxUnavailableReason) {
+    return { available: false, reason: forcedSandboxUnavailableReason };
+  }
+  if (process.platform === "darwin") {
+    return { available: true };
+  }
+  if (process.platform === "win32") {
+    return { available: false, reason: "windows" };
+  }
+  if (process.platform !== "linux") {
+    return { available: false, reason: "unsupported_platform" };
+  }
+  for (const binary of ["bwrap", "socat"]) {
+    if (!(await isExecutableOnPath(binary))) {
+      return { available: false, reason: `missing_${binary}` };
+    }
+  }
+  // bubblewrap can be installed and still fail to start, for example when
+  // AppArmor blocks unprivileged user namespaces on Ubuntu, so start one.
+  try {
+    await execFileAsync("bwrap", ["--unshare-net", "--ro-bind", "/", "/", "true"], {
+      timeout: SANDBOX_PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return { available: false, reason: "bwrap_failed" };
+  }
+  return { available: true };
+}
+
+// The Claude Code CLI runs commands unsandboxed when the OS sandbox cannot
+// start (failIfUnavailable is false), so Panes checks for it itself.
+function detectSandboxAvailability() {
+  sandboxAvailabilityPromise ??= probeSandboxAvailability().catch(() => ({
+    available: false,
+    reason: "probe_failed",
+  }));
+  return sandboxAvailabilityPromise;
+}
+
+function sandboxUnavailableHint(reason) {
+  switch (reason) {
+    case "windows":
+      return "Native Windows has no OS sandbox for Claude commands; WSL2 provides one.";
+    case "missing_bwrap":
+    case "missing_socat":
+      return "Install bubblewrap and socat to sandbox Claude commands on Linux.";
+    case "bwrap_failed":
+      return "bubblewrap could not start a sandbox; on Ubuntu, allow unprivileged user namespaces in AppArmor.";
+    default:
+      return "This system cannot run the OS sandbox for Claude commands.";
+  }
+}
+
 const PROJECT_INSTRUCTION_FILES = ["CLAUDE.md", path.join(".claude", "CLAUDE.md")];
 const MAX_PROJECT_INSTRUCTION_CHARS = 40_000;
 
@@ -2185,6 +2267,10 @@ async function handleQuery(req) {
     const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
     const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
     const networkEnabled = effectiveAllowNetwork(normalizedSandboxMode, allowNetwork);
+    const sandboxAvailability =
+      normalizedSandboxMode === "danger-full-access"
+        ? { available: true }
+        : await detectSandboxAvailability();
     const permissionMode = resolvePermissionMode(approvalPolicy, Boolean(allowNetwork));
     // Only a Trusted repo may run its own settings: hooks, env, apiKeyHelper
     // and .mcp.json servers all execute outside the sandbox and approvals.
@@ -2223,6 +2309,17 @@ async function handleQuery(req) {
       });
     }
 
+    if (!sandboxAvailability.available) {
+      emit({
+        id,
+        type: "notice",
+        kind: "claude_sandbox_unavailable",
+        level: "warning",
+        title: "OS sandbox unavailable",
+        message: `${sandboxUnavailableHint(sandboxAvailability.reason)} Panes asks before each command and file change, and approved commands run with your full file and network access.`,
+      });
+    }
+
     const options = applyClaudeRuntime({
       cwd: sessionCwd,
       additionalDirectories: additionalDirectoriesForSandbox(
@@ -2249,6 +2346,7 @@ async function handleQuery(req) {
         networkEnabled,
         approvalPolicy,
         allowedTools: toolList,
+        sandboxAvailable: sandboxAvailability.available,
       }),
       // A Trusted repo loads user, project and local settings, matching the
       // Claude Code CLI default. Any other repo loads only the user's own

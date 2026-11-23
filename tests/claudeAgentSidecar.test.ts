@@ -480,6 +480,93 @@ describe("claude-agent-sdk-server sidecar", () => {
     }
   });
 
+  it("asks before commands and warns when the OS sandbox is unavailable", async () => {
+    const harness = await spawnHarness(
+      {
+        steps: [
+          {
+            type: "permission",
+            toolName: "Read",
+            input: { file_path: path.join(repoRoot, "package.json") },
+            toolUseID: "read-no-sandbox",
+          },
+          {
+            type: "permission",
+            toolName: "Bash",
+            input: { command: "touch probe.txt" },
+            toolUseID: "bash-no-sandbox",
+          },
+        ],
+        emitObservationResult: true,
+        sessionId: "session-no-sandbox",
+      },
+      { PANES_CLAUDE_SANDBOX_UNAVAILABLE: "windows" },
+    );
+
+    harness.send({
+      id: "query-no-sandbox",
+      method: "query",
+      params: {
+        prompt: "run a command",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sandboxMode: "workspace-write",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    const notice = await harness.waitFor(
+      (event) => event.id === "query-no-sandbox" && event.type === "notice",
+    );
+    expect(notice.kind).toBe("claude_sandbox_unavailable");
+    expect(notice.level).toBe("warning");
+
+    const approval = await harness.waitFor(
+      (event) => event.id === "query-no-sandbox" && event.type === "approval_requested",
+    );
+    harness.send({
+      method: "approval_response",
+      params: { approvalId: approval.approvalId, response: { decision: "decline" } },
+    });
+    await harness.waitFor(
+      (event) => event.id === "query-no-sandbox" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-no-sandbox");
+    expect(observations[0]?.result.behavior).toBe("allow");
+    expect(observations[1]?.result.behavior).toBe("deny");
+  });
+
+  it("skips the sandbox notice under full access", async () => {
+    const harness = await spawnHarness(
+      { steps: [], emitObservationResult: true, sessionId: "session-full-no-sandbox" },
+      { PANES_CLAUDE_SANDBOX_UNAVAILABLE: "windows" },
+    );
+
+    harness.send({
+      id: "query-full-no-sandbox",
+      method: "query",
+      params: {
+        prompt: "run",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sandboxMode: "danger-full-access",
+      },
+    });
+    await harness.waitFor(
+      (event) => event.id === "query-full-no-sandbox" && event.type === "turn_completed",
+    );
+
+    expect(
+      harness.events.some(
+        (event) =>
+          event.id === "query-full-no-sandbox" &&
+          event.type === "notice" &&
+          event.kind === "claude_sandbox_unavailable",
+      ),
+    ).toBe(false);
+  });
+
   it("skips a task update for an id it never saw created", async () => {
     const harness = await spawnHarness({
       steps: [
