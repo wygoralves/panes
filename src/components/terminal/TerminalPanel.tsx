@@ -6,7 +6,7 @@ import { useHarnessStore } from "../../stores/harnessStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
-import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
+import { hasAppShortcutModifier, isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { ToggleOptionCard } from "../shared/ToggleOptionCard";
 import { getHarnessIcon } from "../shared/HarnessLogos";
@@ -2286,7 +2286,7 @@ function createCachedTerminal(
       return false;
     }
     // Block broadcast shortcut from reaching the shell
-    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
+    if (hasAppShortcutModifier(event) && event.shiftKey && event.key.toLowerCase() === "i") return false;
     if (event.metaKey && !event.ctrlKey && event.key === "Backspace") {
       broadcastWrite("\x15");
       return false;
@@ -2296,8 +2296,8 @@ function createCachedTerminal(
       return false;
     }
     const k = event.key.toLowerCase();
-    if (event.metaKey && (k === "d" || k === "t")) return false;
-    if (event.ctrlKey && k === "t") return false;
+    if (event.metaKey && k === "d") return false;
+    if (hasAppShortcutModifier(event) && k === "t") return false;
     // Cmd+Arrow (macOS) / Home/End (Linux/Windows) → line navigation
     const isMac = isMacDesktop();
     if (isMac && event.metaKey) {
