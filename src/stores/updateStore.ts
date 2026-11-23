@@ -56,9 +56,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 
   downloadAndInstall: async () => {
-    // On Windows the installer exits the app inside downloadAndInstall, and the
-    // relaunch elsewhere skips the window close guard, so ask first.
-    if (!(await confirmDiscardUnsavedWork())) return;
     set({
       status: "downloading",
       error: null,
@@ -77,7 +74,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         });
         return;
       }
-      await update.downloadAndInstall((event) => {
+      await update.download((event) => {
         if (event.event === "Started") {
           set({
             downloadPhase: "downloading",
@@ -97,6 +94,14 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
           downloadedBytes: state.totalBytes ?? state.downloadedBytes,
         }));
       });
+      // Ask only now, so edits made during the download count too. On Windows
+      // the installer exits the app inside install(), and relaunch() skips the
+      // window close guard.
+      if (!(await confirmDiscardUnsavedWork())) {
+        set({ status: "available", downloadPhase: "idle", downloadedBytes: 0, totalBytes: null });
+        return;
+      }
+      await update.install();
       set({ status: "ready" });
       await relaunch();
     } catch (err) {

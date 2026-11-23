@@ -37,28 +37,37 @@ describe("updateStore", () => {
     updaterMocks.confirmDiscardUnsavedWork.mockResolvedValue(true);
   });
 
-  it("does not start the install when the user keeps unsaved editor changes", async () => {
+  it("asks about unsaved editor changes after the download and before installing", async () => {
+    const install = vi.fn();
+    const download = vi.fn(async () => {
+      expect(updaterMocks.confirmDiscardUnsavedWork).not.toHaveBeenCalled();
+    });
+    updaterMocks.check.mockResolvedValue({ download, install });
     updaterMocks.confirmDiscardUnsavedWork.mockResolvedValue(false);
 
     await useUpdateStore.getState().downloadAndInstall();
 
-    expect(updaterMocks.check).not.toHaveBeenCalled();
+    expect(download).toHaveBeenCalledOnce();
+    expect(updaterMocks.confirmDiscardUnsavedWork).toHaveBeenCalledOnce();
+    expect(install).not.toHaveBeenCalled();
     expect(updaterMocks.relaunch).not.toHaveBeenCalled();
-    expect(useUpdateStore.getState().status).toBe("idle");
+    expect(useUpdateStore.getState()).toMatchObject({ status: "available", downloadPhase: "idle" });
   });
 
   it("tracks determinate download progress before installation", async () => {
-    const downloadAndInstall = vi.fn(async (onEvent: (event: unknown) => void) => {
+    const install = vi.fn();
+    const download = vi.fn(async (onEvent: (event: unknown) => void) => {
       onEvent({ event: "Started", data: { contentLength: 1000 } });
       onEvent({ event: "Progress", data: { chunkLength: 400 } });
       onEvent({ event: "Progress", data: { chunkLength: 600 } });
       onEvent({ event: "Finished" });
     });
-    updaterMocks.check.mockResolvedValue({ downloadAndInstall });
+    updaterMocks.check.mockResolvedValue({ download, install });
 
     await useUpdateStore.getState().downloadAndInstall();
 
-    expect(downloadAndInstall).toHaveBeenCalledOnce();
+    expect(download).toHaveBeenCalledOnce();
+    expect(install).toHaveBeenCalledOnce();
     expect(useUpdateStore.getState()).toMatchObject({
       status: "ready",
       downloadPhase: "installing",
@@ -70,7 +79,8 @@ describe("updateStore", () => {
 
   it("tracks bytes when the server does not provide a total size", async () => {
     updaterMocks.check.mockResolvedValue({
-      downloadAndInstall: async (onEvent: (event: unknown) => void) => {
+      install: vi.fn(),
+      download: async (onEvent: (event: unknown) => void) => {
         onEvent({ event: "Started", data: {} });
         onEvent({ event: "Progress", data: { chunkLength: 256 } });
         onEvent({ event: "Finished" });
