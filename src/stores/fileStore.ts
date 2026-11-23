@@ -661,8 +661,8 @@ async function writeTabToDisk(
       const disk = await ipc.readFile(tab.rootPath, tab.filePath);
       diskContent = normalizeLineEndings(disk.content);
       unchanged = !disk.isBinary && diskContent === tab.savedContent;
-      // Same text: keep the line ending the file has on disk now.
-      lineEnding = detectLineEnding(disk.content);
+      // Same text: keep the line ending the file has on disk now, if it has one.
+      if (disk.content.includes("\n")) lineEnding = detectLineEnding(disk.content);
     } catch {
       // Treated as a conflict below.
     }

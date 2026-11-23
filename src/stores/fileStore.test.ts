@@ -624,4 +624,18 @@ describe("fileStore", () => {
     expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "a\r\nb\r\nc\r\n", "ws-1");
     expect(useFileStore.getState().tabs[0]!.lineEnding).toBe("\r\n");
   });
+
+  it("keeps a CRLF tab CRLF after a save leaves the file on one line", async () => {
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("a\r\nb\r\n"));
+    await useFileStore.getState().openFile("/repo", "win.bat");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "a");
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("a"));
+
+    useFileStore.getState().setTabContent(tabId, "a\nb\n");
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
+
+    expect(mockIpc.writeFile).toHaveBeenLastCalledWith("/repo", "win.bat", "a\r\nb\r\n", "ws-1");
+  });
 });
