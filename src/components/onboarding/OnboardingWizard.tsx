@@ -414,7 +414,7 @@ function ProviderRow({
   onOpenWebsite: () => void;
 }) {
   const { t } = useTranslation(["setup", "app"]);
-  const installCommand = getHarnessInstallCommand(harness.id, preferredInstallMethod);
+  const installCommand = getHarnessInstallCommand(harness, preferredInstallMethod);
   const canInstall = harness.canAutoInstall && Boolean(installCommand);
 
   return (

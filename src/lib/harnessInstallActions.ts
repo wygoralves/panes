@@ -25,15 +25,25 @@ const NPM_PACKAGE_NAMES: Readonly<Record<string, string>> = {
 
 export type HarnessTileAction = "launch" | "install" | "manual";
 
+type HarnessInstallTarget = Pick<HarnessInfo, "id" | "installCommandDisplay">;
+
 export function getHarnessInstallCommand(
-  harnessId: string,
+  harness: string | HarnessInstallTarget,
   preferredInstallMethod: string | null = null,
 ): string | null {
+  const harnessId = typeof harness === "string" ? harness : harness.id;
   if (preferredInstallMethod === "mise") {
     const npmPackage = NPM_PACKAGE_NAMES[harnessId];
     if (npmPackage) {
       return `mise use -g npm:${npmPackage}`;
     }
+  }
+
+  // The backend picks the command for the host OS (Windows gets PowerShell
+  // installers instead of curl | bash). The table covers id-only lookups and
+  // hosts that do not send it.
+  if (typeof harness !== "string" && harness.installCommandDisplay !== undefined) {
+    return harness.installCommandDisplay;
   }
 
   return HARNESS_INSTALL_COMMANDS[harnessId] ?? null;
@@ -44,7 +54,7 @@ export function getHarnessTileAction(harness: HarnessInfo): HarnessTileAction | 
     return "launch";
   }
 
-  if (harness.canAutoInstall && getHarnessInstallCommand(harness.id)) {
+  if (harness.canAutoInstall && getHarnessInstallCommand(harness)) {
     return "install";
   }
 

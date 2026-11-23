@@ -53,7 +53,7 @@ function HarnessTile({
   onOpenLaunchSettings: () => void;
 }) {
   const { t } = useTranslation("app");
-  const installCmd = getHarnessInstallCommand(harness.id, preferredInstallMethod);
+  const installCmd = getHarnessInstallCommand(harness, preferredInstallMethod);
   const action = getHarnessTileAction(harness);
 
   return (
@@ -199,13 +199,13 @@ export function HarnessPanel() {
     if (command) await spawnInTerminal(command);
   }
 
-  function handleInstallInTerminal(harnessId: string) {
-    const cmd = getHarnessInstallCommand(harnessId, preferredInstallMethod);
+  function handleInstallInTerminal(harness: HarnessInfo) {
+    const cmd = getHarnessInstallCommand(harness, preferredInstallMethod);
     if (cmd) void spawnInTerminal(cmd);
   }
 
-  function handleCopyCommand(harnessId: string) {
-    const cmd = getHarnessInstallCommand(harnessId, preferredInstallMethod);
+  function handleCopyCommand(harness: HarnessInfo) {
+    const cmd = getHarnessInstallCommand(harness, preferredInstallMethod);
     if (cmd) {
       void copyTextToClipboard(cmd)
         .then(() => {
@@ -292,8 +292,8 @@ export function HarnessPanel() {
                   description={t(`harnesses.descriptions.${h.id}`, { defaultValue: h.description })}
                   preferredInstallMethod={preferredInstallMethod}
                   launchArgs={launchArgs[h.id]}
-                  onInstallInTerminal={() => handleInstallInTerminal(h.id)}
-                  onCopyCommand={() => handleCopyCommand(h.id)}
+                  onInstallInTerminal={() => handleInstallInTerminal(h)}
+                  onCopyCommand={() => handleCopyCommand(h)}
                   onLaunch={() => void handleLaunch(h.id)}
                   onOpenWebsite={() => handleOpenWebsite(h.website)}
                   onOpenLaunchSettings={() => setSettingsHarness(h)}
