@@ -611,6 +611,14 @@ jobs:
             files+=("${matches[0]}")
           done
 
+          # --clobber deletes before it uploads, so a rerun must never touch a
+          # published release.
+          is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          if [ "$is_draft" != "true" ]; then
+            echo "::error::$RELEASE_TAG is already published; refusing to replace its downloads."
+            exit 1
+          fi
+
           gh release upload "$RELEASE_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
 
   build_manifest:
@@ -658,7 +666,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
-        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+        # A rerun of an older run must not roll latest, the manifest and the
+        # cask back behind a newer release that already shipped.
+        run: |
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          newest="$(printf '%s\n%s\n' "$latest" "$RELEASE_TAG" | sort -V | tail -n 1)"
+          if [ "$newest" != "$RELEASE_TAG" ]; then
+            echo "::error::$latest is newer than $RELEASE_TAG and already published; refusing to publish $RELEASE_TAG."
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
   update_manifest:
     name: Publish Update Manifest
