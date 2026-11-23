@@ -8551,8 +8551,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(defaults, vec!["gpt-6.2-sol"]);
-        assert!(models.iter().all(|model| !model.id.starts_with("gpt-5")));
-        assert!(models.iter().all(|model| model.upgrade.is_none()));
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol", "gpt-6-luna"]
+        );
     }
 
     #[test]
