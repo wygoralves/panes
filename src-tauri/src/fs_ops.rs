@@ -148,8 +148,17 @@ pub fn create_file(repo_path: &str, file_path: &str) -> anyhow::Result<()> {
         fs::create_dir_all(parent).context("failed to create parent directories")?;
     }
 
-    anyhow::ensure!(!target.exists(), "file already exists");
-    fs::write(&target, "").context("failed to create file")?;
+    // symlink_metadata also sees dangling links, which exists() reports as
+    // missing; create_new refuses to follow a link that appears in between.
+    anyhow::ensure!(
+        fs::symlink_metadata(&target).is_err(),
+        "file already exists"
+    );
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .context("failed to create file")?;
     Ok(())
 }
 
@@ -272,6 +281,16 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
         .context("failed to canonicalize repo path")?;
     let target = repo_root.join(file_path);
 
+    // A symlink whose target is missing would be followed by fs::write and
+    // create a file wherever it points, so it must resolve inside the repo.
+    let is_symlink = fs::symlink_metadata(&target)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false);
+    anyhow::ensure!(
+        !is_symlink || target.exists(),
+        "cannot write through a broken symlink"
+    );
+
     // If the file already exists, canonicalize and verify the full path
     if target.exists() {
         let canonical = target
@@ -301,7 +320,7 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{create_dir, create_file, delete_path, rename_path};
+    use super::{create_dir, create_file, delete_path, rename_path, write_file};
     use uuid::Uuid;
 
     #[cfg(unix)]
@@ -435,6 +454,40 @@ mod tests {
 
             assert!(root.join("target.txt").is_file());
             assert!(fs::symlink_metadata(root.join("link.txt")).is_err());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_file_refuses_dangling_symlink_pointing_outside_repo() {
+        with_temp_repo(|sandbox| {
+            let repo = sandbox.join("repo");
+            let outside = sandbox.join("outside");
+            fs::create_dir_all(&repo).expect("repo should exist");
+            fs::create_dir_all(&outside).expect("outside should exist");
+            symlink(outside.join("pwned.txt"), repo.join("notes.md")).expect("symlink");
+
+            write_file(repo.to_string_lossy().as_ref(), "notes.md", "hello")
+                .expect_err("write through a dangling symlink should be refused");
+
+            assert!(!outside.join("pwned.txt").exists());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_file_refuses_dangling_symlink_pointing_outside_repo() {
+        with_temp_repo(|sandbox| {
+            let repo = sandbox.join("repo");
+            let outside = sandbox.join("outside");
+            fs::create_dir_all(&repo).expect("repo should exist");
+            fs::create_dir_all(&outside).expect("outside should exist");
+            symlink(outside.join("pwned.txt"), repo.join("new.txt")).expect("symlink");
+
+            create_file(repo.to_string_lossy().as_ref(), "new.txt")
+                .expect_err("create over a dangling symlink should be refused");
+
+            assert!(!outside.join("pwned.txt").exists());
         });
     }
 }
