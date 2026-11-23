@@ -17,7 +17,7 @@ use crate::models::{
 };
 use crate::path_utils;
 
-use super::cli_fallback::{run_git, run_git_read};
+use super::cli_fallback::{run_git, run_git_network, run_git_read, GIT_NETWORK_TIMEOUT};
 
 const FILE_TREE_DEFAULT_PAGE_SIZE: usize = 2000;
 const FILE_TREE_MAX_PAGE_SIZE: usize = 5000;
@@ -482,12 +482,17 @@ pub fn soft_reset_last_commit(repo_path: &str) -> anyhow::Result<()> {
 }
 
 pub fn fetch_repo(repo_path: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["fetch", "--all", "--prune"]).context("failed to fetch from remotes")?;
+    run_git_network(
+        repo_path,
+        &["fetch", "--all", "--prune"],
+        GIT_NETWORK_TIMEOUT,
+    )
+    .context("failed to fetch from remotes")?;
     Ok(())
 }
 
 pub fn pull_repo(repo_path: &str) -> anyhow::Result<()> {
-    match run_git(repo_path, &["pull", "--ff-only"]) {
+    match run_git_network(repo_path, &["pull", "--ff-only"], GIT_NETWORK_TIMEOUT) {
         Ok(_) => Ok(()),
         Err(error) => {
             if is_no_upstream_error(&error) {
@@ -501,7 +506,7 @@ pub fn pull_repo(repo_path: &str) -> anyhow::Result<()> {
 }
 
 pub fn push_repo(repo_path: &str) -> anyhow::Result<()> {
-    match run_git(repo_path, &["push"]) {
+    match run_git_network(repo_path, &["push"], GIT_NETWORK_TIMEOUT) {
         Ok(_) => Ok(()),
         Err(error) => {
             if !is_no_upstream_error(&error) {
@@ -521,7 +526,7 @@ pub fn push_repo(repo_path: &str) -> anyhow::Result<()> {
                 remote_name.as_str(),
                 branch_name.as_str(),
             ];
-            run_git(repo_path, &push_args)
+            run_git_network(repo_path, &push_args, GIT_NETWORK_TIMEOUT)
                 .context("failed to push current branch and set upstream")?;
             Ok(())
         }
