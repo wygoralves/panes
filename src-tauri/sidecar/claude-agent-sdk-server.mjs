@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Bridges the Claude Agent SDK to a stdio-based JSON-line protocol for Panes.
 
-import { access, readFile } from "node:fs/promises";
+import { access, open, readFile, realpath, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
@@ -2161,20 +2161,43 @@ function sandboxUnavailableHint(reason) {
 const PROJECT_INSTRUCTION_FILES = ["CLAUDE.md", path.join(".claude", "CLAUDE.md")];
 const MAX_PROJECT_INSTRUCTION_CHARS = 40_000;
 
+// Reads the start of one instruction file. Only a regular file whose real path
+// stays inside the project counts, so a repo cannot link its instructions to
+// files elsewhere on disk, and a FIFO or huge file cannot stall the turn.
+async function readProjectInstructionFile(projectRoot, filePath) {
+  let handle;
+  try {
+    const resolved = await realpath(filePath);
+    if (!resolved.startsWith(projectRoot + path.sep) || !(await stat(resolved)).isFile()) {
+      return null;
+    }
+    handle = await open(resolved, "r");
+    // UTF-8 needs at most 4 bytes per character.
+    const buffer = Buffer.alloc(MAX_PROJECT_INSTRUCTION_CHARS * 4);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.toString("utf8", 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await handle?.close();
+  }
+}
+
 // Repos that are not Trusted load no project settings, and the SDK only reads
 // CLAUDE.md through the project source. The instructions are plain text, so
 // Panes reads them itself and appends them to the system prompt.
 async function readProjectInstructions(cwd) {
+  let projectRoot;
+  try {
+    projectRoot = await realpath(cwd);
+  } catch {
+    return null;
+  }
   const sections = [];
   for (const relativePath of PROJECT_INSTRUCTION_FILES) {
     const filePath = path.join(cwd, relativePath);
-    let content;
-    try {
-      content = await readFile(filePath, "utf8");
-    } catch {
-      continue;
-    }
-    const trimmed = content.trim().slice(0, MAX_PROJECT_INSTRUCTION_CHARS);
+    const content = await readProjectInstructionFile(projectRoot, filePath);
+    const trimmed = content?.trim().slice(0, MAX_PROJECT_INSTRUCTION_CHARS);
     if (trimmed) {
       sections.push(
         `Contents of ${filePath} (project instructions, checked into the codebase):\n\n${trimmed}`,

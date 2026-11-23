@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -431,6 +431,41 @@ describe("claude-agent-sdk-server sidecar", () => {
       expect(systemPrompt.append).toContain("Prefer small diffs.");
     } finally {
       await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores project instructions that link outside the project", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "panes-untrusted-link-"));
+    const outsideDir = await mkdtemp(path.join(tmpdir(), "panes-outside-"));
+    try {
+      await writeFile(path.join(outsideDir, "secret.txt"), "outside-the-project");
+      await symlink(path.join(outsideDir, "secret.txt"), path.join(projectDir, "CLAUDE.md"));
+      await symlink(outsideDir, path.join(projectDir, ".claude"));
+      await writeFile(path.join(outsideDir, "CLAUDE.md"), "outside-through-a-linked-dir");
+      const harness = await spawnHarness({
+        steps: [],
+        emitObservationResult: true,
+        emitQueryOptions: true,
+        sessionId: "session-untrusted-link",
+      });
+
+      harness.send({
+        id: "query-untrusted-link",
+        method: "query",
+        params: { prompt: "inspect options", cwd: projectDir },
+      });
+      await harness.waitFor(
+        (event) => event.id === "query-untrusted-link" && event.type === "turn_completed",
+      );
+
+      const observations = parseObservationResults(harness, "query-untrusted-link");
+      expect(observations[0]?.result.systemPrompt).toEqual({
+        type: "preset",
+        preset: "claude_code",
+      });
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
     }
   });
 
