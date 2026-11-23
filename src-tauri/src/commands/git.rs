@@ -1077,7 +1077,18 @@ mod tests {
         run_git(nested.to_str().unwrap(), &["init", "-q"]).expect("init nested repo");
 
         let level = repo_trust_level(&repo.state.db, nested.to_str().unwrap()).expect("trust");
+        assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
 
+        // Swap the levels so a lookup that keeps either row fails one case.
+        for row in crate::db::repos::list_discovered_repos(&repo.state.db).expect("rows") {
+            let swapped = match row.trust_level {
+                TrustLevelDto::Restricted => TrustLevelDto::Standard,
+                _ => TrustLevelDto::Restricted,
+            };
+            crate::db::repos::set_repo_trust_level(&repo.state.db, &row.id, swapped)
+                .expect("swap trust");
+        }
+        let level = repo_trust_level(&repo.state.db, nested.to_str().unwrap()).expect("trust");
         assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
     }
 
