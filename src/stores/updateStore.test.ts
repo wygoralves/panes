@@ -56,6 +56,20 @@ describe("updateStore", () => {
     expect(useUpdateStore.getState()).toMatchObject({ status: "available", downloadPhase: "idle" });
   });
 
+  it("releases the downloaded update when installing fails", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    updaterMocks.check.mockResolvedValue({
+      download: vi.fn(),
+      install: vi.fn().mockRejectedValue(new Error("install failed")),
+      close,
+    });
+
+    await useUpdateStore.getState().downloadAndInstall();
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(useUpdateStore.getState()).toMatchObject({ status: "error", error: "install failed" });
+  });
+
   it("tracks determinate download progress before installation", async () => {
     const install = vi.fn();
     const download = vi.fn(async (onEvent: (event: unknown) => void) => {

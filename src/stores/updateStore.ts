@@ -63,8 +63,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       downloadedBytes: 0,
       totalBytes: null,
     });
+    let update: Awaited<ReturnType<typeof check>> = null;
     try {
-      const update = await check();
+      update = await check();
       if (!update) {
         set({
           status: "idle",
@@ -107,6 +108,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({ status: "ready" });
       await relaunch();
     } catch (err) {
+      // A failed install leaves the downloaded installer in native memory.
+      await update?.close().catch(() => undefined);
       set({
         status: "error",
         error: err instanceof Error ? err.message : "Update failed",
