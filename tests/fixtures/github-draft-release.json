@@ -1,0 +1,110 @@
+{
+  "url": "https://api.github.com/repos/wygoralves/panes/releases/382472300",
+  "assets_url": "https://api.github.com/repos/wygoralves/panes/releases/382472300/assets",
+  "upload_url": "https://uploads.github.com/repos/wygoralves/panes/releases/382472300/assets{?name,label}",
+  "html_url": "https://github.com/wygoralves/panes/releases/tag/untagged-6c1b9d0e4a7f2c3b5d8e",
+  "id": 382472300,
+  "tag_name": "v0.67.0",
+  "target_commitish": "master",
+  "name": "v0.67.0",
+  "draft": true,
+  "immutable": false,
+  "prerelease": false,
+  "created_at": "2026-11-23T04:11:05Z",
+  "published_at": null,
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543789931",
+      "id": 543789931,
+      "name": "Panes.app.tar.gz",
+      "label": "",
+      "content_type": "application/gzip",
+      "state": "uploaded",
+      "size": 202629606,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes.app.tar.gz"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543789930",
+      "id": 543789930,
+      "name": "Panes.app.tar.gz.sig",
+      "label": "",
+      "content_type": "application/pgp-signature",
+      "state": "uploaded",
+      "size": 404,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes.app.tar.gz.sig"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543780188",
+      "id": 543780188,
+      "name": "Panes_0.67.0_amd64.AppImage",
+      "label": "",
+      "content_type": "application/octet-stream",
+      "state": "uploaded",
+      "size": 188865016,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes_0.67.0_amd64.AppImage"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543780185",
+      "id": 543780185,
+      "name": "Panes_0.67.0_amd64.AppImage.sig",
+      "label": "",
+      "content_type": "application/pgp-signature",
+      "state": "uploaded",
+      "size": 416,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes_0.67.0_amd64.AppImage.sig"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543780187",
+      "id": 543780187,
+      "name": "Panes_0.67.0_amd64.deb",
+      "label": "",
+      "content_type": "application/x-debian-package",
+      "state": "uploaded",
+      "size": 112791404,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes_0.67.0_amd64.deb"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543780186",
+      "id": 543780186,
+      "name": "Panes_0.67.0_amd64.deb.sig",
+      "label": "",
+      "content_type": "application/pgp-signature",
+      "state": "uploaded",
+      "size": 412,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes_0.67.0_amd64.deb.sig"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543789932",
+      "id": 543789932,
+      "name": "Panes_0.67.0_universal.dmg",
+      "label": "",
+      "content_type": "application/x-apple-diskimage",
+      "state": "uploaded",
+      "size": 198186708,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes_0.67.0_universal.dmg"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543785484",
+      "id": 543785484,
+      "name": "Panes_0.67.0_x64-setup.exe",
+      "label": "",
+      "content_type": "application/x-msdos-program",
+      "state": "uploaded",
+      "size": 73108548,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes_0.67.0_x64-setup.exe"
+    },
+    {
+      "url": "https://api.github.com/repos/wygoralves/panes/releases/assets/543785483",
+      "id": 543785483,
+      "name": "Panes_0.67.0_x64-setup.exe.sig",
+      "label": "",
+      "content_type": "application/pgp-signature",
+      "state": "uploaded",
+      "size": 416,
+      "browser_download_url": "https://github.com/wygoralves/panes/releases/download/untagged-6c1b9d0e4a7f2c3b5d8e/Panes_0.67.0_x64-setup.exe.sig"
+    }
+  ],
+  "tarball_url": null,
+  "zipball_url": null,
+  "body": "## [0.67.0](https://github.com/wygoralves/panes/compare/v0.66.0...v0.67.0) (2026-11-23)\n\n### Bug Fixes\n\n* **ci:** keep releases as drafts until their downloads exist"
+}

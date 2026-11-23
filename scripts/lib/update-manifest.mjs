@@ -47,23 +47,25 @@ function resolveRequiredSingleAsset(matches, label) {
   return matches[0];
 }
 
+// Every platform is required: a release missing one would otherwise publish a
+// manifest that silently stops updating that platform.
 export function resolveUpdaterAssetPairs(assets) {
-  return UPDATER_PLATFORM_DEFINITIONS.flatMap((definition) => {
+  return UPDATER_PLATFORM_DEFINITIONS.map((definition) => {
     const bundles = findMatchingAssets(assets, definition.bundleMatch);
     const signatures = findMatchingAssets(assets, definition.signatureMatch);
-
-    if (bundles.length === 0 && signatures.length === 0) {
-      return [];
-    }
 
     const bundle = resolveRequiredSingleAsset(bundles, `${definition.label} asset`);
     const signature = resolveRequiredSingleAsset(signatures, `${definition.label} signature asset`);
 
-    return [{ ...definition, bundle, signature }];
+    return { ...definition, bundle, signature };
   });
 }
 
-export function buildStaticReleasePlatforms(resolvedAssetPairs, signatureByAssetName) {
+export function buildStaticReleasePlatforms(
+  resolvedAssetPairs,
+  signatureByAssetName,
+  assetUrl = (asset) => asset.browser_download_url,
+) {
   const platforms = {};
 
   for (const assetPair of resolvedAssetPairs) {
@@ -75,7 +77,7 @@ export function buildStaticReleasePlatforms(resolvedAssetPairs, signatureByAsset
     for (const platform of assetPair.platforms) {
       platforms[platform] = {
         signature,
-        url: assetPair.bundle.browser_download_url,
+        url: assetUrl(assetPair.bundle),
       };
     }
   }
