@@ -197,7 +197,9 @@ fn registered_common_dir(path: &str) -> Option<PathBuf> {
     let commondir = git_dir.join("commondir");
     let common_dir = if commondir.is_file() {
         let relative = std::fs::read_to_string(&commondir).ok()?;
-        git_dir.join(worktree::strip_git_line_end(&relative))
+        // Git drops every trailing CR and LF when it reads this file, so a
+        // CRLF or doubled line ending still names the same common dir.
+        git_dir.join(relative.trim_end_matches(['\n', '\r']))
     } else if commondir.exists() {
         return None;
     } else {
@@ -1075,6 +1077,32 @@ mod tests {
         run_git(nested.to_str().unwrap(), &["init", "-q"]).expect("init nested repo");
 
         let level = repo_trust_level(&repo.state.db, nested.to_str().unwrap()).expect("trust");
+
+        assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
+    }
+
+    #[test]
+    fn a_restricted_worktree_row_with_a_crlf_commondir_still_matches() {
+        let repo = TestRepo::init();
+        let root = repo.path.canonicalize().expect("canonical repo path");
+        let worktree = repo.add_worktree("feature");
+        let row = crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "feature",
+            &worktree,
+            "feature",
+            true,
+        )
+        .expect("register worktree");
+        crate::db::repos::set_repo_trust_level(&repo.state.db, &row.id, TrustLevelDto::Restricted)
+            .expect("restrict worktree");
+        // Git reads this file with every trailing CR and LF removed.
+        let commondir = root.join(".git/worktrees/feature/commondir");
+        let relative = fs::read_to_string(&commondir).expect("read commondir");
+        fs::write(&commondir, format!("{}\r\n\n", relative.trim_end())).expect("commondir");
+
+        let level = repo_trust_level(&repo.state.db, root.to_str().unwrap()).expect("trust");
 
         assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
     }
