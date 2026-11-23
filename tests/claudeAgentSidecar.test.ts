@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
@@ -23,6 +24,29 @@ const mockSdkModulePath = pathToFileURL(
   path.join(repoRoot, "tests", "fixtures", "claude-agent-sdk-mock.mjs"),
 ).href;
 
+// The sidecar probes the host for a working OS sandbox (bubblewrap and socat
+// on Linux), and its approval flow depends on the answer. Tests pin that answer
+// so they mean the same thing on every host: by default the sandbox works, and
+// a test that covers the fallback sets PANES_CLAUDE_SANDBOX_UNAVAILABLE. On
+// Linux, stub bwrap and socat that exit 0 come first on PATH, so the probe
+// finds them and its bwrap start check passes; macOS needs no tools.
+const sandboxToolsDir = mkdtempSync(path.join(tmpdir(), "panes-sandbox-tools-"));
+for (const tool of ["bwrap", "socat"]) {
+  const toolPath = path.join(sandboxToolsDir, tool);
+  writeFileSync(toolPath, "#!/bin/sh\nexit 0\n");
+  chmodSync(toolPath, 0o755);
+}
+const sandboxAvailableEnv: Record<string, string> = {
+  PANES_CLAUDE_SANDBOX_UNAVAILABLE: "",
+  ...(process.platform === "linux"
+    ? { PATH: `${sandboxToolsDir}${path.delimiter}${process.env.PATH ?? ""}` }
+    : {}),
+};
+
+afterAll(() => {
+  rmSync(sandboxToolsDir, { recursive: true, force: true });
+});
+
 class SidecarHarness {
   readonly child: ChildProcessWithoutNullStreams;
   readonly events: SidecarEvent[] = [];
@@ -43,6 +67,7 @@ class SidecarHarness {
         CLAUDE_AGENT_SDK_MODULE: mockSdkModulePath,
         CLAUDE_AGENT_SDK_MOCK_SCENARIO: JSON.stringify(scenario),
         PANES_DISABLE_CLAUDE_USAGE_FETCH: "1",
+        ...sandboxAvailableEnv,
         ...env,
       },
       stdio: ["pipe", "pipe", "pipe"],
@@ -320,6 +345,85 @@ describe("claude-agent-sdk-server sidecar", () => {
     );
   });
 
+  it("asks before writes inside the roots and still denies outside them without the OS sandbox", async () => {
+    const outsidePath = path.join(path.dirname(repoRoot), "outside.txt");
+    const harness = await spawnHarness(
+      {
+        steps: [
+          {
+            type: "permission",
+            toolName: "Write",
+            input: { file_path: path.join(repoRoot, "inside.txt") },
+            toolUseID: "write-inside-no-sandbox",
+          },
+          {
+            type: "permission",
+            toolName: "Write",
+            input: { file_path: outsidePath },
+            toolUseID: "write-outside-no-sandbox",
+          },
+        ],
+        emitObservationResult: true,
+        sessionId: "session-workspace-write-no-sandbox",
+      },
+      { PANES_CLAUDE_SANDBOX_UNAVAILABLE: "missing_bwrap" },
+    );
+
+    harness.send({
+      id: "query-workspace-write-no-sandbox",
+      method: "query",
+      params: {
+        prompt: "attempt writes",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sandboxMode: "workspace-write",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    const notice = await harness.waitFor(
+      (event) =>
+        event.id === "query-workspace-write-no-sandbox" && event.type === "notice",
+    );
+    expect(notice).toMatchObject({
+      kind: "claude_sandbox_unavailable",
+      level: "warning",
+      message: expect.stringContaining("Install bubblewrap and socat"),
+    });
+
+    const approval = await harness.waitFor(
+      (event) =>
+        event.id === "query-workspace-write-no-sandbox" &&
+        event.type === "approval_requested",
+    );
+    expect(approval.details).toEqual({ file_path: path.join(repoRoot, "inside.txt") });
+    harness.send({
+      method: "approval_response",
+      params: { approvalId: approval.approvalId, response: { decision: "accept" } },
+    });
+    await harness.waitFor(
+      (event) =>
+        event.id === "query-workspace-write-no-sandbox" && event.type === "turn_completed",
+    );
+
+    // Only the write inside the roots reached the user; the fence denied the
+    // other one before asking.
+    expect(
+      harness.events.filter(
+        (event) =>
+          event.id === "query-workspace-write-no-sandbox" &&
+          event.type === "approval_requested",
+      ),
+    ).toHaveLength(1);
+    const observations = parseObservationResults(harness, "query-workspace-write-no-sandbox");
+    expect(observations).toHaveLength(2);
+    expect(observations[0]?.result.behavior).toBe("allow");
+    expect(observations[1]?.result.behavior).toBe("deny");
+    expect(observations[1]?.result.message).toBe(
+      "This file path is outside the approved writable roots for the thread.",
+    );
+  });
+
   it("defaults workspace-write roots to cwd when writableRoots are omitted", async () => {
     const harness = await spawnHarness({
       steps: [
@@ -503,15 +607,15 @@ describe("claude-agent-sdk-server sidecar", () => {
         string,
         unknown
       >;
-      // A host without a working OS sandbox (a Linux runner without
-      // bubblewrap) downgrades trusted to approvals and says so in a notice.
-      const sandboxUnavailable = harness.events.some(
-        (event) =>
-          event.id === queryId &&
-          event.type === "notice" &&
-          event.kind === "claude_sandbox_unavailable",
-      );
-      const autoAllow = testCase.autoAllow && !sandboxUnavailable;
+      expect(
+        harness.events.some(
+          (event) =>
+            event.id === queryId &&
+            event.type === "notice" &&
+            event.kind === "claude_sandbox_unavailable",
+        ),
+      ).toBe(false);
+      const autoAllow = testCase.autoAllow;
       expect(sandbox.autoAllowBashIfSandboxed).toBe(autoAllow);
       // The CLI allows read-only commands before canUseTool unless an ask
       // rule matches, so every preset that asks names each shell tool.
@@ -521,7 +625,7 @@ describe("claude-agent-sdk-server sidecar", () => {
       expect(settings.permissions.ask).toEqual(
         autoAllow ? undefined : ["Bash", "PowerShell", "Monitor"],
       );
-      expect(sandbox.failIfUnavailable).toBe(!sandboxUnavailable);
+      expect(sandbox.failIfUnavailable).toBe(true);
       const filesystem = sandbox.filesystem as Record<string, unknown>;
       if (testCase.sandboxMode === "read-only") {
         expect(filesystem.allowWrite).toEqual([]);
