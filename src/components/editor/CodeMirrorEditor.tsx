@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from "@codemirror/view";
-import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import {
   defaultKeymap,
   history,
@@ -262,6 +262,9 @@ interface CachedEditor {
 
 const editorCache = new Map<string, CachedEditor>();
 
+/** Marks content synced in from the store, which must not echo back through onChange. */
+const externalContentSync = Annotation.define<boolean>();
+
 function estimateDocumentBytes(content: string): number {
   return content.length * 2;
 }
@@ -339,7 +342,6 @@ export function CodeMirrorEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-  const isExternalUpdate = useRef(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -365,8 +367,6 @@ export function CodeMirrorEditor({
 
     // Create new editor
     const lang = getLanguageExtension(filePath);
-    const changeRef = onChangeRef;
-    const externalRef = isExternalUpdate;
     const extraExtensionsCompartment = new Compartment();
     const readOnlyCompartment = new Compartment();
 
@@ -414,9 +414,10 @@ export function CodeMirrorEditor({
           }
           evictLruEditors(tabId);
 
-          if (!externalRef.current) {
-            const nextContent = update.state.doc.toString();
-            changeRef.current(nextContent);
+          // Read the callback from the cache: a remounted panel replaces it, and a
+          // stale one would write this document into another tab.
+          if (!update.transactions.some((tr) => tr.annotation(externalContentSync))) {
+            cached?.onChangeRef.current(update.state.doc.toString());
           }
         }
       }),
@@ -430,7 +431,7 @@ export function CodeMirrorEditor({
     editorCache.set(tabId, {
       view,
       filePath,
-      onChangeRef: changeRef,
+      onChangeRef,
       extraExtensionsCompartment,
       readOnlyCompartment,
       lastAccess: Date.now(),
@@ -453,11 +454,10 @@ export function CodeMirrorEditor({
     if (!cached) return;
     const current = cached.view.state.doc.toString();
     if (current !== content) {
-      isExternalUpdate.current = true;
       cached.view.dispatch({
         changes: { from: 0, to: current.length, insert: content },
+        annotations: externalContentSync.of(true),
       });
-      isExternalUpdate.current = false;
     }
   }, [tabId, content]);
 
