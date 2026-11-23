@@ -6,7 +6,8 @@ import { useHarnessStore } from "../../stores/harnessStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
-import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
+import { isLinuxDesktop, isMacDesktop, isWindowsDesktop } from "../../lib/windowActions";
+import { readTerminalWindowsPty, resolveTerminalWindowsPty } from "../../lib/terminalWindowsPty";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { ToggleOptionCard } from "../shared/ToggleOptionCard";
 import { getHarnessIcon } from "../shared/HarnessLogos";
@@ -36,7 +37,7 @@ import {
   markPaneTerminalDetached,
   markWorkspaceTerminalDetached,
 } from "./terminalCacheLifecycle";
-import { Terminal, type ILink, type ILinkProvider } from "@xterm/xterm";
+import { Terminal, type ILink, type ILinkProvider, type IWindowsPty } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -312,6 +313,19 @@ const pendingOutput = new Map<
 >();
 const cachedBackendRendererDiagnostics = new Map<string, BackendRendererDiagnosticsEntry>();
 const backendDiagnosticsRefreshTimers = new Map<string, number>();
+
+// Tells xterm the PTY is ConPTY, so it expects ConPTY's resize repaints and
+// only reflows itself on builds where ConPTY reflows too.
+let terminalWindowsPty: IWindowsPty | undefined;
+if (isWindowsDesktop()) {
+  terminalWindowsPty = resolveTerminalWindowsPty(undefined);
+  void readTerminalWindowsPty().then((windowsPty) => {
+    terminalWindowsPty = windowsPty;
+    for (const session of cachedTerminals.values()) {
+      session.terminal.options.windowsPty = windowsPty;
+    }
+  });
+}
 
 function terminalCacheKey(workspaceId: string, sessionId: string): string {
   return `${workspaceId}::${sessionId}`;
@@ -2190,6 +2204,9 @@ function createCachedTerminal(
     theme: getXtermThemeColors(getCurrentThemeMode()),
   };
   terminalOptions.allowNonHttpProtocols = true;
+  if (terminalWindowsPty) {
+    terminalOptions.windowsPty = terminalWindowsPty;
+  }
   const terminal = new Terminal(terminalOptions);
 
   const fitAddon = new FitAddon();
