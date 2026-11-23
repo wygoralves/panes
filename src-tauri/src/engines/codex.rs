@@ -53,6 +53,8 @@ const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
 const THREAD_LIST_METHODS: &[&str] = &["thread/list"];
 const THREAD_FORK_METHODS: &[&str] = &["thread/fork"];
+const THREAD_REVERT_METHODS: &[&str] = &["thread/revert"];
+/// Removed from the app-server in Codex 0.156; kept for older CLIs only.
 const THREAD_ROLLBACK_METHODS: &[&str] = &["thread/rollback"];
 const THREAD_COMPACT_START_METHODS: &[&str] = &["thread/compact/start"];
 const REVIEW_START_METHODS: &[&str] = &["review/start"];
@@ -1429,17 +1431,29 @@ impl CodexEngine {
         num_turns: u32,
     ) -> anyhow::Result<ThreadSyncSnapshot> {
         let transport = self.ensure_ready_transport().await?;
-        let response = request_with_fallback(
-            transport.as_ref(),
-            THREAD_ROLLBACK_METHODS,
-            serde_json::json!({
-                "threadId": engine_thread_id,
-                "numTurns": num_turns,
-            }),
-            DEFAULT_TIMEOUT,
-        )
-        .await
-        .context("failed to rollback codex thread")?;
+        let response = match self
+            .revert_thread_turns(transport.as_ref(), engine_thread_id, num_turns)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if is_method_not_supported_error(&error.to_string()) => {
+                log::debug!(
+                    "codex thread/revert unavailable, falling back to thread/rollback: {error}"
+                );
+                request_with_fallback(
+                    transport.as_ref(),
+                    THREAD_ROLLBACK_METHODS,
+                    serde_json::json!({
+                        "threadId": engine_thread_id,
+                        "numTurns": num_turns,
+                    }),
+                    DEFAULT_TIMEOUT,
+                )
+                .await
+                .context("failed to rollback codex thread")?
+            }
+            Err(error) => return Err(error).context("failed to rollback codex thread"),
+        };
 
         Ok(ThreadSyncSnapshot {
             title: extract_thread_title(&response),
@@ -1448,6 +1462,39 @@ impl CodexEngine {
             active_flags: extract_thread_runtime_active_flags(&response),
             imported_messages: Vec::new(),
         })
+    }
+
+    /// Drops the last `num_turns` turns by reverting the thread to just before
+    /// the oldest of them. Errors from older servers that lack `thread/turns/list`
+    /// or `thread/revert` are returned unchanged so the caller can fall back.
+    async fn revert_thread_turns(
+        &self,
+        transport: &CodexTransport,
+        engine_thread_id: &str,
+        num_turns: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        let turns_newest_first =
+            fetch_paginated_data(transport, THREAD_TURNS_LIST_METHODS, |cursor| {
+                serde_json::json!({
+                  "threadId": engine_thread_id,
+                  "cursor": cursor,
+                  "limit": 100,
+                  "sortDirection": "desc",
+                  "itemsView": "notLoaded",
+                })
+            })
+            .await?;
+        let before_turn_id = revert_before_turn_id(&turns_newest_first, num_turns)?;
+        request_with_fallback(
+            transport,
+            THREAD_REVERT_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+                "beforeTurnId": before_turn_id,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
     }
 
     pub async fn compact_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
@@ -5971,6 +6018,30 @@ fn is_method_not_supported_error(message: &str) -> bool {
         || normalized.contains("method not found")
         || normalized.contains("unknown method")
         || normalized.contains("not supported")
+        // Newer app-servers reject a removed method while deserializing the
+        // request: "Invalid request: unknown variant `thread/rollback`, ...".
+        || normalized.contains("unknown variant")
+}
+
+/// Picks the turn that `thread/revert` should cut at so that exactly
+/// `num_turns` turns are removed. `turns_newest_first` is a
+/// `thread/turns/list` result sorted in descending order.
+fn revert_before_turn_id(
+    turns_newest_first: &[serde_json::Value],
+    num_turns: u32,
+) -> anyhow::Result<String> {
+    let available = turns_newest_first.len();
+    let index = usize::try_from(num_turns)
+        .ok()
+        .filter(|count| *count > 0 && *count <= available)
+        .map(|count| count - 1)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot roll back {num_turns} turn(s): the Codex thread has {available}"
+            )
+        })?;
+    extract_any_string(&turns_newest_first[index], &["id", "turnId"])
+        .ok_or_else(|| anyhow::anyhow!("codex turn list entry is missing its id"))
 }
 
 async fn fetch_experimental_features(
@@ -8436,6 +8507,31 @@ mod tests {
         let normalized = normalize_approval_response(Some("exec_command_approval"), response);
 
         assert_eq!(normalized, json!({ "decision": "approved_for_session" }));
+    }
+
+    #[test]
+    fn revert_before_turn_id_cuts_at_the_oldest_removed_turn() {
+        let turns = vec![
+            json!({ "id": "t3" }),
+            json!({ "id": "t2" }),
+            json!({ "id": "t1" }),
+        ];
+
+        assert_eq!(revert_before_turn_id(&turns, 1).unwrap(), "t3");
+        assert_eq!(revert_before_turn_id(&turns, 3).unwrap(), "t1");
+        assert!(revert_before_turn_id(&turns, 4).is_err());
+        assert!(revert_before_turn_id(&turns, 0).is_err());
+        assert!(revert_before_turn_id(&[], 1).is_err());
+    }
+
+    #[test]
+    fn removed_methods_count_as_unsupported() {
+        assert!(is_method_not_supported_error(
+            "all rpc methods failed: thread/rollback: Invalid request: unknown variant `thread/rollback`, expected one of `initialize`, `thread/start`"
+        ));
+        assert!(!is_method_not_supported_error(
+            "all rpc methods failed: thread/revert: thread not found"
+        ));
     }
 
     #[test]
