@@ -126,6 +126,9 @@ jobs:
       - name: Windows workspace startup path tests
         working-directory: src-tauri
         run: cargo test workspace_startup::tests::absolute_cwd --lib
+      - name: Windows directory listing tests
+        working-directory: src-tauri
+        run: cargo test fs_ops::tests::list_dir_reports_forward_slash --lib
       - name: Windows keep awake tests
         working-directory: src-tauri
         run: cargo test commands::power::tests --lib
