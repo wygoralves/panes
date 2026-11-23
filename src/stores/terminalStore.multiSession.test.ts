@@ -516,6 +516,38 @@ describe("terminalStore.createMultiSessionGroup", () => {
     )).toBe(true);
   });
 
+  it("reports a branch the rollback could not delete when group creation fails", async () => {
+    mockIpc.addGitWorktree.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockIpc.terminalCreateSession
+      .mockResolvedValueOnce(makeSession("s1"))
+      .mockRejectedValueOnce(new Error("create failed"));
+    mockIpc.removeGitWorktree
+      .mockResolvedValueOnce({ branchDeleteError: null })
+      .mockResolvedValueOnce({ branchDeleteError: "error: branch is checked out elsewhere" });
+
+    await useTerminalStore.getState().createMultiSessionGroup(
+      "ws-1",
+      [
+        { harnessId: "h1", name: "Harness 1" },
+        { harnessId: "h2", name: "Harness 2" },
+      ],
+      {
+        enabled: true,
+        repoMode: "fixed_repo",
+        repoPath: "/repo",
+        baseBranch: "main",
+        baseDir: "/repo/.panes/worktrees",
+        branchPrefix: "panes",
+      },
+      120,
+      36,
+    );
+
+    const error = useTerminalStore.getState().workspaces["ws-1"]?.error;
+    expect(error).toContain("Cleanup failed for 1 worktree(s)");
+    expect(error).toContain("branch was kept");
+  });
+
   it("syncs a saved startup preset without mutating the live layout", () => {
     const preset = {
       version: 1 as const,

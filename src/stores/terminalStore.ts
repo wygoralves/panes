@@ -2120,10 +2120,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       // Clean up any worktrees created before the failure
       if (createdWorktrees.length > 0) {
-        const { failures: cleanupFailures } = await removeWorktreesSequential(
+        const { failures, keptBranches } = await removeWorktreesSequential(
           createdWorktrees,
           forceRollback,
         );
+        const cleanupFailures = [
+          ...failures,
+          ...keptBranches.map((branch) => `${branch}: branch was kept`),
+        ];
         if (cleanupFailures.length > 0) {
           message = `${message}. Cleanup failed for ${cleanupFailures.length} worktree(s): ${cleanupFailures.join("; ")}`;
         }
