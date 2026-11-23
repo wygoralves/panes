@@ -78,12 +78,22 @@ O Panes não é uma IDE completa, mas inclui um editor multiaba embutido para re
 
 ### Pré-requisitos
 
+Para usar um release pré-compilado:
+
+| Requisito | Versão |
+|---|---|
+| Codex CLI | Obrigatório para a chat engine do Codex; o setup pode instalá-lo via npm |
+| Node.js | 20.5+, obrigatório para a chat engine do Claude |
+| OpenCode CLI | `opencode` no seu `PATH`, obrigatório para a chat engine do OpenCode |
+| Git | Recomendado, para o painel de git |
+
+Para compilar a partir do código-fonte, você também precisa de:
+
 | Requisito | Versão |
 |---|---|
 | Rust toolchain | stable |
 | Node.js | 20+ |
 | pnpm | 9+ |
-| Codex CLI | Obrigatório para a chat engine do Codex; o setup pode instalá-lo via npm |
 | Pré-requisitos do Tauri v2 | [Ver docs do Tauri](https://v2.tauri.app/start/prerequisites/) |
 
 ### Instalar no macOS
