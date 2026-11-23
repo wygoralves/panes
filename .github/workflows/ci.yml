@@ -13,9 +13,10 @@ permissions:
 
 # Pull requests cancel their stale runs. Pushes queue instead: cancelling a
 # push run after release-it has published a release would leave that release
-# without installers.
+# without installers. Manual runs get their own group so they cannot replace
+# a pending push run, the only kind that releases.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
