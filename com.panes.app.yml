@@ -54,7 +54,7 @@ modules:
     buildsystem: simple
     build-commands:
       - mkdir -p /app/bin /app/lib/node
-      - tar -xJf node.tar.xz --strip-components=1 -C /app/lib/node
+      - tar -xJf node.tar.xz --no-same-owner --strip-components=1 -C /app/lib/node
       - ln -sf ../lib/node/bin/corepack /app/bin/corepack
       - ln -sf ../lib/node/bin/node /app/bin/node
       - ln -sf ../lib/node/bin/npm /app/bin/npm
