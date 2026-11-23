@@ -150,7 +150,9 @@ function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
     isLoading: false,
     isBinary: compare.isBinary,
     renderMode: "git-diff-editor",
-    gitContext: compare,
+    // The buffer holds LF, so the base shown and diffed beside it must too, or
+    // every unchanged line of a CRLF file reads as removed and re-added.
+    gitContext: { ...compare, baseContent: normalizeLineEndings(compare.baseContent) },
     pendingReveal: null,
     loadError: undefined,
   };

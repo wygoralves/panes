@@ -78,6 +78,7 @@ vi.mock("../components/editor/CodeMirrorEditor", () => ({
 }));
 
 import { useFileStore } from "./fileStore";
+import { buildGitDiffModel } from "../components/editor/gitDiffModel";
 
 function makeReadFileResult(
   content: string,
@@ -386,6 +387,31 @@ describe("fileStore", () => {
     );
     expect(tab.savedContent).toBe("saved\n");
     expect(tab.isDirty).toBe(false);
+  });
+
+  it("diffs a CRLF git diff tab against an LF base so only the changed line shows", async () => {
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(
+      makeCompare({ baseContent: "a\r\nb\r\nc\r\n", modifiedContent: "a\r\nB\r\nc\r\n" }),
+    );
+    await useFileStore.getState().openGitDiffFile("/repo", "src/app.bat", { source: "changes" });
+    const tab = useFileStore.getState().tabs[0]!;
+
+    const model = buildGitDiffModel(tab.gitContext!.baseContent, tab.content);
+
+    expect(model.hunks).toHaveLength(1);
+    expect(model.hunks[0]!.baseRange).toEqual({ fromLine: 2, toLine: 2 });
+    expect(model.hunks[0]!.modifiedRange).toEqual({ fromLine: 2, toLine: 2 });
+
+    useFileStore.getState().setTabContent(tab.id, "a\nB2\nc\n");
+    mockIpc.readFile.mockResolvedValueOnce(makeReadFileResult("a\r\nB\r\nc\r\n"));
+    await expect(useFileStore.getState().saveTab(tab.id)).resolves.toBe(true);
+    expect(mockIpc.writeFile).toHaveBeenCalledWith(
+      "/repo",
+      "src/app.bat",
+      "a\r\nB2\r\nc\r\n",
+      "ws-1",
+      "a\r\nB\r\nc\r\n",
+    );
   });
 
   it("keeps a git diff tab CRLF after a save leaves the file on one line", async () => {
