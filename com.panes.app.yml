@@ -92,7 +92,7 @@ modules:
       # build here rather than at the first Claude chat if the layout changes.
       - rm -rf /app/lib/Panes/sidecar-dist && cp -a src-tauri/sidecar-dist /app/lib/Panes/sidecar-dist
       - test -f /app/lib/Panes/sidecar-dist/claude-agent-sdk-server.mjs
-      - test -f /app/lib/Panes/sidecar-dist/claude-sdk-node_modules.tar.gz || test -f /app/lib/Panes/sidecar-dist/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+      - test -f /app/lib/Panes/sidecar-dist/claude-sdk-node_modules.tar.gz
       - install -Dm755 flatpak/panes-wrapper.sh /app/bin/panes-wrapper
       - install -Dm644 flatpak/mise-env.sh /app/etc/profile.d/mise-env.sh
       - install -Dm644 flatpak/com.panes.app.desktop /app/share/applications/com.panes.app.desktop
