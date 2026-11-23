@@ -20,11 +20,21 @@ const mockIpc = vi.hoisted(() => ({
 }));
 
 const mockListenThreadEvents = vi.hoisted(() => vi.fn());
+const turnFinishedHandlers = vi.hoisted(
+  () => [] as Array<(event: { threadId: string; status: string }) => void>,
+);
+const mockListenChatTurnFinished = vi.hoisted(() =>
+  vi.fn(async (onEvent: (event: { threadId: string; status: string }) => void) => {
+    turnFinishedHandlers.push(onEvent);
+    return () => {};
+  }),
+);
 const mockRecordPerfMetric = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/ipc", () => ({
   ipc: mockIpc,
   listenThreadEvents: mockListenThreadEvents,
+  listenChatTurnFinished: mockListenChatTurnFinished,
 }));
 
 vi.mock("../lib/perfTelemetry", () => ({
@@ -2319,6 +2329,29 @@ describe("chatStore drainQueue", () => {
     await useChatStore.getState().drainQueue("thread-1", "completed");
 
     expect(useChatQueueStore.getState().queuesByThread["thread-1"]).toBeUndefined();
+  });
+
+  it("drains on chat-turn-finished, not on the stream's TurnCompleted", async () => {
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    mockIpc.getThreadMessagesWindow.mockResolvedValueOnce({ messages: [], nextCursor: null });
+    useChatStore.setState({ threadId: null });
+    await useChatStore.getState().setActiveThread("thread-1");
+    queue("thread-1", "queued one");
+
+    streamHandler!({ type: "TurnCompleted", status: "completed" } as StreamEvent);
+    await Promise.resolve();
+    expect(mockIpc.sendMessage).not.toHaveBeenCalled();
+
+    expect(turnFinishedHandlers.length).toBeGreaterThan(0);
+    for (const handler of turnFinishedHandlers) {
+      handler({ threadId: "thread-1", status: "completed" });
+    }
+    await vi.waitFor(() => expect(mockIpc.sendMessage).toHaveBeenCalledTimes(1));
+    expect(mockIpc.sendMessage.mock.calls[0]?.[1]).toBe("queued one");
   });
 
   it("clears the queue when the user stops the turn", async () => {

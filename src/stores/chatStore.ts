@@ -1,6 +1,6 @@
 import { engineKind } from "../lib/engineKind";
 import { create } from "zustand";
-import { ipc, listenThreadEvents } from "../lib/ipc";
+import { ipc, listenChatTurnFinished, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
 import { useThreadStore } from "./threadStore";
 import { useThreadReadStore } from "./threadReadStore";
@@ -108,19 +108,29 @@ const STREAM_EVENT_BATCH_WINDOW_MS = 16;
 const STREAM_EVENT_QUEUE_FLUSH_THRESHOLD = 500;
 
 /**
- * Background listeners for threads that are still streaming when the user switches away.
- * Keeps the event stream alive so events are not lost. On switch-back, the DB state
- * will include all events that arrived while the thread was in the background.
- * Cleaned up on TurnCompleted or when the thread is explicitly cancelled.
+ * Queued messages drain on `chat-turn-finished`, which the backend emits only
+ * after it released the turn. The stream's TurnCompleted arrives earlier, and
+ * a send at that point is refused because the turn is still registered. One
+ * listener serves every thread, visible or in the background.
  */
-const backgroundStreamListeners = new Map<string, () => void>();
+let turnFinishedQueueListener: Promise<unknown> | null = null;
 
-function cleanupBackgroundListener(threadId: string) {
-  const cleanup = backgroundStreamListeners.get(threadId);
-  if (cleanup) {
-    cleanup();
-    backgroundStreamListeners.delete(threadId);
+function ensureTurnFinishedQueueListener() {
+  if (turnFinishedQueueListener) {
+    return;
   }
+  turnFinishedQueueListener = listenChatTurnFinished((event) => {
+    const status: TurnCompletionStatus =
+      event.status === "completed"
+        ? "completed"
+        : event.status === "interrupted"
+          ? "interrupted"
+          : "failed";
+    void useChatStore.getState().drainQueue(event.threadId, status);
+  }).catch((error) => {
+    turnFinishedQueueListener = null;
+    console.warn("Failed to listen for finished chat turns:", error);
+  });
 }
 
 /** Sequence number a backend stream event carries; absent on events emitted outside a turn. */
@@ -2083,34 +2093,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     activeThreadBindSeq += 1;
     const bindSeq = activeThreadBindSeq;
 
-    // Tear down the current listener. If the thread was still streaming,
-    // install a lightweight background listener that watches for TurnCompleted
-    // so the thread status updates correctly when the user switches back.
+    // Tear down the current listener. A thread left mid-turn keeps draining
+    // its queue through the turn-finished listener.
     if (currentUnlisten) {
       currentUnlisten();
     }
-    if (currentThreadId && get().streaming) {
-      cleanupBackgroundListener(currentThreadId);
-      listenThreadEvents(currentThreadId, (event) => {
-        if (event.type === "TurnCompleted") {
-          cleanupBackgroundListener(currentThreadId!);
-          void useChatStore.getState().drainQueue(currentThreadId!, event.status);
-        }
-      }).then((unsub) => {
-        // If the user already switched back to this thread, don't register
-        if (useChatStore.getState().threadId === currentThreadId) {
-          unsub();
-          return;
-        }
-        const existing = backgroundStreamListeners.get(currentThreadId!);
-        if (existing) {
-          // Another background listener was set up in the meantime
-          unsub();
-        } else {
-          backgroundStreamListeners.set(currentThreadId!, unsub);
-        }
-      });
-    }
+    ensureTurnFinishedQueueListener();
 
     if (!threadId) {
       if (bindSeq !== activeThreadBindSeq) {
@@ -2135,9 +2123,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     let releaseStream: (() => void) | null = null;
     try {
-      // Clean up any background listener for this thread before re-subscribing
-      cleanupBackgroundListener(threadId);
-
       const threadState = useThreadStore.getState();
       let activeThread = threadState.threads.find((thread) => thread.id === threadId);
       if (
@@ -2306,7 +2291,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           useThreadStore.getState().markThreadReadIfActive(threadId);
           flushQueuedStreamEvents();
           emitEventRateMetric(performance.now());
-          void useChatStore.getState().drainQueue(threadId, event.status);
           return;
         }
         if (queuedStreamEvents.length >= STREAM_EVENT_QUEUE_FLUSH_THRESHOLD) {
@@ -2723,17 +2707,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     // The thread is in the background: send without touching the visible
-    // transcript and keep listening so the rest of the queue follows. The
-    // listener goes up before the send so a fast turn cannot finish unseen.
+    // transcript. The rest of the queue follows on the turn-finished listener.
     queue.remove(threadId, nextMessage.id);
-    cleanupBackgroundListener(threadId);
-    const unsub = await listenThreadEvents(threadId, (event) => {
-      if (event.type === "TurnCompleted") {
-        cleanupBackgroundListener(threadId);
-        void useChatStore.getState().drainQueue(threadId, event.status);
-      }
-    });
-    backgroundStreamListeners.set(threadId, unsub);
+    ensureTurnFinishedQueueListener();
     try {
       await ipc.sendMessage(
         threadId,
@@ -2750,17 +2726,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         crypto.randomUUID(),
       );
     } catch (error) {
-      cleanupBackgroundListener(threadId);
       const message = String(error);
       if (!isMissingThreadError(message)) {
         useChatQueueStore.getState().restoreFront(nextMessage);
       }
       set({ error: message });
       return;
-    }
-    if (useChatStore.getState().threadId === threadId) {
-      // The thread became active meanwhile; its own listener drains the rest.
-      cleanupBackgroundListener(threadId);
     }
   },
 

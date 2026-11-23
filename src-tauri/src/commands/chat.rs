@@ -805,7 +805,7 @@ pub async fn send_message(
     let cancellation = CancellationToken::new();
     if !state
         .turns
-        .try_register(&thread_id, cancellation.clone())
+        .register_or_wait(&thread_id, cancellation.clone(), TURN_CANCEL_GRACE)
         .await
     {
         return Err(
@@ -978,7 +978,7 @@ pub async fn start_codex_review(
     let cancellation = CancellationToken::new();
     if !state
         .turns
-        .try_register(&source_thread.id, cancellation.clone())
+        .register_or_wait(&source_thread.id, cancellation.clone(), TURN_CANCEL_GRACE)
         .await
     {
         return Err(
