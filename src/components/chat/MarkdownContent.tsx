@@ -201,7 +201,7 @@ export function shouldRenderMarkdownWorkerPlaceholder({
   );
 }
 
-function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
+export function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
   if (event.defaultPrevented || event.button !== 0) {
     return;
   }
@@ -228,6 +228,11 @@ function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
 
   const targetKind = classifyLinkTarget(rawHref);
   if (targetKind === "other") {
+    // In-page fragments (footnotes) keep their default scroll. Anything else
+    // would navigate the app window away from Panes.
+    if (!rawHref.startsWith("#")) {
+      event.preventDefault();
+    }
     return;
   }
 
@@ -239,6 +244,19 @@ function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
     shiftKey: event.shiftKey,
     sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event.currentTarget),
   });
+}
+
+// A middle click on a link would open it in a new webview window.
+export function handleMarkdownLinkAuxClick(event: ReactMouseEvent<HTMLDivElement>): void {
+  const target = event.target;
+  const element = target instanceof Element
+    ? target
+    : target instanceof Node
+      ? target.parentElement
+      : null;
+  if (element?.closest("a")) {
+    event.preventDefault();
+  }
 }
 
 export default function MarkdownContent({
@@ -379,6 +397,7 @@ export default function MarkdownContent({
       className={wrapperClassName}
       style={style}
       onClickCapture={handleMarkdownLinkClick}
+      onAuxClick={handleMarkdownLinkAuxClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
