@@ -566,10 +566,7 @@ impl Engine for CodexEngine {
             .resolve_turn_plan_mode_activation(runtime.as_ref(), &input)
             .await;
         validate_turn_attachments(&input.attachments).await?;
-        if let Some(notice) = self
-            .take_sandbox_fallback_notice(&thread_id, runtime.as_ref())
-            .await
-        {
+        if let Some(notice) = self.take_sandbox_fallback_notice(&thread_id).await {
             event_tx.send(notice).await.ok();
         }
         let replaced_thread_id = self
@@ -3017,22 +3014,10 @@ impl CodexEngine {
         self.state.lock().await.workspace_probe_passed = true;
     }
 
-    /// Returns a notice for the first turn of a thread that runs without the
-    /// Codex OS sandbox because a startup probe failed.
-    async fn take_sandbox_fallback_notice(
-        &self,
-        engine_thread_id: &str,
-        runtime: Option<&ThreadRuntime>,
-    ) -> Option<EngineEvent> {
-        let runtime = runtime?;
-        if runtime
-            .sandbox_policy
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            != Some("externalSandbox")
-        {
-            return None;
-        }
+    /// Returns a notice for the first turn of each thread after a startup
+    /// probe failed. Every thread runs without the Codex OS sandbox from then
+    /// on, whatever policy `thread/start` echoed back for it.
+    async fn take_sandbox_fallback_notice(&self, engine_thread_id: &str) -> Option<EngineEvent> {
         let mut state = self.state.lock().await;
         let reason = state.sandbox_fallback_reason.clone()?;
         if !state
@@ -9351,37 +9336,31 @@ mod sub_agent_routing_tests {
     #[tokio::test]
     async fn sandbox_fallback_notice_is_sent_once_per_thread_after_a_probe_failure() {
         let engine = CodexEngine::default();
-        let mut external = workspace_write_runtime();
-        external.sandbox_policy =
-            json!({ "type": "externalSandbox", "networkAccess": "restricted" });
 
         // External mode without a failed probe (the opt-in) does not notify.
+        engine.state.lock().await.force_external_sandbox = true;
         assert!(engine
-            .take_sandbox_fallback_notice("thread-1", Some(&external))
+            .take_sandbox_fallback_notice("thread-1")
             .await
             .is_none());
 
         engine
             .fall_back_to_external_sandbox("the probe failed")
             .await;
-        assert!(engine
-            .take_sandbox_fallback_notice("thread-1", Some(&workspace_write_runtime()))
-            .await
-            .is_none());
-        let notice = engine
-            .take_sandbox_fallback_notice("thread-1", Some(&external))
-            .await;
+        // `thread/start` echoes `dangerFullAccess` for a new thread's first
+        // turn, so the notice cannot depend on the stored policy type.
+        let notice = engine.take_sandbox_fallback_notice("thread-1").await;
         assert!(matches!(
             notice,
             Some(EngineEvent::Notice { ref kind, ref message, .. })
                 if kind == "codex_sandbox_fallback" && message.contains("the probe failed")
         ));
         assert!(engine
-            .take_sandbox_fallback_notice("thread-1", Some(&external))
+            .take_sandbox_fallback_notice("thread-1")
             .await
             .is_none());
         assert!(engine
-            .take_sandbox_fallback_notice("thread-2", Some(&external))
+            .take_sandbox_fallback_notice("thread-2")
             .await
             .is_some());
     }
