@@ -1586,7 +1586,7 @@ async fn respond_to_approval_inner(
                     decision,
                 );
             }
-            db::threads::resume_thread_after_approval(db, &thread_id)?;
+            db::threads::resume_thread_after_approval(db, &thread_id, &approval_id)?;
             Ok(())
         }
     })
@@ -7183,6 +7183,37 @@ mod tests {
             ("answered".to_string(), Some("accept".to_string()))
         );
         assert_eq!(approval_row(&state, refused), ("expired".to_string(), None));
+    }
+
+    #[test]
+    fn a_finished_turns_approval_cannot_be_answered_during_a_newer_turn() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "opencode", "model");
+        let claimed = "approval-claimed-late";
+        let untouched = "approval-untouched";
+        let message_id = insert_pending_approval(&state, &thread, claimed);
+        db::actions::insert_approval(
+            &state.db,
+            untouched,
+            &thread.id,
+            &message_id,
+            &crate::engines::events::ActionType::Command,
+            "Run command",
+            &serde_json::json!({}),
+        )
+        .expect("failed to insert approval");
+        db::actions::answer_approval(&state.db, claimed, &thread.id, "accept")
+            .expect("answer should claim the approval");
+
+        // The turn ends and a newer one starts while the answer is in flight.
+        db::messages::update_assistant_status(&state.db, &message_id, MessageStatusDto::Completed)
+            .expect("failed to complete the reply");
+        assert!(
+            !db::actions::release_approval_claim(&state.db, claimed, true)
+                .expect("release should run")
+        );
+        assert_eq!(approval_row(&state, claimed), ("expired".to_string(), None));
+        assert!(db::actions::answer_approval(&state.db, untouched, &thread.id, "accept").is_err());
     }
 
     #[test]

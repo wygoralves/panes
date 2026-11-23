@@ -1821,7 +1821,7 @@ mod tests {
             "assistant",
             None,
             Some(pending_blocks.clone()),
-            MessageStatusDto::Completed,
+            MessageStatusDto::Streaming,
             None,
             None,
             None,
@@ -1843,7 +1843,7 @@ mod tests {
 
         let conn = db.connect().unwrap();
         conn.execute(
-            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+            "UPDATE messages SET blocks_json = ?1, status = 'completed' WHERE id = ?2",
             params![pending_blocks.to_string(), message.id],
         )
         .unwrap();

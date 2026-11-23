@@ -109,7 +109,10 @@ pub fn answer_approval(
      SET status = 'answering', decision = ?1, answered_at = datetime('now')
      WHERE id = ?2
        AND thread_id = ?3
-       AND status = 'pending'",
+       AND status = 'pending'
+       AND EXISTS (
+         SELECT 1 FROM messages m WHERE m.id = approvals.message_id AND m.status = 'streaming'
+       )",
             params![decision, approval_id, thread_id],
         )
         .context("failed to answer approval")?;
@@ -143,31 +146,35 @@ pub fn confirm_approval_answer(
     Ok(())
 }
 
-/// Settles a claim the engine refused. While its turn still runs the claim
-/// goes back to pending so the user can answer again; once the turn is gone
-/// it expires, without the decision that never took effect. Returns whether
-/// the approval is pending again.
+/// Settles a claim the engine refused. While the turn that asked for it still
+/// runs (its reply is streaming and `turn_is_live`), the claim goes back to
+/// pending so the user can answer again; otherwise it expires, without the
+/// decision that never took effect. Returns whether it is pending again.
 pub fn release_approval_claim(
     db: &Database,
     approval_id: &str,
     turn_is_live: bool,
 ) -> anyhow::Result<bool> {
     let conn = db.connect()?;
-    let sql = if turn_is_live {
-        "UPDATE approvals
-     SET status = 'pending', decision = NULL, answered_at = NULL
+    let status: Option<String> = conn
+        .query_row(
+            "UPDATE approvals
+     SET status = CASE WHEN ?2 AND EXISTS (
+           SELECT 1 FROM messages m WHERE m.id = approvals.message_id AND m.status = 'streaming'
+         ) THEN 'pending' ELSE 'expired' END,
+         answered_at = CASE WHEN ?2 AND EXISTS (
+           SELECT 1 FROM messages m WHERE m.id = approvals.message_id AND m.status = 'streaming'
+         ) THEN NULL ELSE COALESCE(answered_at, datetime('now')) END,
+         decision = NULL
      WHERE id = ?1
-       AND status = 'answering'"
-    } else {
-        "UPDATE approvals
-     SET status = 'expired', decision = NULL, answered_at = COALESCE(answered_at, datetime('now'))
-     WHERE id = ?1
-       AND status = 'answering'"
-    };
-    let changed = conn
-        .execute(sql, params![approval_id])
+       AND status = 'answering'
+     RETURNING status",
+            params![approval_id, turn_is_live],
+            |row| row.get(0),
+        )
+        .optional()
         .context("failed to release approval claim")?;
-    Ok(turn_is_live && changed > 0)
+    Ok(status.as_deref() == Some("pending"))
 }
 
 /// Marks every approval of a finished turn that nobody answered as expired

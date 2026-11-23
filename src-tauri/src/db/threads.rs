@@ -169,18 +169,28 @@ pub fn update_thread_status(
 }
 
 /// An answered approval lets the turn run again. Only a thread still waiting
-/// on approval moves to streaming, so an answer never revives a finished turn.
-pub fn resume_thread_after_approval(db: &Database, thread_id: &str) -> anyhow::Result<()> {
+/// on approval, in the turn that asked for this approval, moves to streaming,
+/// so a late answer never revives a finished turn or resumes a newer one.
+pub fn resume_thread_after_approval(
+    db: &Database,
+    thread_id: &str,
+    approval_id: &str,
+) -> anyhow::Result<()> {
     let conn = db.connect()?;
     conn.execute(
         "UPDATE threads
      SET status = ?1, last_activity_at = datetime('now')
      WHERE id = ?2
-       AND status = ?3",
+       AND status = ?3
+       AND EXISTS (
+         SELECT 1 FROM approvals a JOIN messages m ON m.id = a.message_id
+         WHERE a.id = ?4 AND m.status = 'streaming'
+       )",
         params![
             ThreadStatusDto::Streaming.as_str(),
             thread_id,
-            ThreadStatusDto::AwaitingApproval.as_str()
+            ThreadStatusDto::AwaitingApproval.as_str(),
+            approval_id
         ],
     )
     .context("failed to resume thread after approval")?;
