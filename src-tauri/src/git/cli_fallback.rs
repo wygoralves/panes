@@ -1,6 +1,7 @@
 use std::{
     io::Read,
     process::{Command, Output, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -103,6 +104,13 @@ pub fn run_git_network(
     let stderr_reader = spawn_pipe_reader(child.stderr.take());
 
     let deadline = Instant::now() + timeout;
+    let timed_out = || {
+        anyhow::anyhow!(
+            "git command timed out after {} seconds: {}",
+            timeout.as_secs(),
+            describe(repo_path, args)
+        )
+    };
     let status = loop {
         if let Some(status) = child.try_wait().context("failed to wait for git")? {
             break status;
@@ -112,17 +120,24 @@ pub fn run_git_network(
             let _ = child.wait();
             // The readers are left to finish on their own: on Windows a
             // helper that outlived git can keep the pipes open.
-            anyhow::bail!(
-                "git command timed out after {} seconds: {}",
-                timeout.as_secs(),
-                describe(repo_path, args)
-            );
+            return Err(timed_out());
         }
         thread::sleep(Duration::from_millis(50));
     };
 
-    let stdout = stdout_reader.join().unwrap_or_default();
-    let stderr = stderr_reader.join().unwrap_or_default();
+    // A helper git started can outlive it and keep the pipes open, so the
+    // same deadline covers reading them.
+    let collect = |reader: &mpsc::Receiver<Vec<u8>>| match reader
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+    {
+        Ok(bytes) => Some(bytes),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Some(Vec::new()),
+        Err(mpsc::RecvTimeoutError::Timeout) => None,
+    };
+    let (Some(stdout), Some(stderr)) = (collect(&stdout_reader), collect(&stderr_reader)) else {
+        kill_process_tree(&mut child);
+        return Err(timed_out());
+    };
     into_stdout(Output {
         status,
         stdout,
@@ -130,14 +145,16 @@ pub fn run_git_network(
     })
 }
 
-fn spawn_pipe_reader<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<Vec<u8>> {
+fn spawn_pipe_reader<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
+    let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut buffer = Vec::new();
         if let Some(mut pipe) = pipe {
             let _ = pipe.read_to_end(&mut buffer);
         }
-        buffer
-    })
+        let _ = sender.send(buffer);
+    });
+    receiver
 }
 
 fn kill_process_tree(child: &mut std::process::Child) {
@@ -260,6 +277,26 @@ mod tests {
             Duration::from_millis(300),
         )
         .expect_err("a hung command must time out");
+
+        assert!(error.to_string().contains("timed out"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn network_command_is_stopped_when_a_helper_keeps_its_output_open() {
+        let _env = crate::process_utils::test_env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let repo = temp_repo();
+
+        // git exits at once, but the background sleep still holds stdout.
+        let started = Instant::now();
+        let error = run_git_network(
+            repo.0.to_str().unwrap(),
+            &["-c", "alias.linger=!(sleep 30 &); echo started", "linger"],
+            Duration::from_millis(300),
+        )
+        .expect_err("a lingering helper must time out");
 
         assert!(error.to_string().contains("timed out"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(10));
