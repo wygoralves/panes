@@ -607,7 +607,10 @@ fn resolve_editor_file_reference_impl(
         } else {
             root.join(&parsed.path)
         };
-        let Ok(resolved) = candidate.canonicalize() else {
+        // Roots come from path_utils::canonicalize_path, which strips the
+        // Windows \\?\ prefix; resolve the candidate the same way so
+        // starts_with compares like with like.
+        let Ok(resolved) = path_utils::canonicalize_path(&candidate) else {
             continue;
         };
         if !resolved.is_file() || !resolved.starts_with(&root) {
@@ -734,8 +737,8 @@ mod tests {
     };
 
     use super::{
-        build_open_command_plan, build_reveal_command_plan, resolve_target_path_for_repo_lookup,
-        windows_native_path, OpenAction, RevealPlatform,
+        build_open_command_plan, build_reveal_command_plan, resolve_editor_file_reference_impl,
+        resolve_target_path_for_repo_lookup, windows_native_path, OpenAction, RevealPlatform,
     };
     use uuid::Uuid;
 
@@ -929,6 +932,64 @@ mod tests {
             assert_eq!(plan.args, vec![file.as_os_str().to_os_string()]);
             assert_eq!(plan.display_target, file);
         });
+    }
+
+    #[test]
+    fn editor_file_reference_resolves_inside_a_canonicalized_root() {
+        let root = std::env::temp_dir().join(format!("panes-editor-ref-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).expect("temp dir should exist");
+        fs::write(root.join("src").join("lib.rs"), "fn main() {}").expect("file should exist");
+        fs::write(root.join("outside.txt"), "x").expect("file should exist");
+        let repo_root = root.join("repo");
+        fs::create_dir_all(&repo_root).expect("repo dir should exist");
+        fs::create_dir_all(repo_root.join("src")).expect("repo src should exist");
+        fs::write(repo_root.join("src").join("lib.rs"), "fn main() {}")
+            .expect("repo file should exist");
+        let repo_root_str = repo_root.to_string_lossy().to_string();
+        let repos = vec![crate::models::RepoDto {
+            id: "repo".to_string(),
+            workspace_id: "ws".to_string(),
+            name: "repo".to_string(),
+            path: repo_root_str.clone(),
+            default_branch: "main".to_string(),
+            is_active: true,
+            trust_level: crate::models::TrustLevelDto::Standard,
+        }];
+
+        let relative =
+            resolve_editor_file_reference_impl(&repo_root_str, &repos, "src/lib.rs:12", None, None)
+                .expect("resolution should not fail")
+                .expect("relative reference should resolve");
+        let absolute_reference = crate::path_utils::canonicalize_path(&repo_root)
+            .expect("repo root should resolve")
+            .join("src")
+            .join("lib.rs");
+        let absolute = resolve_editor_file_reference_impl(
+            &repo_root_str,
+            &repos,
+            absolute_reference.to_string_lossy().as_ref(),
+            None,
+            None,
+        )
+        .expect("resolution should not fail");
+        let outside = resolve_editor_file_reference_impl(
+            &repo_root_str,
+            &repos,
+            "../outside.txt",
+            None,
+            None,
+        )
+        .expect("resolution should not fail");
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(
+            Path::new(&relative.file_path),
+            Path::new("src").join("lib.rs")
+        );
+        assert_eq!(relative.line, Some(12));
+        assert!(!relative.repo_path.starts_with(r"\\?\"));
+        assert!(absolute.is_some());
+        assert!(outside.is_none());
     }
 
     #[test]
