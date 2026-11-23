@@ -2167,6 +2167,10 @@ function sandboxUnavailableHint(reason) {
 const PROJECT_INSTRUCTION_FILES = ["CLAUDE.md", path.join(".claude", "CLAUDE.md")];
 const MAX_PROJECT_INSTRUCTION_CHARS = 40_000;
 
+// Opens without following a final link and without waiting on a FIFO.
+const PROJECT_INSTRUCTION_OPEN_FLAGS =
+  fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
+
 // Reads the start of one instruction file. Only a regular file whose real path
 // stays inside the project counts, so a repo cannot link its instructions to
 // files elsewhere on disk, and a FIFO or huge file cannot stall the turn.
@@ -2174,10 +2178,17 @@ async function readProjectInstructionFile(projectRoot, filePath) {
   let handle;
   try {
     const resolved = await realpath(filePath);
-    if (!resolved.startsWith(projectRoot + path.sep) || !(await stat(resolved)).isFile()) {
+    if (!resolved.startsWith(projectRoot + path.sep)) {
       return null;
     }
-    handle = await open(resolved, "r");
+    handle = await open(resolved, PROJECT_INSTRUCTION_OPEN_FLAGS);
+    const opened = await handle.stat();
+    // A checkout can swap a link into the path between the check and the
+    // open, so the path must still resolve to itself and to the opened file.
+    const current = (await realpath(resolved)) === resolved ? await stat(resolved) : null;
+    if (!opened.isFile() || current?.dev !== opened.dev || current?.ino !== opened.ino) {
+      return null;
+    }
     // UTF-8 needs at most 4 bytes per character.
     const buffer = Buffer.alloc(MAX_PROJECT_INSTRUCTION_CHARS * 4);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
