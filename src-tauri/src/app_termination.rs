@@ -22,7 +22,7 @@ mod macos {
         sync::{atomic::Ordering, OnceLock},
     };
 
-    use tauri::{AppHandle, Emitter};
+    use tauri::{AppHandle, Emitter, Manager};
 
     use super::HAS_UNSAVED_EDITOR_TABS;
 
@@ -47,6 +47,21 @@ mod macos {
             return NS_TERMINATE_NOW;
         }
         if let Some(app) = APP.get() {
+            // A Dock quit or logout can arrive while the window is minimized, hidden
+            // or behind other apps: bring it forward so the prompt is seen. Sent from
+            // a worker thread so it is queued on the event loop instead of running
+            // inside this AppKit callback.
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let window_handle = handle.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    if let Some(window) = window_handle.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                });
+            });
             // The frontend asks about the tabs and closes the window if the user agrees.
             let _ = app.emit("menu-action", "quit");
         }
