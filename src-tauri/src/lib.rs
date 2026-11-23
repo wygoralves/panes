@@ -403,15 +403,20 @@ fn app_protocol_url(https: bool) -> tauri::Url {
     url.parse().expect("valid app protocol url")
 }
 
-/// Whether the main window may navigate to `url`. Only the origin the app is
-/// served from is allowed, so a stray link or script can never replace the
-/// Panes UI with another page.
+/// Whether the main window may navigate to `url`. Only the app's own entry
+/// document is allowed, so a stray link or script can never replace the Panes
+/// UI with another page. Other paths on the app origin are refused too: the
+/// app never navigates between documents, and loading one (a relative link
+/// activated through accessibility, which skips the DOM click handler) would
+/// reload the app and drop unsaved state. Fragment changes stay allowed.
 fn is_app_navigation(url: &tauri::Url, app_url: &tauri::Url) -> bool {
     // Custom schemes have opaque origins, so compare the parts directly.
-    url.as_str() == "about:blank"
-        || (url.scheme() == app_url.scheme()
-            && url.host_str() == app_url.host_str()
-            && url.port_or_known_default() == app_url.port_or_known_default())
+    let same_origin = url.scheme() == app_url.scheme()
+        && url.host_str() == app_url.host_str()
+        && url.port_or_known_default() == app_url.port_or_known_default();
+    let entry_document =
+        matches!(url.path(), "" | "/" | "/index.html") || url.path() == app_url.path();
+    url.as_str() == "about:blank" || (same_origin && entry_document)
 }
 
 async fn run_codex_runtime_bridge(app: tauri::AppHandle, state: AppState) {
@@ -1084,11 +1089,11 @@ mod navigation_tests {
 
         let windows = url("http://tauri.localhost");
         assert!(is_app_navigation(
-            &url("http://tauri.localhost/x"),
+            &url("http://tauri.localhost/index.html"),
             &windows
         ));
         assert!(!is_app_navigation(
-            &url("https://tauri.localhost/x"),
+            &url("https://tauri.localhost/"),
             &windows
         ));
         assert!(!is_app_navigation(&url("tauri://localhost/"), &windows));
@@ -1104,6 +1109,39 @@ mod navigation_tests {
         assert!(is_app_navigation(&url("http://localhost:1420/"), &dev));
         assert!(!is_app_navigation(&url("http://localhost:8080/"), &dev));
         assert!(!is_app_navigation(&url("tauri://localhost/"), &dev));
+        assert!(!is_app_navigation(
+            &url("http://localhost:1420/notes"),
+            &dev
+        ));
+    }
+
+    #[test]
+    fn allows_fragments_but_not_other_documents_on_the_app_origin() {
+        for app_url in ["tauri://localhost", "http://tauri.localhost"] {
+            let app = url(app_url);
+            for allowed in [
+                app_url.to_string(),
+                format!("{app_url}/"),
+                format!("{app_url}/index.html"),
+                format!("{app_url}#user-content-fn-1"),
+                format!("{app_url}/#user-content-fn-1"),
+            ] {
+                assert!(
+                    is_app_navigation(&url(&allowed), &app),
+                    "{allowed} should be allowed"
+                );
+            }
+            for blocked in [
+                format!("{app_url}/notes"),
+                format!("{app_url}/src/main.rs:2"),
+                format!("{app_url}/x/index.html"),
+            ] {
+                assert!(
+                    !is_app_navigation(&url(&blocked), &app),
+                    "{blocked} should be blocked"
+                );
+            }
+        }
     }
 
     #[test]
