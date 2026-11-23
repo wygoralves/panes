@@ -387,6 +387,18 @@ pub fn parse_windows_login_probe_output(stdout: &str) -> Option<(String, String)
     None
 }
 
+/// PowerShell expression that prints the path of the first `name` that
+/// CreateProcess can run. Without `-CommandType Application`, Get-Command
+/// prefers npm's `name.ps1` shim (an ExternalScript), which cannot be spawned
+/// and is blocked by the default execution policy.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub fn windows_application_probe_expression(name: &str) -> String {
+    format!(
+        "(Get-Command {name} -CommandType Application -ErrorAction SilentlyContinue \
+         | Select-Object -First 1).Source"
+    )
+}
+
 #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 pub fn parse_windows_single_path_output(stdout: &str) -> Option<String> {
     stdout
@@ -1030,6 +1042,13 @@ mod tests {
             }
             let _ = std::fs::remove_dir_all(&self.temp_dir);
         }
+    }
+
+    #[test]
+    fn windows_application_probe_skips_powershell_script_shims() {
+        let expression = windows_application_probe_expression("codex");
+        assert!(expression.starts_with("(Get-Command codex -CommandType Application "));
+        assert!(expression.ends_with("| Select-Object -First 1).Source"));
     }
 
     #[test]

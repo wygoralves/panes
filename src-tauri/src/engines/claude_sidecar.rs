@@ -1874,9 +1874,9 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
         for powershell in runtime_env::windows_login_probe_shells() {
             let mut cmd = Command::new(&powershell);
             cmd.args([
-                "-NoLogo",
-                "-Command",
-                "(Get-Command node -ErrorAction SilentlyContinue | Select-Object -First 1).Source",
+                "-NoLogo".to_string(),
+                "-Command".to_string(),
+                runtime_env::windows_application_probe_expression("node"),
             ]);
             process_utils::configure_tokio_command(&mut cmd);
 
