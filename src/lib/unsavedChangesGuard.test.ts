@@ -4,16 +4,22 @@ const mockFileState = vi.hoisted(() => ({
   tabs: [] as Array<{ id: string; fileName: string; isDirty: boolean }>,
   saveAllDirtyTabs: vi.fn(),
 }));
+const fileStoreListeners = vi.hoisted(() => new Set<() => void>());
 
 vi.mock("../stores/fileStore", () => ({
   useFileStore: {
     getState: () => mockFileState,
+    subscribe: (listener: () => void) => {
+      fileStoreListeners.add(listener);
+      return () => fileStoreListeners.delete(listener);
+    },
   },
 }));
 
 import {
   confirmDiscardUnsavedWork,
   registerUnsavedChangesCloseGuard,
+  reportUnsavedTabs,
   resolveUnsavedChangesPrompt,
   useUnsavedChangesPromptStore,
 } from "./unsavedChangesGuard";
@@ -124,5 +130,22 @@ describe("unsavedChangesGuard", () => {
     expect(useUnsavedChangesPromptStore.getState().fileNames).toEqual(["app.ts"]);
     await resolveUnsavedChangesPrompt("cancel");
     await expect(second).resolves.toBe(false);
+  });
+
+  it("reports to the backend whether any tab is dirty, only when that changes", async () => {
+    const report = vi.fn();
+    mockFileState.tabs = [{ id: "a", fileName: "a.ts", isDirty: false }];
+    const stop = reportUnsavedTabs(report);
+
+    mockFileState.tabs = [{ id: "a", fileName: "a.ts", isDirty: true }];
+    fileStoreListeners.forEach((listener) => listener());
+    fileStoreListeners.forEach((listener) => listener());
+    mockFileState.tabs = [{ id: "a", fileName: "a.ts", isDirty: false }];
+    fileStoreListeners.forEach((listener) => listener());
+    await Promise.resolve();
+
+    expect(report.mock.calls).toEqual([[false], [true], [false]]);
+    stop();
+    expect(fileStoreListeners.size).toBe(0);
   });
 });

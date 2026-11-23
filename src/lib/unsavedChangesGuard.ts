@@ -80,3 +80,21 @@ export function registerUnsavedChangesCloseGuard(target: CloseRequestedTarget): 
     }
   });
 }
+
+/**
+ * Keeps `report` told whether any editor tab is dirty, sending only changes.
+ * The backend uses it to hold a macOS quit that never closes the window.
+ */
+export function reportUnsavedTabs(report: (hasUnsaved: boolean) => unknown): () => void {
+  let last: boolean | null = null;
+  const update = () => {
+    const hasUnsaved = useFileStore.getState().tabs.some((tab) => tab.isDirty);
+    if (hasUnsaved === last) return;
+    last = hasUnsaved;
+    void Promise.resolve()
+      .then(() => report(hasUnsaved))
+      .catch(() => undefined);
+  };
+  update();
+  return useFileStore.subscribe(update);
+}

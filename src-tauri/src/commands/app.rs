@@ -125,6 +125,12 @@ fn preview_notification_sound_via_notification(
     notification.show().map_err(err_to_string)
 }
 
+/// Lets a macOS quit that bypasses the window (Dock, logout) hold for the unsaved-tabs prompt.
+#[tauri::command]
+pub fn set_unsaved_editor_tabs(has_unsaved: bool) {
+    crate::app_termination::set_has_unsaved_editor_tabs(has_unsaved);
+}
+
 #[tauri::command]
 pub async fn get_app_locale() -> Result<String, String> {
     tokio::task::spawn_blocking(move || {

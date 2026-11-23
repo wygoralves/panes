@@ -3,9 +3,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useFileStore } from "../stores/fileStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { ipc } from "./ipc";
 import {
   confirmDiscardUnsavedWork,
   registerUnsavedChangesCloseGuard,
+  reportUnsavedTabs,
 } from "./unsavedChangesGuard";
 
 const APP_SHORTCUTS_ALLOWED_WHILE_TERMINAL_FOCUSED = new Set(["d", "e", "k", "p", "t"]);
@@ -75,10 +77,18 @@ export async function closeCurrentWindow(): Promise<void> {
   }
 }
 
-/** Desktop only: every native close (button, Cmd+W, quit menu) asks about unsaved tabs first. */
+/**
+ * Desktop only: every native close (button, Cmd+W, quit menu) asks about unsaved tabs first.
+ * The dirty state also reaches the backend, which holds a macOS Dock quit or logout for the prompt.
+ */
 export async function installUnsavedChangesCloseGuard(): Promise<() => void> {
   if (!isTauri()) return () => {};
-  return registerUnsavedChangesCloseGuard(getCurrentWindow());
+  const stopReporting = reportUnsavedTabs((hasUnsaved) => ipc.setUnsavedEditorTabs(hasUnsaved));
+  const unlisten = await registerUnsavedChangesCloseGuard(getCurrentWindow());
+  return () => {
+    stopReporting();
+    unlisten();
+  };
 }
 
 export async function minimizeCurrentWindow(): Promise<void> {

@@ -1,3 +1,4 @@
+mod app_termination;
 mod commands;
 mod config;
 mod db;
@@ -167,6 +168,8 @@ pub fn run() {
             }
             tauri::async_runtime::block_on(state.engines.set_resource_dir(resource_dir));
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
+            #[cfg(target_os = "macos")]
+            app_termination::install(app.handle());
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
@@ -194,6 +197,7 @@ pub fn run() {
             commands::app::set_composer_legacy_models_visible,
             commands::app::get_ui_zoom_percent,
             commands::app::set_ui_zoom_percent,
+            commands::app::set_unsaved_editor_tabs,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::power::get_power_settings,
