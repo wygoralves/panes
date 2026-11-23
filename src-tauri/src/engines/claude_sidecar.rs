@@ -2085,6 +2085,7 @@ impl Engine for ClaudeSidecarEngine {
             "sandboxMode": thread_config.sandbox.sandbox_mode.clone(),
             "reasoningEffort": thread_config.sandbox.reasoning_effort.clone(),
             "planMode": plan_mode,
+            "projectSettingsTrusted": thread_config.sandbox.project_settings_trusted,
         });
 
         if let Some(ref session_id) = thread_config.agent_session_id {
@@ -2726,6 +2727,7 @@ mod tests {
             personality: None,
             output_schema: None,
             opencode_agent: None,
+            project_settings_trusted: false,
         }
     }
 

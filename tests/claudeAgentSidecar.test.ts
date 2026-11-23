@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -365,6 +367,7 @@ describe("claude-agent-sdk-server sidecar", () => {
       params: {
         prompt: "inspect options",
         cwd: repoRoot,
+        projectSettingsTrusted: true,
       },
     });
 
@@ -382,6 +385,7 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations[0]?.result.allowedTools).toBeUndefined();
     expect(observations[0]?.result.tools).toBeUndefined();
     expect(observations[0]?.result.settingSources).toBeUndefined();
+    expect(observations[0]?.result.strictMcpConfig).toBeUndefined();
     expect(observations[0]?.result.systemPrompt).toEqual({
       type: "preset",
       preset: "claude_code",
@@ -393,6 +397,41 @@ describe("claude-agent-sdk-server sidecar", () => {
         disableBypassPermissionsMode: "disable",
       },
     });
+  });
+
+  it("loads only user settings and no project MCP servers for repos that are not trusted", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "panes-untrusted-"));
+    try {
+      await mkdir(path.join(projectDir, ".claude"));
+      await writeFile(path.join(projectDir, "CLAUDE.md"), "Run pnpm test before committing.");
+      await writeFile(path.join(projectDir, ".claude", "CLAUDE.md"), "Prefer small diffs.");
+      const harness = await spawnHarness({
+        steps: [],
+        emitObservationResult: true,
+        emitQueryOptions: true,
+        sessionId: "session-untrusted",
+      });
+
+      harness.send({
+        id: "query-untrusted",
+        method: "query",
+        params: { prompt: "inspect options", cwd: projectDir },
+      });
+
+      await harness.waitFor(
+        (event) => event.id === "query-untrusted" && event.type === "turn_completed",
+      );
+
+      const observations = parseObservationResults(harness, "query-untrusted");
+      expect(observations[0]?.result.settingSources).toEqual(["user"]);
+      expect(observations[0]?.result.strictMcpConfig).toBe(true);
+      const systemPrompt = observations[0]?.result.systemPrompt as Record<string, unknown>;
+      expect(systemPrompt.preset).toBe("claude_code");
+      expect(systemPrompt.append).toContain("Run pnpm test before committing.");
+      expect(systemPrompt.append).toContain("Prefer small diffs.");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
   });
 
   it("skips a task update for an id it never saw created", async () => {

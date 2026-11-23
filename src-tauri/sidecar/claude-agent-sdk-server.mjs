@@ -2055,6 +2055,32 @@ function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
   };
 }
 
+const PROJECT_INSTRUCTION_FILES = ["CLAUDE.md", path.join(".claude", "CLAUDE.md")];
+const MAX_PROJECT_INSTRUCTION_CHARS = 40_000;
+
+// Repos that are not Trusted load no project settings, and the SDK only reads
+// CLAUDE.md through the project source. The instructions are plain text, so
+// Panes reads them itself and appends them to the system prompt.
+async function readProjectInstructions(cwd) {
+  const sections = [];
+  for (const relativePath of PROJECT_INSTRUCTION_FILES) {
+    const filePath = path.join(cwd, relativePath);
+    let content;
+    try {
+      content = await readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    const trimmed = content.trim().slice(0, MAX_PROJECT_INSTRUCTION_CHARS);
+    if (trimmed) {
+      sections.push(
+        `Contents of ${filePath} (project instructions, checked into the codebase):\n\n${trimmed}`,
+      );
+    }
+  }
+  return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
 function applyClaudeRuntime(options) {
   if (claudeCodeExecutable) {
     options.pathToClaudeCodeExecutable = claudeCodeExecutable;
@@ -2129,6 +2155,7 @@ async function handleQuery(req) {
     writableRoots = [],
     sandboxMode,
     reasoningEffort,
+    projectSettingsTrusted,
   } = params;
 
   const sessionKey = sessionId || resume || null;
@@ -2143,6 +2170,12 @@ async function handleQuery(req) {
     const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
     const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
     const networkEnabled = effectiveAllowNetwork(normalizedSandboxMode, allowNetwork);
+    // Only a Trusted repo may run its own settings: hooks, env, apiKeyHelper
+    // and .mcp.json servers all execute outside the sandbox and approvals.
+    const projectTrusted = projectSettingsTrusted === true;
+    const projectInstructions = projectTrusted
+      ? null
+      : await readProjectInstructions(sessionCwd);
 
     // Task tools belong to the default tool set only. A caller that supplied an
     // explicit allowlist gets exactly that list, so Panes never widens a thread
@@ -2201,8 +2234,10 @@ async function handleQuery(req) {
         approvalPolicy,
         allowedTools: toolList,
       }),
-      // settingSources is intentionally omitted so user, project and local
-      // settings all load, matching the Claude Code CLI default.
+      // A Trusted repo loads user, project and local settings, matching the
+      // Claude Code CLI default. Any other repo loads only the user's own
+      // settings, and strictMcpConfig keeps its .mcp.json servers out.
+      ...(projectTrusted ? {} : { settingSources: ["user"], strictMcpConfig: true }),
       sandbox: buildSandboxOptions(
         normalizedSandboxMode,
         normalizedWritableRoots,
@@ -2430,10 +2465,11 @@ async function handleQuery(req) {
     // Without a systemPrompt option the SDK runs with an empty system prompt.
     // Use the Claude Code preset so results match the Claude Code app, and
     // append any caller-supplied instructions on top of it.
+    const systemPromptAppend = [systemPrompt, projectInstructions].filter(Boolean).join("\n\n");
     options.systemPrompt = {
       type: "preset",
       preset: "claude_code",
-      ...(systemPrompt ? { append: systemPrompt } : {}),
+      ...(systemPromptAppend ? { append: systemPromptAppend } : {}),
     };
     if (resume) options.resume = resume;
     if (sessionId) options.sessionId = sessionId;

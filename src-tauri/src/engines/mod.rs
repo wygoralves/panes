@@ -67,6 +67,9 @@ pub struct SandboxPolicy {
     pub personality: Option<String>,
     pub output_schema: Option<Value>,
     pub opencode_agent: Option<String>,
+    /// Whether the repo is Trusted, so the engine may load settings, hooks and
+    /// MCP servers the repo itself ships. Claude reads it; other engines ignore it.
+    pub project_settings_trusted: bool,
 }
 
 #[derive(Debug, Clone)]

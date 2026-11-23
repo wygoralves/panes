@@ -103,6 +103,7 @@ export function query({ prompt, options }) {
           allowedTools: options?.allowedTools,
           tools: options?.tools,
           settingSources: options?.settingSources,
+          strictMcpConfig: options?.strictMcpConfig,
           systemPrompt: options?.systemPrompt,
           todoToolsEnabled: options?.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS,
           sandbox: options?.sandbox,
