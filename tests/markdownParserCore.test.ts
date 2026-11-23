@@ -184,4 +184,11 @@ describe("renderMarkdownToHtml", () => {
     );
   });
 
+  it("does not let text spelled like a fence sentinel take the fence's place", () => {
+    const html = renderMarkdownToHtml(
+      "&#xE000;PANES_FENCE_0&#xE000;\n\n```js\nconst a = 42;\n```\n",
+    );
+
+    expect(html).toMatch(/^<p>\uE000PANES_FENCE_0\uE000<\/p>\n<pre><code class="hljs language-js">/);
+  });
 });

@@ -286,6 +286,9 @@ function tokenizeFences(markdown: string): { source: string; fences: FenceToken[
   let source = "";
   let plainBuffer = "";
   let fenceIndex = 0;
+  // Text can spell the sentinel with character references, so each render
+  // uses its own to keep user text from taking a fence's place.
+  const nonce = Math.random().toString(36).slice(2);
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const opening = parseFenceOpening(lines[lineIndex]);
@@ -313,7 +316,7 @@ function tokenizeFences(markdown: string): { source: string; fences: FenceToken[
 
     // The sentinel sits in its own paragraph so micromark renders it as
     // `<p>sentinel</p>`, which is then swapped for the highlighted block.
-    const placeholder = `${FENCE_SENTINEL_CHAR}PANES_FENCE_${fenceIndex}${FENCE_SENTINEL_CHAR}`;
+    const placeholder = `${FENCE_SENTINEL_CHAR}PANES_FENCE_${nonce}_${fenceIndex}${FENCE_SENTINEL_CHAR}`;
     source += `\n${placeholder}\n\n`;
 
     fences.push({
