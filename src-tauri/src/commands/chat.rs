@@ -569,7 +569,6 @@ async fn prepare_send_message_turn(
             super::threads::default_thread_sandbox_mode(
                 &thread.engine_id,
                 thread.engine_metadata.as_ref(),
-                codex_external_sandbox_active,
             )
             .to_string()
         }))
@@ -634,7 +633,10 @@ async fn prepare_send_message_turn(
 
             if workspace_write_confirmation_required(
                 workspace_writable_roots.as_ref(),
-                sandbox_mode,
+                super::threads::sandbox_mode_for_write_confirmation(
+                    sandbox_mode,
+                    codex_external_sandbox_active,
+                ),
                 workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
             ) {
                 return Err(
