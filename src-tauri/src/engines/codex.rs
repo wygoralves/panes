@@ -9044,14 +9044,55 @@ mod tests {
             "/bin/zsh -lic 'command -v codex && codex --version'".to_string(),
             "open -a Panes".to_string(),
         ];
-        for (codex, app_path) in [
-            ("/Users/it's/bin/codex", app_path),
-            ("/opt/codex/bin/codex", "/usr/bin:/Users/it's/bin:/bin"),
-        ] {
-            let fixes =
-                codex_fix_commands_for_platform("macos", &resolution(codex, app_path), None);
-            assert_eq!(fixes, diagnostic, "{codex} with PATH {app_path}");
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &resolution("/Users/it's/bin/codex", app_path),
+            None,
+        );
+        assert_eq!(fixes, diagnostic);
+
+        for quote in ['\'', '\\', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
+            let app_path = format!("/usr/bin:/Users/O{quote}Brien/bin:/bin");
+            let fixes = codex_fix_commands_for_platform(
+                "macos",
+                &resolution("/opt/codex/bin/codex", &app_path),
+                None,
+            );
+            assert_eq!(fixes, diagnostic, "inherited PATH {app_path}");
         }
+    }
+
+    #[test]
+    fn codex_fix_commands_for_macos_execution_error_keep_inherited_path() {
+        let resolution = |app_path: &str| CodexExecutableResolution {
+            executable: Some(std::path::PathBuf::from("/opt/codex/bin/codex")),
+            source: "login-shell",
+            app_path: Some(app_path.to_string()),
+            login_shell_executable: Some(std::path::PathBuf::from("/opt/codex/bin/codex")),
+        };
+        let diagnostic =
+            "/bin/zsh -lic 'command -v node && command -v codex && codex --version'".to_string();
+
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &resolution("/usr/bin:/Users/panes/.nvm/bin:/bin"),
+            Some("env: node: No such file or directory"),
+        );
+        assert_eq!(
+            fixes,
+            vec![
+                "launchctl setenv PATH '/opt/codex/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/panes/.nvm/bin'".to_string(),
+                diagnostic.clone(),
+                "open -a Panes".to_string(),
+            ]
+        );
+
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &resolution("/usr/bin:/Users/it's/bin:/bin"),
+            Some("env: node: No such file or directory"),
+        );
+        assert_eq!(fixes, vec![diagnostic, "open -a Panes".to_string()]);
     }
 
     #[test]
