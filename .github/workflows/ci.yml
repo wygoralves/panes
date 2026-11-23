@@ -12,9 +12,9 @@ permissions:
   contents: read
 
 # Pull requests cancel their stale runs. Pushes queue instead: cancelling a
-# push run after release-it has published a release would leave that release
-# without installers. Manual runs get their own group so they cannot replace
-# a pending push run, the only kind that releases.
+# push run after release-it has tagged a release would leave that release a
+# draft without installers. Manual runs get their own group so they cannot
+# replace a pending push run, the only kind that releases.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -569,50 +569,101 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Upload Linux assets to GitHub Release
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+      # release-it leaves the release a draft. softprops looks releases up by
+      # tag, which misses drafts, and clears the draft flag, so upload with gh.
+      # Every expected file must exist exactly once: a leg that built nothing
+      # fails here and the release stays a draft.
+      - name: Upload bundles to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          shopt -s nullglob
+          case "$PLATFORM" in
+            macos-15)
+              dir=src-tauri/target/universal-apple-darwin/release/bundle
+              patterns=("$dir/dmg/*.dmg" "$dir/macos/*.app.tar.gz" "$dir/macos/*.app.tar.gz.sig")
+              ;;
+            ubuntu-22.04)
+              dir=src-tauri/target/release/bundle
+              patterns=("$dir/deb/*.deb" "$dir/deb/*.deb.sig" "$dir/appimage/*.AppImage" "$dir/appimage/*.AppImage.sig")
+              ;;
+            windows-latest)
+              dir=src-tauri/target/release/bundle
+              patterns=("$dir/nsis/*-setup.exe" "$dir/nsis/*-setup.exe.sig")
+              ;;
+            *)
+              echo "::error::No bundle list for $PLATFORM"
+              exit 1
+              ;;
+          esac
+
+          files=()
+          for pattern in "${patterns[@]}"; do
+            # shellcheck disable=SC2206 # the pattern is meant to glob
+            matches=($pattern)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly one file matching $pattern, found ${#matches[@]}: ${matches[*]}"
+              exit 1
+            fi
+            files+=("${matches[0]}")
+          done
+
+          gh release upload "$RELEASE_TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+  build_manifest:
+    name: Build Update Manifest
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release, release_bundles]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          tag_name: ${{ needs.release.outputs.released_tag }}
-          files: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/deb/*.deb.sig
-            src-tauri/target/release/bundle/appimage/*.AppImage.sig
-          fail_on_unmatched_files: false
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+
+      # Only accounts with push access can see a draft release.
+      - name: Generate latest.json from the draft release
+        run: node scripts/generate-update-manifest.mjs "${{ needs.release.outputs.released_tag }}"
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Upload macOS assets to GitHub Release
-        if: matrix.platform == 'macos-15'
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+      - name: Upload latest.json
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          tag_name: ${{ needs.release.outputs.released_tag }}
-          files: |
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg.sig
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
-          fail_on_unmatched_files: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          name: update-manifest
+          if-no-files-found: error
+          path: latest.json
 
-      - name: Upload Windows assets to GitHub Release
-        if: matrix.platform == 'windows-latest'
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          tag_name: ${{ needs.release.outputs.released_tag }}
-          files: |
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
-          fail_on_unmatched_files: false
+  # Runs only when every bundle leg, the manifest and all three smokes passed.
+  # Until then the release stays a draft, which users and the updater never see.
+  publish_release:
+    name: Publish Release
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release, build_manifest, linux_release_smoke, macos_intel_release_smoke, windows_release_smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft release
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
   update_manifest:
     name: Publish Update Manifest
     if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
-    needs: [release, release_bundles]
+    needs: [release, publish_release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -620,14 +671,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      # The same latest.json the smokes validated against the draft.
+      - name: Download latest.json
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          node-version: 26
-
-      - name: Generate latest.json
-        run: node scripts/generate-update-manifest.mjs "${{ needs.release.outputs.released_tag }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: update-manifest
 
       - name: Deploy to gh-pages
         run: |
@@ -644,7 +692,7 @@ jobs:
   publish_homebrew_cask:
     name: Publish Homebrew Cask
     if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
-    needs: [release, release_bundles]
+    needs: [release, update_manifest]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -713,7 +761,7 @@ jobs:
   linux_release_smoke:
     name: Linux Release Smoke
     if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
-    needs: [release, update_manifest]
+    needs: [release, build_manifest]
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     permissions:
@@ -733,7 +781,12 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts --pattern "*.AppImage" --pattern "*.AppImage.sig" --pattern "*.deb" --pattern "*.deb.sig"
           ls -al artifacts
 
-      - name: Validate published updater manifest
+      - name: Download draft updater manifest
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-manifest
+
+      - name: Validate draft updater manifest
         run: |
           APPIMAGE_PATH="$(find artifacts -maxdepth 1 -name '*.AppImage' -print -quit)"
           APPIMAGE_SIG_PATH="$(find artifacts -maxdepth 1 -name '*.AppImage.sig' -print -quit)"
@@ -754,15 +807,6 @@ jobs:
           export APPIMAGE_SIG="$(tr -d '\r\n' < "$APPIMAGE_SIG_PATH")"
           export DEB_NAME="$(basename "$DEB_PATH")"
           export DEB_SIG="$(tr -d '\r\n' < "$DEB_SIG_PATH")"
-
-          for attempt in 1 2 3 4 5; do
-            curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/gh-pages/latest.json" -o latest.json && break
-            if [ "$attempt" -eq 5 ]; then
-              echo "Unable to fetch latest.json from gh-pages."
-              exit 1
-            fi
-            sleep 5
-          done
 
           node - <<'NODE'
           const fs = require("node:fs");
@@ -868,14 +912,13 @@ jobs:
   macos_intel_release_smoke:
     name: macOS Intel Release Smoke
     if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
-    needs: [release, update_manifest, publish_homebrew_cask]
+    needs: [release, build_manifest]
     runs-on: macos-15-intel
     timeout-minutes: 25
     permissions:
       contents: read
     env:
       RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
-      HOMEBREW_TAP_REPO: wygoralves/homebrew-tap
     steps:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -889,7 +932,12 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts --pattern "*.dmg" --pattern "*.app.tar.gz"
           ls -al artifacts
 
-      - name: Validate published updater manifest
+      - name: Download draft updater manifest
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-manifest
+
+      - name: Validate draft updater manifest
         run: |
           APP_ARCHIVE="$(find artifacts -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
           if [ -z "$APP_ARCHIVE" ]; then
@@ -898,15 +946,6 @@ jobs:
           fi
 
           export APP_ARCHIVE_NAME="$(basename "$APP_ARCHIVE")"
-
-          for attempt in 1 2 3 4 5; do
-            curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/gh-pages/latest.json" -o latest.json && break
-            if [ "$attempt" -eq 5 ]; then
-              echo "Unable to fetch latest.json from gh-pages."
-              exit 1
-            fi
-            sleep 5
-          done
 
           node - <<'NODE'
           const fs = require("node:fs");
@@ -1004,6 +1043,17 @@ jobs:
             sleep 2
           done
 
+  # The cask points at the public download, so it can only be installed after
+  # the release is published.
+  homebrew_cask_smoke:
+    name: Homebrew Cask Smoke
+    if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
+    needs: [release, publish_homebrew_cask]
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
       - name: Validate Homebrew install on Intel
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -1023,7 +1073,7 @@ jobs:
   windows_release_smoke:
     name: Windows Release Smoke
     if: github.event_name == 'push' && needs.release.outputs.should_release == 'true'
-    needs: [release, update_manifest]
+    needs: [release, build_manifest]
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
@@ -1044,7 +1094,12 @@ jobs:
           gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir artifacts --pattern "*-setup.exe" --pattern "*-setup.exe.sig"
           Get-ChildItem artifacts
 
-      - name: Validate published updater manifest
+      - name: Download draft updater manifest
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-manifest
+
+      - name: Validate draft updater manifest
         shell: pwsh
         run: |
           $setupExe = Get-ChildItem artifacts -Filter *-setup.exe | Select-Object -First 1
@@ -1059,18 +1114,6 @@ jobs:
 
           $env:SETUP_EXE_NAME = $setupExe.Name
           $env:SETUP_SIG = (Get-Content $setupSig.FullName -Raw).Trim()
-
-          for ($attempt = 1; $attempt -le 5; $attempt++) {
-            try {
-              Invoke-WebRequest "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/gh-pages/latest.json" -OutFile latest.json
-              break
-            } catch {
-              if ($attempt -eq 5) {
-                throw "Unable to fetch latest.json from gh-pages."
-              }
-              Start-Sleep -Seconds 5
-            }
-          }
 
           $script = @'
           const fs = require("node:fs");
