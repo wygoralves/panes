@@ -253,7 +253,8 @@ const MAX_CACHED_EDITOR_BYTES = 10 * 1024 * 1024;
 interface CachedEditor {
   view: EditorView;
   filePath: string;
-  onChangeRef: { current: (content: string) => void };
+  /** Only ever set by a component showing this tab, so edits reach the right tab. */
+  onChange: (content: string) => void;
   extraExtensionsCompartment: Compartment;
   readOnlyCompartment: Compartment;
   lastAccess: number;
@@ -340,8 +341,6 @@ export function CodeMirrorEditor({
 }: Props) {
   const extensions = rawExtensions ?? EMPTY_EXTENSIONS;
   const containerRef = useRef<HTMLDivElement>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -350,7 +349,7 @@ export function CodeMirrorEditor({
 
     if (cached && cached.filePath === filePath) {
       // Reattach existing view to the new container
-      cached.onChangeRef = onChangeRef;
+      cached.onChange = onChange;
       cached.lastAccess = Date.now();
       containerRef.current.appendChild(cached.view.dom);
       return () => {
@@ -414,10 +413,10 @@ export function CodeMirrorEditor({
           }
           evictLruEditors(tabId);
 
-          // Read the callback from the cache: a remounted panel replaces it, and a
-          // stale one would write this document into another tab.
+          // The callback lives on the cache entry, not on the component: a panel
+          // reused for another tab would otherwise receive this document.
           if (!update.transactions.some((tr) => tr.annotation(externalContentSync))) {
-            cached?.onChangeRef.current(update.state.doc.toString());
+            cached?.onChange(update.state.doc.toString());
           }
         }
       }),
@@ -431,7 +430,7 @@ export function CodeMirrorEditor({
     editorCache.set(tabId, {
       view,
       filePath,
-      onChangeRef,
+      onChange,
       extraExtensionsCompartment,
       readOnlyCompartment,
       lastAccess: Date.now(),
@@ -447,6 +446,11 @@ export function CodeMirrorEditor({
     // and subsequent external content syncs are handled by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, filePath, readOnly]);
+
+  useEffect(() => {
+    const cached = editorCache.get(tabId);
+    if (cached) cached.onChange = onChange;
+  }, [tabId, onChange]);
 
   // Sync external content changes (e.g. reload after save)
   useEffect(() => {
