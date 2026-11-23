@@ -108,9 +108,6 @@ export async function generateUpdateManifest({
   const platforms = buildStaticReleasePlatforms(resolvedAssetPairs, signatureByAssetName, (asset) =>
     publicAssetUrl(repo, tag, asset.name),
   );
-  if (Object.keys(platforms).length === 0) {
-    throw new Error(`No updater-compatible assets found in release ${tag}`);
-  }
 
   return {
     version: tag.replace(/^v/, ""),

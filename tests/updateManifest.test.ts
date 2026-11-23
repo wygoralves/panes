@@ -54,7 +54,11 @@ function completeAssets(...omit: string[]): Asset[] {
 }
 
 function platformsFor(assets: Asset[]) {
-  return buildStaticReleasePlatforms(resolveUpdaterAssetPairs(assets), SIGNATURES);
+  return buildStaticReleasePlatforms(
+    resolveUpdaterAssetPairs(assets),
+    SIGNATURES,
+    (entry: Asset) => entry.browser_download_url,
+  );
 }
 
 function jsonResponse(body: unknown) {

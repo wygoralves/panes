@@ -61,11 +61,7 @@ export function resolveUpdaterAssetPairs(assets) {
   });
 }
 
-export function buildStaticReleasePlatforms(
-  resolvedAssetPairs,
-  signatureByAssetName,
-  assetUrl = (asset) => asset.browser_download_url,
-) {
+export function buildStaticReleasePlatforms(resolvedAssetPairs, signatureByAssetName, assetUrl) {
   const platforms = {};
 
   for (const assetPair of resolvedAssetPairs) {
