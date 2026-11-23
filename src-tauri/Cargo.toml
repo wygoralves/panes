@@ -53,6 +53,10 @@ sys-locale = "0.3"
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# ShellExecuteExW for "Open in default app", so no cmd.exe parses the path.
+open = { version = "5", features = ["shellexecute-on-windows"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
