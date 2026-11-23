@@ -199,7 +199,9 @@ function applyRuntimeStateFromEvent(
   }
 
   if (event.type === "ApprovalResolved") {
-    return { status: "streaming", streaming: true };
+    // Only a turn waiting on the approval resumes; a resolution that lands
+    // after the turn ended must not bring the composer back to streaming.
+    return status === "awaiting_approval" ? { status: "streaming", streaming: true } : { status, streaming };
   }
 
   if (event.type === "ApprovalExpired") {

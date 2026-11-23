@@ -565,14 +565,20 @@ async fn resolve_codex_runtime_approval(
                 .transaction()
                 .context("failed to start approval resolution transaction")?;
 
-            // Resolve the approval record.
-            tx.execute(
-                "UPDATE approvals
+            // Resolve the approval record. An approval its turn already
+            // expired stays expired: nothing reached the engine for it.
+            let resolved = tx
+                .execute(
+                    "UPDATE approvals
                  SET status = 'answered', answered_at = COALESCE(answered_at, datetime('now'))
-                 WHERE id = ?1",
-                rusqlite::params![approval_id],
-            )
-            .context("failed to resolve approval")?;
+                 WHERE id = ?1
+                   AND status IN ('pending', 'answered')",
+                    rusqlite::params![approval_id],
+                )
+                .context("failed to resolve approval")?;
+            if resolved == 0 {
+                return Ok(None);
+            }
 
             // Update the approval block inside the message's blocks_json (best-effort).
             let raw_blocks: Option<String> = tx
@@ -660,12 +666,13 @@ async fn resolve_codex_runtime_approval(
                 None
             };
 
-            Ok(updated_thread)
+            Ok(Some(updated_thread))
         }
     })
     .await
     {
-        Ok(updated_thread) => updated_thread,
+        Ok(Some(updated_thread)) => updated_thread,
+        Ok(None) => return,
         Err(error) => {
             log::warn!("failed to reconcile resolved runtime approval {approval_id}: {error}");
             return;

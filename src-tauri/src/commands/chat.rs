@@ -1527,17 +1527,26 @@ async fn respond_to_approval_inner(
 
     // An approval outlives its turn only as a record. Answering it then would
     // reach no engine (or one that silently drops it) and still log a decision.
-    let approval_status = run_db(db.clone(), {
-        let approval_id = approval_id.clone();
-        move |db| db::actions::find_approval_status(db, &approval_id)
-    })
-    .await?;
-    if state.turns.get(&thread_id).await.is_none() || approval_status.as_deref() != Some("pending")
-    {
+    let turn_is_live = state
+        .turns
+        .get(&thread_id)
+        .await
+        .is_some_and(|token| !token.is_cancelled());
+    if !turn_is_live {
         return Err(db::actions::APPROVAL_NOT_PENDING_ERROR.to_string());
     }
 
-    state
+    // Claim the row before the engine hears the answer: turn-end expiry and a
+    // second answer for the same approval both lose to the claim.
+    let decision = approval_response_decision_for_persistence(&normalized_response);
+    run_db(db.clone(), {
+        let approval_id = approval_id.clone();
+        let thread_id = thread_id.clone();
+        move |db| db::actions::answer_approval(db, &approval_id, &thread_id, decision)
+    })
+    .await?;
+
+    if let Err(error) = state
         .engines
         .respond_to_approval(
             &thread,
@@ -1546,21 +1555,28 @@ async fn respond_to_approval_inner(
             approval_route,
         )
         .await
-        .map_err(err_to_string)?;
+    {
+        if let Err(release_error) = run_db(db.clone(), {
+            let approval_id = approval_id.clone();
+            move |db| db::actions::release_approval_claim(db, &approval_id, decision)
+        })
+        .await
+        {
+            log::warn!("failed to release approval claim {approval_id}: {release_error}");
+        }
+        return Err(err_to_string(error));
+    }
 
-    let decision = approval_response_decision_for_persistence(&normalized_response);
     run_db(db, {
         let approval_id = approval_id.clone();
         let thread_id = thread_id.clone();
-        let decision = decision.to_string();
         move |db| {
-            db::actions::answer_approval(db, &approval_id, &decision)?;
             if let Some(message_id) = db::actions::find_approval_message_id(db, &approval_id)? {
                 let _ = db::messages::mark_approval_block_answered(
                     db,
                     &message_id,
                     &approval_id,
-                    &decision,
+                    decision,
                 );
             }
             db::threads::resume_thread_after_approval(db, &thread_id)?;
@@ -6841,6 +6857,58 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn approval_of_a_stopped_turn_is_rejected_and_left_pending() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-stopped";
+        insert_pending_approval(&state, &thread, approval_id);
+        let token = CancellationToken::new();
+        assert!(state.turns.try_register(&thread.id, token.clone()).await);
+        token.cancel();
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected an approval of a stopped turn to be rejected");
+
+        assert!(error.contains("no longer pending"));
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("pending".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn an_approval_is_claimed_once_by_its_own_thread_and_then_cannot_expire() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-claimed";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+
+        assert!(
+            db::actions::answer_approval(&state.db, approval_id, "other-thread", "accept").is_err()
+        );
+        db::actions::answer_approval(&state.db, approval_id, &thread.id, "accept")
+            .expect("first answer should claim the approval");
+        assert!(
+            db::actions::answer_approval(&state.db, approval_id, &thread.id, "decline").is_err()
+        );
+        assert!(
+            db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+                .expect("expiry should run")
+                .is_empty()
+        );
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("answered".to_string(), Some("accept".to_string()))
+        );
+    }
+
     #[test]
     fn answering_a_non_pending_approval_fails() {
         let state = test_app_state();
@@ -6850,7 +6918,9 @@ mod tests {
         db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
             .expect("failed to expire approvals");
 
-        assert!(db::actions::answer_approval(&state.db, approval_id, "accept").is_err());
+        assert!(
+            db::actions::answer_approval(&state.db, approval_id, &thread.id, "accept").is_err()
+        );
         assert_eq!(
             approval_row(&state, approval_id),
             ("expired".to_string(), None)

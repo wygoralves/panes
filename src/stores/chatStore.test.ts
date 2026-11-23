@@ -1147,6 +1147,8 @@ describe("chatStore send", () => {
         status: "answered",
       },
     ]);
+    // The thread was not waiting on the approval, so it stays idle.
+    expect(useChatStore.getState().streaming).toBe(false);
 
     vi.useRealTimers();
   });

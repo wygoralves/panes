@@ -644,8 +644,14 @@ pub fn mark_approval_block_resolved(
     approval_id: &str,
     decision: Option<&str>,
 ) -> anyhow::Result<bool> {
-    let conn = db.connect()?;
-    let Some(raw_blocks): Option<String> = conn
+    let mut conn = db.connect()?;
+    // Hold the write lock across the read and the rewrite: a stream flush that
+    // commits in between would otherwise be rolled back under its newer
+    // stream_seq.
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .context("failed to start approval block transaction")?;
+    let Some(raw_blocks): Option<String> = tx
         .query_row(
             "SELECT blocks_json FROM messages WHERE id = ?1",
             params![message_id],
@@ -672,11 +678,13 @@ pub fn mark_approval_block_resolved(
         return Ok(false);
     }
 
-    conn.execute(
+    tx.execute(
         "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
         params![blocks_value.to_string(), message_id],
     )
     .context("failed to persist answered approval in message blocks")?;
+    tx.commit()
+        .context("failed to commit approval block transaction")?;
 
     Ok(true)
 }
@@ -1639,7 +1647,7 @@ mod tests {
             &json!({}),
         )
         .unwrap();
-        actions::answer_approval(&db, approval_id, "accept").unwrap();
+        actions::answer_approval(&db, approval_id, &thread_id, "accept").unwrap();
 
         update_assistant_blocks_json(
             &db,
@@ -1838,7 +1846,7 @@ mod tests {
             &json!({}),
         )
         .unwrap();
-        actions::answer_approval(&db, approval_id, "accept").unwrap();
+        actions::answer_approval(&db, approval_id, &thread_id, "accept").unwrap();
 
         let conn = db.connect().unwrap();
         conn.execute(
