@@ -11,9 +11,12 @@ permissions:
   pages: write
   id-token: write
 
+# Pull requests cancel their stale runs. Pushes queue instead: cancelling a
+# push run after release-it has published a release would leave that release
+# without installers.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   frontend:
@@ -237,7 +240,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
-      should_release: ${{ steps.release_check.outputs.should_release }}
+      should_release: ${{ steps.tested_commit.outputs.should_release }}
       released_tag: ${{ steps.release_meta.outputs.tag }}
     permissions:
       contents: write
@@ -304,21 +307,37 @@ jobs:
           git config --local --unset-all http.https://github.com/.extraheader || true
           git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${{ github.repository }}.git"
 
-      - name: Configure git user for release commit
+      # Release only the commit the gating jobs tested. When the branch has
+      # moved on, the run queued for the newer commit tests and releases it.
+      - name: Confirm the branch still points at the tested commit
+        id: tested_commit
         if: steps.release_check.outputs.should_release == 'true'
+        run: |
+          git fetch --no-tags origin "refs/heads/${GITHUB_REF_NAME}"
+          remote_sha="$(git rev-parse FETCH_HEAD)"
+          local_sha="$(git rev-parse HEAD)"
+          if [ "$remote_sha" != "$GITHUB_SHA" ] || [ "$local_sha" != "$GITHUB_SHA" ]; then
+            echo "::notice::Skipping release: ${GITHUB_REF_NAME} moved from the tested commit ${GITHUB_SHA} to ${remote_sha}. The run for the newer commit releases it."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git user for release commit
+        if: steps.tested_commit.outputs.should_release == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Run release-it
-        if: steps.release_check.outputs.should_release == 'true'
+        if: steps.tested_commit.outputs.should_release == 'true'
         run: pnpm release -- --ci
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Capture released tag
         id: release_meta
-        if: steps.release_check.outputs.should_release == 'true'
+        if: steps.tested_commit.outputs.should_release == 'true'
         run: |
           tag="$(git describe --tags --abbrev=0)"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
