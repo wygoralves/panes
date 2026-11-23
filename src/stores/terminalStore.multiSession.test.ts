@@ -326,6 +326,40 @@ describe("terminalStore.createMultiSessionGroup", () => {
     );
   });
 
+  it("reports a branch kept after a forced removal as a removed worktree", async () => {
+    mockIpc.removeGitWorktree.mockResolvedValueOnce({
+      branchDeleteError: "error: cannot delete branch 'panes/r1/agent-1' used by worktree",
+    });
+
+    await expect(
+      useTerminalStore.getState().removeGroupWorktrees(
+        "ws-1",
+        [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+          },
+        ],
+        {
+          forceWorktrees: [
+            {
+              repoPath: "/repo",
+              worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+              branch: "panes/r1/agent-1",
+              changedCount: 0,
+              untrackedCount: 0,
+              unmergedCommitCount: 0,
+            },
+          ],
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockIpc.removeGitWorktree.mock.calls[0]?.[2]).toBe(true);
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.error).toBeUndefined();
+  });
+
   it("treats a kept unmerged branch as a removed worktree, not a failure", async () => {
     mockIpc.removeGitWorktree.mockResolvedValueOnce({
       branchDeleteError: "error: the branch 'panes/r1/agent-1' is not fully merged",

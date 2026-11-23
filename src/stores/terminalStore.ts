@@ -712,12 +712,9 @@ async function removeWorktreesSequential(
         true,
         forced,
       );
+      // The directory is gone either way; only the branch survived.
       if (result?.branchDeleteError) {
-        if (forced) {
-          failures.push(`${worktree.branch || worktree.worktreePath}: ${result.branchDeleteError}`);
-        } else {
-          keptBranches.push(worktree.branch || worktree.worktreePath);
-        }
+        keptBranches.push(worktree.branch || worktree.worktreePath);
       }
     } catch (error) {
       failures.push(`${worktree.branch || worktree.worktreePath}: ${String(error)}`);
