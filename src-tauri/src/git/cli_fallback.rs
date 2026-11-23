@@ -59,12 +59,13 @@ pub fn run_git(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
 /// Panes runs these in the background, without a click, for every repo it
 /// shows. `--no-optional-locks` keeps `git status` from rewriting the index,
 /// which would otherwise run the repo's `post-index-change` hook. Signature
-/// checks would run the repo's `gpg.program`, and a lazy fetch in a partial
-/// clone would reach the network without the checks fetch gets.
+/// checks would run the repo's `gpg.program`. A lazy fetch in a partial clone
+/// would reach a remote without the checks fetch gets, so no transport is
+/// allowed: `GIT_ALLOW_PROTOCOL` overrides any `protocol.*.allow` config.
 pub fn run_git_read(repo_path: &str, args: &[&str]) -> anyhow::Result<String> {
     let filter_overrides = repo_filter_overrides(repo_path)?;
     let output = git_command(repo_path)
-        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "none")
         .args(["-c", "log.showSignature=false"])
         .args(&filter_overrides)
         .arg("--no-optional-locks")
@@ -217,6 +218,11 @@ fn repo_filter_overrides(repo_path: &str) -> anyhow::Result<Vec<String>> {
 
     let mut overrides = Vec::new();
     for driver in drivers {
+        // `-c` splits at the first `=`, so such a name cannot be overridden.
+        anyhow::ensure!(
+            !driver.contains('='),
+            "the repository git config defines a filter driver Panes cannot turn off: {driver}"
+        );
         for setting in ["clean=", "smudge=", "process=", "required=false"] {
             overrides.push("-c".to_string());
             overrides.push(format!("filter.{driver}.{setting}"));

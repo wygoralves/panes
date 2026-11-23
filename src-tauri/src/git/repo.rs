@@ -343,13 +343,15 @@ pub fn get_file_diff(
     staged: bool,
 ) -> anyhow::Result<GitDiffPreviewDto> {
     // A repo's config or .gitattributes can name an external diff command or
-    // a textconv filter; the preview never runs either.
+    // a textconv filter; the preview never runs either, and never starts a
+    // diff inside a submodule, which would run under the submodule's config.
     let mut args = vec![
         "--literal-pathspecs",
         "diff",
         "--no-ext-diff",
         "--no-textconv",
         "--ignore-submodules=dirty",
+        "--submodule=short",
     ];
     if staged {
         args.push("--staged");
@@ -974,6 +976,7 @@ pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<Git
             "-p",
             "--no-ext-diff",
             "--no-textconv",
+            "--submodule=short",
             commit_hash,
         ],
     )?;
@@ -2116,40 +2119,7 @@ mod tests {
     #[test]
     fn fetch_on_a_standard_repo_does_not_recurse_into_submodules() {
         let (repo, _remote) = repo_with_file_remote();
-        let source = repo.path.join(".git/sub-source");
-        fs::create_dir_all(&source).expect("create submodule source");
-        fs::write(source.join("a.txt"), "a\n").expect("write file");
-        let source_str = source.to_str().unwrap();
-        for args in [
-            &["init", "-q", "--initial-branch=main"][..],
-            &["add", "-A"],
-            &[
-                "-c",
-                "user.name=T",
-                "-c",
-                "user.email=t@e",
-                "commit",
-                "-q",
-                "-m",
-                "sub",
-            ],
-        ] {
-            run_git(source_str, args).expect("prepare submodule source");
-        }
-        run_git(
-            repo.path_str(),
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                "-q",
-                source_str,
-                "sub",
-            ],
-        )
-        .expect("add submodule");
-        repo.commit_all("add submodule");
+        add_submodule(&repo);
 
         let marker = repo.path.join(".git/sub-uploadpack-ran");
         let uploadpack = format!("touch {}; git-upload-pack", marker.display());
@@ -2282,11 +2252,9 @@ mod tests {
         assert_eq!(commits.entries.len(), 1);
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn status_does_not_run_a_submodule_config_command() {
-        let repo = TempRepo::init();
-        // The submodule's source lives under .git so it is not a change.
+    /// Adds a submodule at `sub` whose `.txt` files use a `x` filter driver.
+    /// Its source lives under .git so it is not a change in the repo.
+    fn add_submodule(repo: &TempRepo) {
         let source = repo.path.join(".git/sub-source");
         fs::create_dir_all(&source).expect("create submodule source");
         fs::write(source.join(".gitattributes"), "*.txt filter=x\n").expect("attributes");
@@ -2322,6 +2290,67 @@ mod tests {
         )
         .expect("add submodule");
         repo.commit_all("add submodule");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_diff_does_not_start_a_diff_inside_a_submodule() {
+        let repo = TempRepo::init();
+        add_submodule(&repo);
+        let sub = repo.path.join("sub");
+        let sub_str = sub.to_str().unwrap();
+        let marker = repo.path.join(".git/external-ran");
+        let external = format!("touch {};:", marker.display());
+        run_git(sub_str, &["config", "diff.external", &external]).expect("submodule config");
+        fs::write(sub.join("a.txt"), "b\n").expect("edit submodule file");
+        run_git(
+            sub_str,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-qam",
+                "next",
+            ],
+        )
+        .expect("commit in submodule");
+        run_git(repo.path_str(), &["config", "diff.submodule", "diff"]).expect("config");
+
+        let diff = get_file_diff(repo.path_str(), "sub", false).expect("file diff");
+
+        assert!(!marker.exists(), "the submodule's diff.external ran");
+        assert!(
+            diff.content.contains("Subproject commit"),
+            "{}",
+            diff.content
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_never_run_a_filter_driver_whose_name_has_an_equals_sign() {
+        let repo = TempRepo::init();
+        repo.write(".gitattributes", "*.txt filter=a=b\n");
+        repo.write("a.txt", "a\n");
+        repo.commit_all("init");
+        let marker = repo.path.join(".git/clean-ran");
+        let clean = format!("touch {}; cat", marker.display());
+        run_git(repo.path_str(), &["config", "filter.a=b.clean", &clean]).expect("config");
+        repo.write("a.txt", "a\n");
+
+        let _ = get_git_status(repo.path_str());
+        let _ = get_file_diff(repo.path_str(), "a.txt", false);
+
+        assert!(!marker.exists(), "the filter driver ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn status_does_not_run_a_submodule_config_command() {
+        let repo = TempRepo::init();
+        add_submodule(&repo);
 
         let marker = repo.path.join(".git/clean-ran");
         let clean = format!("touch {}; cat", marker.display());
