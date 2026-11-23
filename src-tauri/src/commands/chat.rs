@@ -255,10 +255,24 @@ struct ChatApprovalRequestedEvent {
 /// counter value its persisted blocks cover (`messages.stream_seq`), so a view
 /// that subscribes mid-turn can drop buffered events the snapshot already has.
 #[derive(Clone, Serialize)]
-struct SequencedStreamEvent<'a> {
+struct SequencedStreamEvent<E> {
     #[serde(flatten)]
-    event: &'a EngineEvent,
+    event: E,
     seq: u64,
+}
+
+/// Stream event for an engine failure found after the turn loop stopped. It
+/// is numbered like the loop's events, so the turn's final write covers it and
+/// a view that binds in between drops its buffered copy instead of adding a
+/// second error block.
+fn turn_end_engine_error_event(error: impl std::fmt::Display) -> SequencedStreamEvent<EngineEvent> {
+    SequencedStreamEvent {
+        event: EngineEvent::Error {
+            message: error.to_string(),
+            recoverable: false,
+        },
+        seq: next_stream_event_seq(),
+    }
 }
 
 /// Seeded from the wall clock (milliseconds times 1000) so values keep growing
@@ -2294,13 +2308,7 @@ async fn run_turn(
                 thread_status = ThreadStatusDto::Error;
                 thread_status_dirty = true;
             }
-            let _ = app.emit(
-                &stream_event_topic,
-                EngineEvent::Error {
-                    message: format!("{error}"),
-                    recoverable: false,
-                },
-            );
+            let _ = app.emit(&stream_event_topic, turn_end_engine_error_event(&error));
         }
         Err(error) => {
             blocks.push(ContentBlock::Error {
@@ -2950,13 +2958,7 @@ async fn run_codex_review_turn(
                 thread_status = ThreadStatusDto::Error;
                 thread_status_dirty = true;
             }
-            let _ = app.emit(
-                &stream_event_topic,
-                EngineEvent::Error {
-                    message: format!("{error}"),
-                    recoverable: false,
-                },
-            );
+            let _ = app.emit(&stream_event_topic, turn_end_engine_error_event(&error));
         }
         Err(error) => {
             blocks.push(ContentBlock::Error {
@@ -7478,6 +7480,30 @@ mod tests {
         assert_eq!(value.get("seq").and_then(Value::as_u64), Some(first));
         assert!(current_stream_event_seq() >= first);
         assert!(next_stream_event_seq() > first);
+    }
+
+    #[test]
+    fn turn_end_engine_error_is_numbered_below_the_final_write() {
+        let before = current_stream_event_seq();
+        let value = serde_json::to_value(turn_end_engine_error_event("sidecar exited"))
+            .expect("sequenced event should serialize");
+
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("Error"));
+        assert_eq!(
+            value.get("message").and_then(Value::as_str),
+            Some("sidecar exited")
+        );
+        assert_eq!(
+            value.get("recoverable").and_then(Value::as_bool),
+            Some(false)
+        );
+        let seq = value
+            .get("seq")
+            .and_then(Value::as_u64)
+            .expect("a turn-end error carries a stream seq");
+        assert!(seq > before);
+        // The final write stores the counter read after this emit.
+        assert!(current_stream_event_seq() >= seq);
     }
 
     #[tokio::test]

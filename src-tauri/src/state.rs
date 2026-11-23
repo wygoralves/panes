@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
     time::Duration,
@@ -57,14 +57,32 @@ impl ActiveTurn {
 /// Lets a view that binds to a running turn ask the turn loop to store its
 /// blocks at once, so the snapshot it then reads covers every event emitted
 /// before it subscribed.
-#[derive(Default)]
 pub struct StreamSnapshotSync {
     requested: Notify,
     flushed: Notify,
-    /// True while the turn loop streams and answers requests. Before it starts
-    /// nothing was emitted, and it stores everything before it stops.
-    serving: AtomicBool,
+    /// One of the `SNAPSHOT_*` phases below.
+    phase: AtomicU8,
 }
+
+impl Default for StreamSnapshotSync {
+    fn default() -> Self {
+        Self {
+            requested: Notify::new(),
+            flushed: Notify::new(),
+            phase: AtomicU8::new(SNAPSHOT_NOT_STARTED),
+        }
+    }
+}
+
+/// The turn loop has not started: nothing was emitted yet.
+const SNAPSHOT_NOT_STARTED: u8 = 0;
+/// The turn loop streams and answers requests.
+const SNAPSHOT_SERVING: u8 = 1;
+/// The loop stopped, but teardown can still emit and store an event (an
+/// engine failure), so a request waits for the turn's final write.
+const SNAPSHOT_TEARING_DOWN: u8 = 2;
+/// The final write is done.
+const SNAPSHOT_DONE: u8 = 3;
 
 impl StreamSnapshotSync {
     pub async fn requested(&self) {
@@ -76,12 +94,17 @@ impl StreamSnapshotSync {
     }
 
     pub fn start_serving(&self) {
-        self.serving.store(true, Ordering::SeqCst);
+        self.phase.store(SNAPSHOT_SERVING, Ordering::SeqCst);
     }
 
-    /// Called once the turn stored everything it streamed.
+    /// Called once the turn stored everything its loop streamed.
     pub fn stop_serving(&self) {
-        self.serving.store(false, Ordering::SeqCst);
+        self.phase.store(SNAPSHOT_TEARING_DOWN, Ordering::SeqCst);
+        self.mark_flushed();
+    }
+
+    fn finish(&self) {
+        self.phase.store(SNAPSHOT_DONE, Ordering::SeqCst);
         self.mark_flushed();
     }
 }
@@ -176,10 +199,12 @@ impl TurnManager {
         let flushed = sync.flushed.notified();
         tokio::pin!(flushed);
         flushed.as_mut().enable();
-        if !sync.serving.load(Ordering::SeqCst) {
-            return true;
+        match sync.phase.load(Ordering::SeqCst) {
+            SNAPSHOT_SERVING => sync.requested.notify_one(),
+            // Teardown answers no requests; its final write releases the wait.
+            SNAPSHOT_TEARING_DOWN => {}
+            _ => return true,
         }
-        sync.requested.notify_one();
         tokio::time::timeout(max_wait, flushed).await.is_ok()
     }
 
@@ -187,7 +212,7 @@ impl TurnManager {
         let removed = self.active.write().await.remove(thread_id);
         if let Some(turn) = removed {
             // The final write is done: a view waiting on a snapshot can read.
-            turn.snapshot.mark_flushed();
+            turn.snapshot.finish();
         }
         self.finished.notify_waiters();
     }
@@ -286,17 +311,39 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(1));
         turn_loop.await.expect("turn loop task panicked");
 
-        // Once the loop stored everything and stopped, nothing is awaited.
-        turns
-            .snapshot_sync("thread")
-            .await
-            .expect("sync exists")
-            .stop_serving();
+        // Once the turn released the thread, nothing is awaited.
+        turns.finish("thread").await;
+        let started = tokio::time::Instant::now();
         assert!(
             turns
                 .request_stream_snapshot("thread", Duration::from_secs(5))
                 .await
         );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn stream_snapshot_request_during_teardown_waits_for_the_final_write() {
+        let turns = Arc::new(TurnManager::default());
+        assert!(turns.try_register("thread", CancellationToken::new()).await);
+        let sync = turns.snapshot_sync("thread").await.expect("sync exists");
+        sync.start_serving();
+        // The loop stopped; an engine failure may still be emitted and stored.
+        sync.stop_serving();
+
+        let request = tokio::spawn({
+            let turns = turns.clone();
+            async move {
+                turns
+                    .request_stream_snapshot("thread", Duration::from_secs(5))
+                    .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!request.is_finished());
+
+        turns.finish("thread").await;
+        assert!(request.await.expect("request task panicked"));
     }
 
     #[tokio::test]
