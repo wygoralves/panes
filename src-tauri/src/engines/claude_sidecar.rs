@@ -3426,6 +3426,46 @@ mod tests {
     }
 
     #[test]
+    fn maps_the_claude_five_point_five_lineup() {
+        let alias = |value: &str, display_name: &str, resolved_model: &str| SidecarModelInfo {
+            value: value.to_string(),
+            display_name: display_name.to_string(),
+            description: String::new(),
+            supports_effort: true,
+            supported_effort_levels: vec!["low".to_string(), "high".to_string()],
+            resolved_model: Some(resolved_model.to_string()),
+        };
+        // The shape Claude Code 2.1.330 reports from supportedModels().
+        let models = map_claude_models(vec![
+            alias("default", "Default (recommended)", "claude-opus-5-5"),
+            alias("opus", "Opus 5.5", "claude-opus-5-5"),
+            alias("fable", "Fable 5.2", "claude-fable-5-2"),
+            alias("sonnet", "Sonnet 5.5", "claude-sonnet-5-5"),
+            alias("haiku", "Haiku 5.5", "claude-haiku-5-5"),
+            alias("claude-fable-5-1", "Fable 5.1", "claude-fable-5-1"),
+        ]);
+
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| (model.id.as_str(), model.display_name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("opus", "Opus 5.5"),
+                ("fable", "Fable 5.2"),
+                ("sonnet", "Sonnet 5.5"),
+                ("haiku", "Haiku 5.5"),
+                ("claude-fable-5-1", "Fable 5.1"),
+            ]
+        );
+        assert!(models[0].is_default);
+        assert!(models[1..].iter().all(|model| !model.is_default));
+        assert!(models
+            .iter()
+            .all(|model| model.default_reasoning_effort == "high"));
+    }
+
+    #[test]
     fn renames_unresolved_default_alias_to_inferred_family() {
         let model = map_claude_model(SidecarModelInfo {
             value: "default".to_string(),
