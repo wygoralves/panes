@@ -6,10 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Jobs get read access by default. The release jobs that publish ask for
+# write access themselves.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Pull requests cancel their stale runs. Pushes queue instead: cancelling a
 # push run after release-it has published a release would leave that release
@@ -395,11 +395,14 @@ jobs:
         platform: [macos-15, ubuntu-22.04, windows-latest]
 
     steps:
+      # No later step pushes, so the write-scoped token stays out of
+      # .git/config while dependency install scripts and build.rs run.
       - name: Checkout released tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.release.outputs.released_tag }}
+          persist-credentials: false
 
       - name: Download prebuilt desktop artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
