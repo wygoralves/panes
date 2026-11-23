@@ -15,6 +15,8 @@ Please do not open a public issue, discussion, or pull request for a security pr
 
 Report it privately through GitHub instead: open the repository's [Security tab](https://github.com/wygoralves/panes/security) and choose **Report a vulnerability**, or go straight to the [private report form](https://github.com/wygoralves/panes/security/advisories/new).
 
+If that form is not available to you, open a regular issue that says only that you have a security report and asks for a private channel. Leave every detail of the problem out of it, and the maintainer will follow up privately.
+
 Include what you can of the following:
 
 - The Panes version and your operating system
