@@ -1,6 +1,6 @@
 import { cp, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
 import { stageClaudeSdkPlatformAssets } from "./claude-sidecar-staging.mjs";
@@ -93,6 +93,14 @@ await stageClaudeSdkPlatformAssets({
   targetArch: process.env.PANES_CLAUDE_SDK_ARCH ?? process.arch,
   targetLibc: process.env.PANES_CLAUDE_SDK_LIBC ?? "glibc",
 });
+// The staged copy drops the SDK's peer packages, so load the entry the sidecar
+// imports to prove it still resolves without them.
+const stagedSdkPackage = JSON.parse(
+  await readFile(path.join(sdkDistPackageDir, "package.json"), "utf8"),
+);
+await import(
+  pathToFileURL(path.join(sdkDistPackageDir, stagedSdkPackage.main ?? "sdk.mjs")).href
+);
 await archiveLinuxSdkNodeModules();
 
 const output = await readFile(outFile, "utf8");

@@ -159,6 +159,52 @@ async function stageLegacyRipgrep({
   );
 }
 
+// The SDK entry the sidecar imports (sdk.mjs) needs only Node builtins and the
+// native runtime. Its peer dependencies (zod, @anthropic-ai/sdk and the MCP
+// SDK) serve the separate `/core` entry, so the staged copy drops them along
+// with anything else that is not the SDK, a declared dependency, or a native
+// package kept above.
+async function pruneUnusedPackages({ sdkDistNodeModulesDir, sdkPackage, logger }) {
+  const keep = new Set([
+    "@anthropic-ai/claude-agent-sdk",
+    ...Object.keys(sdkPackage.dependencies ?? {}),
+  ]);
+  const removed = [];
+
+  const entries = await readdir(sdkDistNodeModulesDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const scopeOrName = entry.name;
+    if (scopeOrName.startsWith("@") && entry.isDirectory()) {
+      const scopeDir = path.join(sdkDistNodeModulesDir, scopeOrName);
+      const scoped = await readdir(scopeDir);
+      for (const name of scoped) {
+        const packageName = `${scopeOrName}/${name}`;
+        if (keep.has(packageName) || packageName.startsWith(NATIVE_PACKAGE_PREFIX)) {
+          continue;
+        }
+        await rm(path.join(scopeDir, name), { recursive: true, force: true });
+        removed.push(packageName);
+      }
+      if ((await readdir(scopeDir)).length === 0) {
+        await rm(scopeDir, { recursive: true, force: true });
+      }
+      continue;
+    }
+    if (keep.has(scopeOrName)) {
+      continue;
+    }
+    await rm(path.join(sdkDistNodeModulesDir, scopeOrName), {
+      recursive: true,
+      force: true,
+    });
+    removed.push(scopeOrName);
+  }
+
+  if (removed.length > 0) {
+    logger(`Removed packages the Claude SDK entry does not load: ${removed.sort().join(", ")}.`);
+  }
+}
+
 export async function stageClaudeSdkPlatformAssets({
   sdkDistNodeModulesDir,
   sdkDistPackageDir,
@@ -183,6 +229,7 @@ export async function stageClaudeSdkPlatformAssets({
       targetLibc,
       logger,
     });
+    await pruneUnusedPackages({ sdkDistNodeModulesDir, sdkPackage, logger });
     return "native";
   }
 
