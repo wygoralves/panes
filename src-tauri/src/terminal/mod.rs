@@ -56,8 +56,10 @@ struct TerminalSessionHandle {
     // writer, master, and child each get their own lock: a write_all blocked on
     // a full PTY buffer must not wedge resize/kill/shutdown, and kill delivery
     // goes through the cloned killer so it never waits behind child.wait().
+    // The master is taken out (see release_pty) once the shell is gone: on
+    // Windows dropping it is what closes the pseudoconsole.
     writer: Mutex<Box<dyn Write + Send>>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     child: Mutex<Box<dyn Child + Send>>,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
 }
@@ -423,6 +425,8 @@ impl TerminalManager {
             Arc::clone(&spawned.session),
             spawned.reader,
         );
+        #[cfg(target_os = "windows")]
+        spawn_conpty_exit_waiter(&spawned.session);
 
         Ok(created)
     }
@@ -1289,14 +1293,18 @@ impl TerminalSessionHandle {
             .master
             .lock()
             .map_err(|_| anyhow::anyhow!("terminal master lock poisoned"))?;
-        master
-            .resize(PtySize {
-                rows: rows.max(1),
-                cols: cols.max(1),
-                pixel_width,
-                pixel_height,
-            })
-            .context("failed resizing terminal pty")?;
+        let Some(pty) = master.as_ref() else {
+            // The pseudoconsole was already released; the pane may still send
+            // resizes for a dead session.
+            return Ok(());
+        };
+        pty.resize(PtySize {
+            rows: rows.max(1),
+            cols: cols.max(1),
+            pixel_width,
+            pixel_height,
+        })
+        .context("failed resizing terminal pty")?;
         drop(master);
 
         match self
@@ -1380,8 +1388,74 @@ impl TerminalSessionHandle {
                 log::warn!("unable to stop terminal session: {error}");
             }
         }
-        self.wait_for_exit()
+        let exit = self.wait_for_exit();
+        // Close the pseudoconsole too, so the reader and emitter threads see
+        // EOF and conhost and console-attached grandchildren go away.
+        #[cfg(target_os = "windows")]
+        self.release_pty();
+        exit
     }
+
+    /// Drops the PTY master. On Windows that runs ClosePseudoConsole: conhost
+    /// exits, attached clients get CTRL_CLOSE_EVENT and the output pipe breaks,
+    /// so the reader thread reaches EOF. ClosePseudoConsole can block until
+    /// pending output is drained, so never call this from the reader thread,
+    /// and the drop happens after the lock is released.
+    #[cfg(target_os = "windows")]
+    fn release_pty(&self) {
+        let master = {
+            let mut guard = self
+                .master
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            guard.take()
+        };
+        drop(master);
+    }
+}
+
+/// ConPTY keeps the output pipe open after the shell exits until the
+/// pseudoconsole is closed, and the session handle that owns it stays alive
+/// as long as the reader waits for EOF. Wait for the shell process on a
+/// separate thread and release the pseudoconsole when it exits, so typing
+/// `exit` ends the session like on other platforms.
+#[cfg(target_os = "windows")]
+fn spawn_conpty_exit_waiter(session: &Arc<TerminalSessionHandle>) {
+    use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
+    };
+
+    let Some(shell_pid) = session.shell_pid else {
+        return;
+    };
+    // The child handle portable-pty keeps open stops this PID from being
+    // reused, so opening it by PID reaches the shell itself.
+    // SAFETY: OpenProcess takes no pointers; a null result is handled below.
+    let process: HANDLE = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, FALSE, shell_pid) };
+    if process.is_null() {
+        log::warn!(
+            "unable to watch terminal shell for exit: session_id={}, pid={}, error={}",
+            session.meta.id,
+            shell_pid,
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+    // HANDLE is a raw pointer and not Send; carry it across as an integer.
+    let process = process as usize;
+    let session = Arc::downgrade(session);
+    thread::spawn(move || {
+        let process = process as HANDLE;
+        // SAFETY: `process` is a handle this thread owns; it is closed once.
+        unsafe {
+            WaitForSingleObject(process, INFINITE);
+            CloseHandle(process);
+        }
+        if let Some(session) = session.upgrade() {
+            session.release_pty();
+        }
+    });
 }
 
 fn prune_completed_replays(replays: &mut HashMap<String, HashMap<String, TerminalReplaySnapshot>>) {
@@ -1502,7 +1576,7 @@ fn spawn_session(
         replay_seq: AtomicU64::new(0),
         replay_state: Mutex::new(TerminalReplayState::default()),
         writer: Mutex::new(writer),
-        master: Mutex::new(pair.master),
+        master: Mutex::new(Some(pair.master)),
         child: Mutex::new(child),
         child_killer: Mutex::new(child_killer),
     });
@@ -2889,5 +2963,67 @@ mod tests {
         assert!(command_line
             .as_deref()
             .is_some_and(|line| line.contains("127.0.0.1")));
+    }
+
+    #[cfg(target_os = "windows")]
+    fn drain_reader_until_eof(mut reader: Box<dyn Read + Send>) -> std::sync::mpsc::Receiver<()> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = [0_u8; 4096];
+            while let Ok(read) = reader.read(&mut buf) {
+                if read == 0 {
+                    break;
+                }
+            }
+            let _ = sender.send(());
+        });
+        receiver
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_shell_exit_closes_the_pseudoconsole() {
+        let spawned = spawn_session(
+            "exit-test".to_string(),
+            "workspace".to_string(),
+            std::env::temp_dir().display().to_string(),
+            80,
+            24,
+            None,
+        )
+        .expect("spawn terminal session");
+        spawn_conpty_exit_waiter(&spawned.session);
+        let eof = drain_reader_until_eof(spawned.reader);
+
+        thread::sleep(Duration::from_millis(500));
+        spawned.session.write_raw(b"exit\r\n").expect("type exit");
+
+        assert!(
+            eof.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "the reader never reached EOF after the shell exited"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_kill_and_wait_closes_the_pseudoconsole() {
+        let spawned = spawn_session(
+            "kill-test".to_string(),
+            "workspace".to_string(),
+            std::env::temp_dir().display().to_string(),
+            80,
+            24,
+            None,
+        )
+        .expect("spawn terminal session");
+        let eof = drain_reader_until_eof(spawned.reader);
+
+        thread::sleep(Duration::from_millis(500));
+        spawned.session.kill_and_wait();
+
+        assert!(
+            eof.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "the reader never reached EOF after the session was closed"
+        );
     }
 }
