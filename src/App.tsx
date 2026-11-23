@@ -55,6 +55,7 @@ import {
   toggleWorkspaceEditorLayout,
 } from "./lib/workspacePaneNavigation";
 import {
+  hasAppShortcutModifier,
   usesCustomWindowFrame,
   isTerminalInputFocused,
   requestWindowClose,
@@ -427,8 +428,7 @@ export function App() {
         return;
       }
 
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta) return;
+      if (!hasAppShortcutModifier(e)) return;
 
       // On macOS/WebKit, e.key is lowercase even when Shift is held with Cmd,
       // so normalize to lowercase and use e.shiftKey to differentiate.

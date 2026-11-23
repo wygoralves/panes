@@ -12,7 +12,7 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { useUiStore } from "../../stores/uiStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { isMacDesktop } from "../../lib/windowActions";
+import { hasAppShortcutModifier, isMacDesktop } from "../../lib/windowActions";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { GitDiffEditorPanel } from "./GitDiffEditorPanel";
@@ -141,8 +141,7 @@ export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {})
   // to prevent the browser save-page dialog in all contexts.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta || e.key !== "s") return;
+      if (!hasAppShortcutModifier(e) || e.key !== "s") return;
 
       if (!embedded) {
         const wsId = useWorkspaceStore.getState().activeWorkspaceId;
