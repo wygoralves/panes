@@ -277,10 +277,14 @@ export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {})
             </button>
           </div>
         </div>
-      ) : activeTab?.readOnlyReason === "non-utf8" && !activeTab.isLoading ? (
+      ) : activeTab?.readOnlyReason && !activeTab.isLoading ? (
         <div className="editor-notice-bar" role="status">
           <AlertTriangle size={13} />
-          <span className="editor-notice-bar-message">{t("editor.nonUtf8ReadOnly")}</span>
+          <span className="editor-notice-bar-message">
+            {activeTab.readOnlyReason === "non-utf8"
+              ? t("editor.nonUtf8ReadOnly")
+              : t("editor.mixedLineEndingsReadOnly")}
+          </span>
         </div>
       ) : null}
 

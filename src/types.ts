@@ -997,7 +997,7 @@ export interface EditorTab {
 
 export type EditorLineEnding = "\n" | "\r\n";
 
-export type EditorReadOnlyReason = "non-utf8";
+export type EditorReadOnlyReason = "non-utf8" | "mixed-line-endings";
 
 export interface EditorDiskConflict {
   diskContent: string;

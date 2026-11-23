@@ -466,6 +466,7 @@
     "discard": "Discard",
     "cancel": "Cancel",
     "nonUtf8ReadOnly": "This file is not valid UTF-8, so it opened read-only to keep its encoding intact.",
+    "mixedLineEndingsReadOnly": "This file mixes line endings, so it opened read-only to keep every line as it is on disk.",
     "diskConflict": {
       "message": "{{name}} changed on disk while you were editing it.",
       "reload": "Reload from disk",

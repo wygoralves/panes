@@ -15,6 +15,7 @@ import { destroyCachedEditor } from "../components/editor/CodeMirrorEditor";
 import {
   applyLineEnding,
   detectLineEnding,
+  hasUniformLineEndings,
   normalizeLineEndings,
 } from "../lib/lineEndings";
 import type {
@@ -40,11 +41,16 @@ function toDiskFileState(result: ReadFileResult, knownLineEnding?: EditorLineEnd
   if (result.isBinary) {
     return { content: "", isBinary: true, lineEnding: "\n", readOnlyReason: null };
   }
+  const lineEnding = detectLineEnding(result.content, knownLineEnding);
   return {
     content: normalizeLineEndings(result.content),
     isBinary: false,
-    lineEnding: detectLineEnding(result.content, knownLineEnding),
-    readOnlyReason: result.isLossyDecode ? "non-utf8" : null,
+    lineEnding,
+    readOnlyReason: result.isLossyDecode
+      ? "non-utf8"
+      : hasUniformLineEndings(result.content, lineEnding)
+        ? null
+        : "mixed-line-endings",
   };
 }
 
@@ -121,14 +127,22 @@ function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
   const modifiedContent = normalizeLineEndings(compare.modifiedContent);
   const content = preserveDirtyContent ? tab.content : modifiedContent;
   const savedContent = preserveDirtyContent ? tab.savedContent : modifiedContent;
+  const lineEnding = preserveDirtyContent
+    ? tab.lineEnding
+    : detectLineEnding(compare.modifiedContent, tab.lineEnding);
+  let readOnlyReason = tab.readOnlyReason ?? null;
+  if (!preserveDirtyContent && readOnlyReason !== "non-utf8") {
+    readOnlyReason = hasUniformLineEndings(compare.modifiedContent, lineEnding ?? "\n")
+      ? null
+      : "mixed-line-endings";
+  }
 
   return {
     ...tab,
     content,
     savedContent,
-    lineEnding: preserveDirtyContent
-      ? tab.lineEnding
-      : detectLineEnding(compare.modifiedContent, tab.lineEnding),
+    lineEnding,
+    readOnlyReason,
     isDirty: preserveDirtyContent ? tab.content !== tab.savedContent : false,
     isLoading: false,
     isBinary: compare.isBinary,
@@ -663,9 +677,13 @@ async function writeTabToDisk(
     try {
       const disk = await ipc.readFile(tab.rootPath, tab.filePath);
       diskContent = normalizeLineEndings(disk.content);
-      unchanged = !disk.isBinary && diskContent === tab.savedContent;
       // Same text: keep the line ending the file has on disk now, if it has one.
       lineEnding = detectLineEnding(disk.content, tab.lineEnding);
+      // Endings that became mixed on disk would be flattened by this save, so
+      // they count as an external change too.
+      unchanged = !disk.isBinary
+        && diskContent === tab.savedContent
+        && hasUniformLineEndings(disk.content, lineEnding);
     } catch {
       // Treated as a conflict below.
     }

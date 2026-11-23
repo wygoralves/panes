@@ -22,3 +22,11 @@ export function normalizeLineEndings(text: string): string {
 export function applyLineEnding(text: string, lineEnding: EditorLineEnding | undefined): string {
   return lineEnding === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
 }
+
+/**
+ * False when saving the normalized text with one ending would change bytes on disk:
+ * mixed CRLF and LF, or a CR that is not followed by LF.
+ */
+export function hasUniformLineEndings(raw: string, lineEnding: EditorLineEnding): boolean {
+  return applyLineEnding(normalizeLineEndings(raw), lineEnding) === raw;
+}

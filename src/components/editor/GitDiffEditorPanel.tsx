@@ -421,9 +421,10 @@ export function GitDiffEditorPanel({
   }
 
   const readOnlyModified =
-    context.isEditable === undefined
+    Boolean(tab.readOnlyReason)
+    || (context.isEditable === undefined
       ? context.changeType === "deleted"
-      : !context.isEditable;
+      : !context.isEditable);
   const calloutMessage =
     context.changeType === "deleted"
       ? t("editor.gitDiff.deletedNotice")

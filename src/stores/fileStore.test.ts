@@ -534,6 +534,45 @@ describe("fileStore", () => {
     expect(mockIpc.writeFile).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["mixed endings with an LF majority", "a\r\nb\nc\n"],
+    ["mixed endings with a CRLF majority", "x\r\ny\r\nz\n"],
+    ["a lone CR inside a line", "progress 10%\rprogress 100%\n"],
+    ["classic Mac CR-only endings", "a\rb\rc\r"],
+  ])("opens a file with %s read-only and never writes it", async (_label, raw) => {
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult(raw));
+    await useFileStore.getState().openFile("/repo", "mixed.txt");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    expect(useFileStore.getState().tabs[0]!.readOnlyReason).toBe("mixed-line-endings");
+
+    useFileStore.getState().setTabContent(tabId, "edited\n");
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+
+    expect(mockIpc.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("opens a git diff of a file with mixed endings read-only", async () => {
+    mockIpc.getGitFileCompare.mockResolvedValueOnce(
+      makeCompare({ modifiedContent: "a\r\nb\nc\n" }),
+    );
+    await useFileStore.getState().openGitDiffFile("/repo", "src/app.ts", { source: "changes" });
+
+    expect(useFileStore.getState().tabs[0]!.readOnlyReason).toBe("mixed-line-endings");
+  });
+
+  it("holds the save when the file's endings became mixed on disk after it loaded", async () => {
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("a\nb\nc\n"));
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "a\nb\nC\n");
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("a\r\nb\nc\n"));
+
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+
+    expect(mockIpc.writeFile).not.toHaveBeenCalled();
+    expect(useFileStore.getState().tabs[0]!.diskConflict).toEqual({ diskContent: "a\nb\nc\n" });
+  });
+
   it("reloads a clean tab when the file changed on disk", async () => {
     await useFileStore.getState().openFile("/repo", "src/app.ts");
     mockIpc.readFile.mockResolvedValue(makeReadFileResult("agent edit\n"));

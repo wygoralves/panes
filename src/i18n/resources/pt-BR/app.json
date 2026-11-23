@@ -466,6 +466,7 @@
     "discard": "Descartar",
     "cancel": "Cancelar",
     "nonUtf8ReadOnly": "Este arquivo não é UTF-8 válido, então foi aberto somente leitura para preservar a codificação.",
+    "mixedLineEndingsReadOnly": "Este arquivo mistura finais de linha, então foi aberto somente leitura para manter cada linha como está no disco.",
     "diskConflict": {
       "message": "{{name}} mudou no disco enquanto você o editava.",
       "reload": "Recarregar do disco",
