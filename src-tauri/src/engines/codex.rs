@@ -177,6 +177,9 @@ struct CodexState {
     sandbox_fallback_reason: Option<String>,
     /// Threads that were already told about the sandbox fallback.
     sandbox_fallback_notified_threads: HashSet<String>,
+    /// New threads started because Codex no longer had the thread Panes asked
+    /// to resume, keyed by the new id, with the id that could not be resumed.
+    resume_fallback_threads: HashMap<String, String>,
     protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
     runtime_monitor_transport_tag: Option<usize>,
 }
@@ -547,6 +550,7 @@ impl Engine for CodexEngine {
             }
         }
 
+        let mut replaced_thread_id = None;
         if let Some(existing_thread_id) = resume_engine_thread_id {
             let resume_params = build_thread_resume_params(
                 existing_thread_id,
@@ -576,8 +580,22 @@ impl Engine for CodexEngine {
 
                     return Ok(EngineThread { engine_thread_id });
                 }
+                Err(error) if is_missing_thread_error(&error.to_string()) => {
+                    log::warn!(
+                        "codex thread {existing_thread_id} no longer exists, starting a new thread: {error}"
+                    );
+                    replaced_thread_id = Some(existing_thread_id.to_string());
+                }
                 Err(error) => {
-                    log::warn!("codex thread resume failed, falling back to thread/start: {error}");
+                    // Starting a fresh thread here would silently drop the
+                    // conversation context, so the turn fails instead.
+                    if is_auth_related_error(&error.to_string()) {
+                        self.invalidate_transport(
+                            "resetting codex transport after auth failure while resuming thread",
+                        )
+                        .await;
+                    }
+                    return Err(error).context("failed to resume codex thread");
                 }
             }
         }
@@ -622,6 +640,13 @@ impl Engine for CodexEngine {
             requested_runtime.output_schema.clone(),
         );
         self.store_thread_runtime(&engine_thread_id, runtime).await;
+        if let Some(replaced_thread_id) = replaced_thread_id {
+            self.state
+                .lock()
+                .await
+                .resume_fallback_threads
+                .insert(engine_thread_id.clone(), replaced_thread_id);
+        }
 
         Ok(EngineThread { engine_thread_id })
     }
@@ -653,6 +678,18 @@ impl Engine for CodexEngine {
             .await
         {
             event_tx.send(notice).await.ok();
+        }
+        let replaced_thread_id = self
+            .state
+            .lock()
+            .await
+            .resume_fallback_threads
+            .remove(&thread_id);
+        if let Some(replaced_thread_id) = replaced_thread_id {
+            event_tx
+                .send(resume_fallback_notice(&replaced_thread_id))
+                .await
+                .ok();
         }
 
         let transport_for_rate_limits = transport.clone();
@@ -2508,6 +2545,7 @@ impl CodexEngine {
             state.workspace_probe_passed = false;
             state.sandbox_fallback_reason = None;
             state.sandbox_fallback_notified_threads.clear();
+            state.resume_fallback_threads.clear();
             if let Some(diagnostics) = state.protocol_diagnostics.as_mut() {
                 diagnostics.stale = true;
             }
@@ -4932,6 +4970,26 @@ fn external_sandbox_opt_in(value: Option<&str>) -> bool {
             normalized == "1" || normalized == "true" || normalized == "yes"
         })
         .unwrap_or(false)
+}
+
+/// True when `thread/resume` failed because Codex has no such thread (for
+/// example its rollout file is gone), as opposed to a transient failure.
+fn is_missing_thread_error(error: &str) -> bool {
+    let value = error.to_lowercase();
+    value.contains("no rollout found")
+        || value.contains("thread not found")
+        || value.contains("invalid session id")
+}
+
+fn resume_fallback_notice(replaced_thread_id: &str) -> EngineEvent {
+    EngineEvent::Notice {
+        kind: "codex_thread_replaced".to_string(),
+        level: "warning".to_string(),
+        title: "Started a new Codex thread".to_string(),
+        message: format!(
+            "Codex no longer has thread {replaced_thread_id}, so Panes started a new Codex thread. Earlier messages in this chat are not part of the model's context."
+        ),
+    }
 }
 
 fn sandbox_fallback_notice(reason: &str) -> EngineEvent {
@@ -8532,6 +8590,19 @@ mod tests {
         assert!(!is_method_not_supported_error(
             "all rpc methods failed: thread/revert: thread not found"
         ));
+    }
+
+    #[test]
+    fn only_a_missing_thread_lets_resume_start_a_new_thread() {
+        assert!(is_missing_thread_error(
+            "all rpc methods failed: thread/resume: no rollout found for thread id 0199a213"
+        ));
+        assert!(is_missing_thread_error("thread not found: abc"));
+        assert!(!is_missing_thread_error(
+            "codex request timeout for method `thread/resume`"
+        ));
+        assert!(!is_missing_thread_error("401 Unauthorized"));
+        assert!(!is_missing_thread_error("codex app-server exited"));
     }
 
     #[test]
