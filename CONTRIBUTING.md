@@ -7,7 +7,8 @@ Panes is a local-first desktop cockpit for AI-assisted coding. The project accep
 ## Before you start
 
 - Open an issue first for large features, broad UX changes, or architectural refactors.
-- Small bug fixes, docs updates, and focused improvements can go straight to a pull request.
+- Small bug fixes, docs updates, and focused improvements can go straight to a pull request if you have collaborator access; otherwise use the fork-and-issue path in [Pull request access](#pull-request-access).
+- Report bugs and request features with the issue templates. Report security problems privately as described in [SECURITY.md](./SECURITY.md), not in a public issue.
 - Keep changes scoped. Large mixed PRs are hard to review and slow down merge decisions.
 
 ## Development setup
