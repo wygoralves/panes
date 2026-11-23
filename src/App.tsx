@@ -32,6 +32,7 @@ import { toast } from "./stores/toastStore";
 import type { ChatEngineId, RuntimeToast, Thread } from "./types";
 import { getActiveEditorView, openSearchPanel } from "./components/editor/CodeMirrorEditor";
 import { CustomWindowFrame } from "./components/shared/CustomWindowFrame";
+import { startEditorDiskSync } from "./lib/editorDiskSync";
 import { useCustomWindowFrameState } from "./lib/customWindowFrame";
 import { runEditMenuAction } from "./lib/nativeEditActions";
 import {
@@ -379,6 +380,8 @@ export function App() {
       }
     };
   }, [applyEngineRuntimeUpdate]);
+
+  useEffect(() => startEditorDiskSync(), []);
 
   useEffect(() => {
     function onBeforeUnload() {

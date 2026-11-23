@@ -79,11 +79,16 @@ vi.mock("../components/editor/CodeMirrorEditor", () => ({
 
 import { useFileStore } from "./fileStore";
 
-function makeReadFileResult(content: string): ReadFileResult {
+function makeReadFileResult(
+  content: string,
+  overrides: Partial<ReadFileResult> = {},
+): ReadFileResult {
   return {
     content,
     sizeBytes: content.length,
     isBinary: false,
+    isLossyDecode: false,
+    ...overrides,
   };
 }
 
@@ -221,7 +226,7 @@ describe("fileStore", () => {
     });
   });
 
-  it("reuses an existing tab and updates its pending reveal without reloading the file", async () => {
+  it("reuses an existing tab and updates its pending reveal while keeping unchanged disk content", async () => {
     await useFileStore.getState().openFile("/repo", "src/app.ts");
     const tabId = useFileStore.getState().tabs[0]!.id;
     mockIpc.readFile.mockClear();
@@ -236,7 +241,9 @@ describe("fileStore", () => {
       line: 28,
       column: 2,
     });
-    expect(mockIpc.readFile).not.toHaveBeenCalled();
+    expect(mockIpc.readFile).toHaveBeenCalledTimes(1);
+    expect(tab.content).toBe("plain\n");
+    expect(tab.isDirty).toBe(false);
   });
 
   it("drops stale diff editor views when returning a shared tab to plain mode", async () => {
@@ -468,5 +475,121 @@ describe("fileStore", () => {
       gitFilePath: "src/page.tsx",
       renderMode: "git-diff-editor",
     });
+  });
+
+  it("keeps CRLF files LF in the buffer and writes CRLF back on save", async () => {
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("a\r\nb\r\n"));
+    await useFileStore.getState().openFile("/repo", "win.bat");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+
+    const opened = useFileStore.getState().tabs[0]!;
+    expect(opened.content).toBe("a\nb\n");
+    expect(opened.savedContent).toBe("a\nb\n");
+    expect(opened.lineEnding).toBe("\r\n");
+
+    useFileStore.getState().setTabContent(tabId, "a\nb\nc\n");
+    useFileStore.getState().setTabContent(tabId, "a\nb\n");
+    expect(useFileStore.getState().tabs[0]!.isDirty).toBe(false);
+
+    useFileStore.getState().setTabContent(tabId, "a\nb\nc\n");
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
+
+    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "win.bat", "a\r\nb\r\nc\r\n", "ws-1");
+    expect(useFileStore.getState().tabs[0]!.isDirty).toBe(false);
+  });
+
+  it("opens non-UTF-8 files read-only and never writes them", async () => {
+    mockIpc.readFile.mockResolvedValue(
+      makeReadFileResult("caf�\n", { isLossyDecode: true }),
+    );
+    await useFileStore.getState().openFile("/repo", "latin1.txt");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    expect(useFileStore.getState().tabs[0]!.readOnlyReason).toBe("non-utf8");
+
+    useFileStore.getState().setTabContent(tabId, "cafe\n");
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+
+    expect(mockIpc.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("reloads a clean tab when the file changed on disk", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("agent edit\n"));
+
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.content).toBe("agent edit\n");
+    expect(tab.savedContent).toBe("agent edit\n");
+    expect(tab.isDirty).toBe(false);
+    expect(tab.diskConflict ?? null).toBeNull();
+  });
+
+  it("flags a conflict instead of replacing a dirty buffer when the disk changed", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "mine\n");
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("agent edit\n"));
+
+    await useFileStore.getState().reloadTabFromDisk(tabId);
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.content).toBe("mine\n");
+    expect(tab.savedContent).toBe("plain\n");
+    expect(tab.diskConflict).toEqual({ diskContent: "agent edit\n" });
+  });
+
+  it("does not overwrite newer disk content on repeated saves until the user keeps theirs", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "mine\n");
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("agent edit\n"));
+
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+    expect(mockIpc.writeFile).not.toHaveBeenCalled();
+    expect(useFileStore.getState().tabs[0]!.diskConflict).toEqual({
+      diskContent: "agent edit\n",
+    });
+
+    await useFileStore.getState().resolveDiskConflict(tabId, "keep-mine");
+
+    expect(mockIpc.writeFile).toHaveBeenCalledTimes(1);
+    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "mine\n", "ws-1");
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.isDirty).toBe(false);
+    expect(tab.diskConflict).toBeNull();
+  });
+
+  it("takes the disk version when the user reloads a conflicted tab", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "mine\n");
+    mockIpc.readFile.mockResolvedValue(makeReadFileResult("agent edit\n"));
+    await useFileStore.getState().saveTab(tabId);
+
+    await useFileStore.getState().resolveDiskConflict(tabId, "reload");
+
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.content).toBe("agent edit\n");
+    expect(tab.isDirty).toBe(false);
+    expect(tab.diskConflict).toBeNull();
+    expect(mockIpc.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("writes once when two saves overlap", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "mine\n");
+
+    await Promise.all([
+      useFileStore.getState().saveTab(tabId),
+      useFileStore.getState().saveTab(tabId),
+    ]);
+
+    expect(mockIpc.writeFile).toHaveBeenCalledTimes(1);
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.isDirty).toBe(false);
+    expect(tab.diskConflict ?? null).toBeNull();
   });
 });

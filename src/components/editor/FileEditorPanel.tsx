@@ -1,5 +1,14 @@
 import { useEffect } from "react";
-import { ExternalLink, Eye, FileDiff, FileText, Loader2, PanelLeftOpen, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  Eye,
+  FileDiff,
+  FileText,
+  Loader2,
+  PanelLeftOpen,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   resolveOwningRepoForAbsolutePath,
@@ -35,6 +44,7 @@ export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {})
   const cancelCloseTab = useFileStore((s) => s.cancelCloseTab);
   const clearPendingReveal = useFileStore((s) => s.clearPendingReveal);
   const setTabRenderMode = useFileStore((s) => s.setTabRenderMode);
+  const resolveDiskConflict = useFileStore((s) => s.resolveDiskConflict);
   const focusMode = useUiStore((s) => s.focusMode);
   const showSidebar = useUiStore((s) => s.showSidebar);
   const showExplorer = useUiStore((s) => s.showExplorer);
@@ -143,6 +153,8 @@ export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {})
     function onKeyDown(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
       if (!meta || e.key !== "s") return;
+      // Key repeat would queue a second save behind the first one.
+      if (e.repeat) return;
 
       if (!embedded) {
         const wsId = useWorkspaceStore.getState().activeWorkspaceId;
@@ -242,6 +254,36 @@ export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {})
         </div>
       )}
 
+      {activeTab?.diskConflict ? (
+        <div className="editor-notice-bar" role="alert">
+          <AlertTriangle size={13} />
+          <span className="editor-notice-bar-message">
+            {t("editor.diskConflict.message", { name: activeTab.fileName })}
+          </span>
+          <div className="editor-notice-bar-actions">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => void resolveDiskConflict(activeTab.id, "reload")}
+            >
+              {t("editor.diskConflict.reload")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => void resolveDiskConflict(activeTab.id, "keep-mine")}
+            >
+              {t("editor.diskConflict.keepMine")}
+            </button>
+          </div>
+        </div>
+      ) : activeTab?.readOnlyReason === "non-utf8" && !activeTab.isLoading ? (
+        <div className="editor-notice-bar" role="status">
+          <AlertTriangle size={13} />
+          <span className="editor-notice-bar-message">{t("editor.nonUtf8ReadOnly")}</span>
+        </div>
+      ) : null}
+
       {/* Editor content */}
       <div style={{ flex: 1, overflow: "hidden" }}>
         {activeTab ? (
@@ -303,6 +345,7 @@ export function FileEditorPanel({ embedded = false }: FileEditorPanelProps = {})
               tabId={activeTab.id}
               content={activeTab.content}
               filePath={activeTab.filePath}
+              readOnly={Boolean(activeTab.readOnlyReason)}
               onChange={(content) => setTabContent(activeTab.id, content)}
               pendingReveal={activeTab.pendingReveal}
               onRevealHandled={(nonce) => clearPendingReveal(activeTab.id, nonce)}

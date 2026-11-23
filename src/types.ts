@@ -945,6 +945,8 @@ export interface ReadFileResult {
   content: string;
   sizeBytes: number;
   isBinary: boolean;
+  /** True when the file is not valid UTF-8 and `content` holds replacement characters. */
+  isLossyDecode: boolean;
 }
 
 export interface ResolvedEditorFileReference {
@@ -985,6 +987,20 @@ export interface EditorTab {
   gitContext: GitEditorContext | null;
   pendingReveal: EditorRevealRequest | null;
   loadError?: string;
+  /** Line ending used on disk. `content` and `savedContent` stay LF-normalized. */
+  lineEnding?: EditorLineEnding;
+  /** Set when saving could corrupt the file, so the editor opens it read-only. */
+  readOnlyReason?: EditorReadOnlyReason | null;
+  /** Disk content that changed under a dirty buffer, awaiting the user's choice. */
+  diskConflict?: EditorDiskConflict | null;
+}
+
+export type EditorLineEnding = "\n" | "\r\n";
+
+export type EditorReadOnlyReason = "non-utf8";
+
+export interface EditorDiskConflict {
+  diskContent: string;
 }
 
 export interface TerminalSession {

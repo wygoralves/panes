@@ -465,6 +465,12 @@
     "unsavedChangesMessage": "\"{{name}}\" tem alterações não salvas. Descartá-las?",
     "discard": "Descartar",
     "cancel": "Cancelar",
+    "nonUtf8ReadOnly": "Este arquivo não é UTF-8 válido, então foi aberto somente leitura para preservar a codificação.",
+    "diskConflict": {
+      "message": "{{name}} mudou no disco enquanto você o editava.",
+      "reload": "Recarregar do disco",
+      "keepMine": "Manter a minha"
+    },
     "gitDiff": {
       "unavailable": "A comparação Git não está disponível para esta aba.",
       "sourceChanges": "Alterações",
@@ -493,7 +499,8 @@
       }
     },
     "toasts": {
-      "modifiedExternally": "{{name}} foi modificado externamente. Salve novamente para sobrescrever.",
+      "modifiedExternally": "{{name}} mudou no disco. Escolha qual versão manter.",
+      "reloadFailed": "Falha ao recarregar {{name}}: {{error}}",
       "saved": "{{name}} salvo",
       "saveFailed": "Falha ao salvar: {{error}}",
       "openExternalFailed": "Falha ao abrir o arquivo no app padrão"

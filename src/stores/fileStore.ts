@@ -12,14 +12,43 @@ import { toast } from "./toastStore";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useGitStore } from "./gitStore";
 import { destroyCachedEditor } from "../components/editor/CodeMirrorEditor";
+import {
+  applyLineEnding,
+  detectLineEnding,
+  normalizeLineEndings,
+} from "../lib/lineEndings";
 import type {
+  EditorLineEnding,
+  EditorReadOnlyReason,
   EditorRevealLocation,
   EditorRevealRequest,
   EditorRenderMode,
   EditorTab,
   GitCompareSource,
   GitFileCompare,
+  ReadFileResult,
 } from "../types";
+
+interface DiskFileState {
+  content: string;
+  isBinary: boolean;
+  lineEnding: EditorLineEnding;
+  readOnlyReason: EditorReadOnlyReason | null;
+}
+
+function toDiskFileState(result: ReadFileResult): DiskFileState {
+  if (result.isBinary) {
+    return { content: "", isBinary: true, lineEnding: "\n", readOnlyReason: null };
+  }
+  return {
+    content: normalizeLineEndings(result.content),
+    isBinary: false,
+    lineEnding: detectLineEnding(result.content),
+    readOnlyReason: result.isLossyDecode ? "non-utf8" : null,
+  };
+}
+
+const savesInFlight = new Set<string>();
 
 interface ResolvedFileContext {
   absolutePath: string;
@@ -89,13 +118,17 @@ function createPlainTab(
 
 function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
   const preserveDirtyContent = tab.isDirty;
-  const content = preserveDirtyContent ? tab.content : compare.modifiedContent;
-  const savedContent = preserveDirtyContent ? tab.savedContent : compare.modifiedContent;
+  const modifiedContent = normalizeLineEndings(compare.modifiedContent);
+  const content = preserveDirtyContent ? tab.content : modifiedContent;
+  const savedContent = preserveDirtyContent ? tab.savedContent : modifiedContent;
 
   return {
     ...tab,
     content,
     savedContent,
+    lineEnding: preserveDirtyContent
+      ? tab.lineEnding
+      : detectLineEnding(compare.modifiedContent),
     isDirty: preserveDirtyContent ? tab.content !== tab.savedContent : false,
     isLoading: false,
     isBinary: compare.isBinary,
@@ -194,7 +227,11 @@ interface FileStoreState {
     oldPath: string,
     newPath: string,
   ) => void;
-  saveTab: (tabId: string) => Promise<void>;
+  /** Resolves true when the tab has nothing left to save. */
+  saveTab: (tabId: string) => Promise<boolean>;
+  saveAllDirtyTabs: () => Promise<boolean>;
+  reloadTabFromDisk: (tabId: string) => Promise<void>;
+  resolveDiskConflict: (tabId: string, choice: "keep-mine" | "reload") => Promise<void>;
 }
 
 export const useFileStore = create<FileStoreState>((set, get) => ({
@@ -231,6 +268,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
             : tab,
         ),
       }));
+      await get().reloadTabFromDisk(existing.id);
       return;
     }
 
@@ -244,6 +282,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
     try {
       const result = await ipc.readFile(rootPath, filePath);
+      const disk = toDiskFileState(result);
       set((state) => ({
         tabs: state.tabs.map((t) =>
           t.id === id
@@ -251,11 +290,10 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
                 ...toOpenedFileTab(
                   t,
                   pendingReveal,
-                  result.isBinary ? "plain-editor" : renderMode,
+                  disk.isBinary ? "plain-editor" : renderMode,
                 ),
-                content: result.content,
-                savedContent: result.content,
-                isBinary: result.isBinary,
+                ...disk,
+                savedContent: disk.content,
                 isLoading: false,
               }
             : t,
@@ -500,51 +538,176 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
   saveTab: async (tabId) => {
     const tab = get().tabs.find((t) => t.id === tabId);
-    if (!tab || !tab.isDirty) return;
+    if (!tab || !tab.isDirty) return true;
+    if (tab.readOnlyReason) return false;
+    if (tab.diskConflict) {
+      // The banner owns this decision; a repeated Cmd+S must not overwrite disk.
+      toast.warning(t("app:editor.toasts.modifiedExternally", { name: tab.fileName }));
+      return false;
+    }
+    if (savesInFlight.has(tabId)) return false;
 
+    savesInFlight.add(tabId);
+    try {
+      return await writeTabToDisk(tabId, { checkDisk: true });
+    } finally {
+      savesInFlight.delete(tabId);
+    }
+  },
+
+  saveAllDirtyTabs: async () => {
+    const dirtyTabIds = get().tabs.filter((tab) => tab.isDirty).map((tab) => tab.id);
+    for (const tabId of dirtyTabIds) {
+      if (!(await get().saveTab(tabId))) {
+        return false;
+      }
+    }
+    return true;
+  },
+
+  reloadTabFromDisk: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.isLoading || tab.loadError) return;
+
+    if (tab.renderMode === "git-diff-editor" && tab.gitContext) {
+      await get().refreshGitContext(tabId);
+      return;
+    }
+
+    let disk: DiskFileState;
+    try {
+      disk = toDiskFileState(await ipc.readFile(tab.rootPath, tab.filePath));
+    } catch {
+      // Deleted or unreadable: keep the buffer so the user can still save it.
+      return;
+    }
+
+    set((state) => ({
+      tabs: state.tabs.map((t) => {
+        if (t.id !== tabId) return t;
+        const unchanged = disk.isBinary === t.isBinary
+          && disk.content === t.savedContent
+          && disk.readOnlyReason === (t.readOnlyReason ?? null);
+        if (unchanged) {
+          return t.diskConflict ? { ...t, diskConflict: null } : t;
+        }
+        if (!t.isDirty || disk.content === t.content) {
+          return {
+            ...t,
+            ...disk,
+            savedContent: disk.content,
+            isDirty: false,
+            diskConflict: null,
+          };
+        }
+        if (disk.isBinary) return t;
+        return { ...t, diskConflict: { diskContent: disk.content } };
+      }),
+    }));
+  },
+
+  resolveDiskConflict: async (tabId, choice) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab?.diskConflict) return;
+
+    if (choice === "keep-mine") {
+      if (savesInFlight.has(tabId)) return;
+      savesInFlight.add(tabId);
+      try {
+        await writeTabToDisk(tabId, { checkDisk: false });
+      } finally {
+        savesInFlight.delete(tabId);
+      }
+      return;
+    }
+
+    try {
+      const disk = toDiskFileState(await ipc.readFile(tab.rootPath, tab.filePath));
+      set((state) => ({
+        tabs: state.tabs.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                ...disk,
+                savedContent: disk.content,
+                isDirty: false,
+                diskConflict: null,
+              }
+            : t,
+        ),
+      }));
+    } catch (err) {
+      toast.error(t("app:editor.toasts.reloadFailed", { name: tab.fileName, error: String(err) }));
+    }
+  },
+}));
+
+async function writeTabToDisk(
+  tabId: string,
+  options: { checkDisk: boolean },
+): Promise<boolean> {
+  const { getState, setState } = useFileStore;
+  const tab = getState().tabs.find((t) => t.id === tabId);
+  if (!tab) return false;
+
+  if (options.checkDisk) {
     // Check if the file was modified externally since we loaded/last-saved it
     try {
       const disk = await ipc.readFile(tab.rootPath, tab.filePath);
-      if (!disk.isBinary && disk.content !== tab.savedContent) {
+      const diskContent = normalizeLineEndings(disk.content);
+      if (!disk.isBinary && diskContent !== tab.savedContent) {
         toast.warning(t("app:editor.toasts.modifiedExternally", { name: tab.fileName }));
-        set((state) => ({
+        setState((state) => ({
           tabs: state.tabs.map((t) =>
-            t.id === tabId
-              ? { ...t, savedContent: disk.content, isDirty: true }
-              : t,
+            t.id === tabId ? { ...t, diskConflict: { diskContent } } : t,
           ),
         }));
-        return;
+        return false;
       }
     } catch {
       // File may have been deleted — proceed with save
     }
+  }
 
-    const contentToSave = tab.content;
-    try {
-      await ipc.writeFile(tab.rootPath, tab.filePath, contentToSave, tab.workspaceId);
-      set((state) => ({
-        tabs: state.tabs.map((t) =>
-          t.id === tabId
-            ? { ...t, savedContent: contentToSave, isDirty: t.content !== contentToSave }
-            : t,
-        ),
-      }));
+  // Read the tab again: the user may have kept typing while the disk check ran.
+  const current = getState().tabs.find((t) => t.id === tabId);
+  if (!current) return false;
+  const contentToSave = current.content;
+  try {
+    await ipc.writeFile(
+      current.rootPath,
+      current.filePath,
+      applyLineEnding(contentToSave, current.lineEnding),
+      current.workspaceId,
+    );
+    setState((state) => ({
+      tabs: state.tabs.map((t) =>
+        t.id === tabId
+          ? {
+              ...t,
+              savedContent: contentToSave,
+              isDirty: t.content !== contentToSave,
+              diskConflict: null,
+            }
+          : t,
+      ),
+    }));
 
-      if (tab.gitContext && tab.gitRepoPath) {
-        const gitStore = useGitStore.getState();
-        try {
-          gitStore.invalidateRepoCache(tab.gitRepoPath);
-          await gitStore.refresh(tab.gitRepoPath, { force: true });
-          await get().refreshGitContext(tabId, tab.gitContext.source);
-        } catch {
-          // Saving already succeeded; leave the editor usable even if the git refresh fails.
-        }
+    if (current.gitContext && current.gitRepoPath) {
+      const gitStore = useGitStore.getState();
+      try {
+        gitStore.invalidateRepoCache(current.gitRepoPath);
+        await gitStore.refresh(current.gitRepoPath, { force: true });
+        await getState().refreshGitContext(tabId, current.gitContext.source);
+      } catch {
+        // Saving already succeeded; leave the editor usable even if the git refresh fails.
       }
-
-      toast.success(t("app:editor.toasts.saved", { name: tab.fileName }));
-    } catch (err) {
-      toast.error(t("app:editor.toasts.saveFailed", { error: String(err) }));
     }
-  },
-}));
+
+    toast.success(t("app:editor.toasts.saved", { name: current.fileName }));
+    return true;
+  } catch (err) {
+    toast.error(t("app:editor.toasts.saveFailed", { error: String(err) }));
+    return false;
+  }
+}
