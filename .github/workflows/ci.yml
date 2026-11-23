@@ -478,6 +478,15 @@ jobs:
       - name: Build platform Claude sidecar assets
         run: pnpm run build:claude-sidecar
 
+      # The app is compiled without any signing secret in the environment, so
+      # dependency build scripts never see them. Only the bundle steps that
+      # sign get the updater key (and on macOS the Apple secrets).
+      - name: Compile universal macOS app
+        if: matrix.platform == 'macos-15'
+        env:
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
+        run: pnpm exec tauri build --target universal-apple-darwin --no-bundle
+
       # Developer ID signing gives the bundle a stable code identity, which is
       # what lets macOS keep privacy (TCC) grants across updates. The Apple
       # secrets stay scoped to this one step: the Tauri bundler reads them from
@@ -509,7 +518,7 @@ jobs:
           else
             echo "Apple code signing and notarization enabled."
           fi
-          pnpm exec tauri build --target universal-apple-darwin
+          pnpm exec tauri bundle --target universal-apple-darwin
 
       - name: Verify macOS keep-awake helper payload
         if: matrix.platform == 'macos-15'
@@ -535,9 +544,15 @@ jobs:
           file "$APP_BINARY" | grep -Eq 'arm64|aarch64'
           file "$APP_BINARY" | grep -q 'x86_64'
 
+      - name: Compile Linux and Windows app
+        if: matrix.platform != 'macos-15'
+        run: pnpm exec tauri build --no-bundle
+        env:
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
+
       - name: Build Linux Tauri bundles
         if: matrix.platform == 'ubuntu-22.04'
-        run: pnpm tauri:build
+        run: pnpm exec tauri bundle
         env:
           NO_STRIP: "true"
           PANES_SKIP_DESKTOP_PREBUILD: "1"
@@ -546,7 +561,7 @@ jobs:
 
       - name: Build Windows Tauri bundles
         if: matrix.platform == 'windows-latest'
-        run: pnpm tauri:build
+        run: pnpm exec tauri bundle
         env:
           PANES_SKIP_DESKTOP_PREBUILD: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
