@@ -56,6 +56,9 @@ function toDiskFileState(result: ReadFileResult, knownLineEnding?: EditorLineEnd
 
 const savesInFlight = new Set<string>();
 
+/** Matches `FILE_CHANGED_ON_DISK` in src-tauri/src/fs_ops.rs. */
+const FILE_CHANGED_ON_DISK_ERROR = "file changed on disk after the save checked it";
+
 interface ResolvedFileContext {
   absolutePath: string;
   gitRepoPath: string | null;
@@ -668,6 +671,8 @@ async function writeTabToDisk(
   if (!tab) return false;
 
   let lineEnding = tab.lineEnding;
+  // The raw text the check saw; the backend refuses the write if it changed since.
+  let expectedDiskContent: string | null = null;
   if (options.checkDisk) {
     // Check if the file was modified externally since we loaded/last-saved it.
     // A failed read (deleted, too large, unreadable) or a binary file counts as
@@ -677,6 +682,7 @@ async function writeTabToDisk(
     try {
       const disk = await ipc.readFile(tab.rootPath, tab.filePath);
       diskContent = normalizeLineEndings(disk.content);
+      expectedDiskContent = disk.content;
       // Same text: keep the line ending the file has on disk now, if it has one.
       lineEnding = detectLineEnding(disk.content, tab.lineEnding);
       // Endings that became mixed on disk would be flattened by this save, so
@@ -688,12 +694,7 @@ async function writeTabToDisk(
       // Treated as a conflict below.
     }
     if (!unchanged) {
-      toast.warning(t("app:editor.toasts.modifiedExternally", { name: tab.fileName }));
-      setState((state) => ({
-        tabs: state.tabs.map((t) =>
-          t.id === tabId ? { ...t, diskConflict: { diskContent } } : t,
-        ),
-      }));
+      flagDiskConflict(tabId, tab.fileName, diskContent);
       return false;
     }
   }
@@ -708,6 +709,7 @@ async function writeTabToDisk(
       current.filePath,
       applyLineEnding(contentToSave, lineEnding),
       current.workspaceId,
+      expectedDiskContent,
     );
     setState((state) => ({
       tabs: state.tabs.map((t) =>
@@ -737,7 +739,21 @@ async function writeTabToDisk(
     toast.success(t("app:editor.toasts.saved", { name: current.fileName }));
     return true;
   } catch (err) {
+    if (String(err).includes(FILE_CHANGED_ON_DISK_ERROR)) {
+      // The file changed between the disk check and the write.
+      flagDiskConflict(tabId, current.fileName, "");
+      return false;
+    }
     toast.error(t("app:editor.toasts.saveFailed", { error: String(err) }));
     return false;
   }
+}
+
+function flagDiskConflict(tabId: string, fileName: string, diskContent: string) {
+  toast.warning(t("app:editor.toasts.modifiedExternally", { name: fileName }));
+  useFileStore.setState((state) => ({
+    tabs: state.tabs.map((t) =>
+      t.id === tabId ? { ...t, diskConflict: { diskContent } } : t,
+    ),
+  }));
 }

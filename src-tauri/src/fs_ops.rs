@@ -9,6 +9,9 @@ use crate::models::{FileTreeEntryDto, ReadFileResultDto};
 
 const READ_FILE_MAX_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 const BINARY_DETECT_SCAN_SIZE: usize = 8192;
+/// Returned by `write_file` when the file no longer holds the content the
+/// caller checked; the frontend matches on this text to raise its conflict banner.
+pub const FILE_CHANGED_ON_DISK: &str = "file changed on disk after the save checked it";
 
 pub fn validate_repo_relative_path(path: &str) -> anyhow::Result<&Path> {
     let mut has_component = false;
@@ -281,7 +284,14 @@ pub fn delete_path(repo_path: &str, file_path: &str) -> anyhow::Result<()> {
     delete_existing_entry(&target)
 }
 
-pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Result<()> {
+/// With `expected_content`, the write happens only if the file on disk still
+/// holds exactly those bytes, checked in the same call as the write.
+pub fn write_file(
+    repo_path: &str,
+    file_path: &str,
+    content: &str,
+    expected_content: Option<&str>,
+) -> anyhow::Result<()> {
     let repo_root = PathBuf::from(repo_path)
         .canonicalize()
         .context("failed to canonicalize repo path")?;
@@ -314,8 +324,14 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
                 std::str::from_utf8(&existing).is_ok(),
                 "refusing to overwrite a file that is not valid UTF-8"
             );
+            if let Some(expected) = expected_content {
+                anyhow::ensure!(existing == expected.as_bytes(), FILE_CHANGED_ON_DISK);
+            }
+        } else {
+            anyhow::ensure!(expected_content.is_none(), FILE_CHANGED_ON_DISK);
         }
     } else {
+        anyhow::ensure!(expected_content.is_none(), FILE_CHANGED_ON_DISK);
         // New file — verify the parent directory is inside the repo
         let parent = target.parent().context("invalid file path")?;
         let parent_canonical = parent
@@ -335,7 +351,10 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{create_dir, create_file, delete_path, read_file, rename_path, write_file};
+    use super::{
+        create_dir, create_file, delete_path, read_file, rename_path, write_file,
+        FILE_CHANGED_ON_DISK,
+    };
     use uuid::Uuid;
 
     #[cfg(unix)]
@@ -499,6 +518,7 @@ mod tests {
                 root.to_string_lossy().as_ref(),
                 "latin1.txt",
                 "caf\u{fffd}\n",
+                None,
             )
             .expect_err("lossy overwrite should be refused");
 
@@ -509,11 +529,39 @@ mod tests {
             );
 
             fs::write(root.join("utf8.txt"), "old\n").expect("file should exist");
-            write_file(root.to_string_lossy().as_ref(), "utf8.txt", "new\n")
+            write_file(root.to_string_lossy().as_ref(), "utf8.txt", "new\n", None)
                 .expect("utf-8 overwrite should succeed");
             assert_eq!(
                 fs::read_to_string(root.join("utf8.txt")).expect("file should be readable"),
                 "new\n"
+            );
+        });
+    }
+
+    #[test]
+    fn write_file_refuses_when_disk_no_longer_holds_the_checked_content() {
+        with_temp_repo(|root| {
+            let repo = root.to_string_lossy();
+            fs::write(root.join("notes.md"), "agent edit\n").expect("file should exist");
+
+            let error = write_file(repo.as_ref(), "notes.md", "mine\n", Some("checked\n"))
+                .expect_err("a changed file should not be overwritten");
+            assert_eq!(error.to_string(), FILE_CHANGED_ON_DISK);
+            assert_eq!(
+                fs::read_to_string(root.join("notes.md")).expect("file should be readable"),
+                "agent edit\n"
+            );
+
+            let error = write_file(repo.as_ref(), "gone.md", "mine\n", Some("checked\n"))
+                .expect_err("a deleted file should not be recreated");
+            assert_eq!(error.to_string(), FILE_CHANGED_ON_DISK);
+            assert!(!root.join("gone.md").exists());
+
+            write_file(repo.as_ref(), "notes.md", "mine\n", Some("agent edit\n"))
+                .expect("an unchanged file should be written");
+            assert_eq!(
+                fs::read_to_string(root.join("notes.md")).expect("file should be readable"),
+                "mine\n"
             );
         });
     }
@@ -528,7 +576,7 @@ mod tests {
             fs::create_dir_all(&outside).expect("outside should exist");
             symlink(outside.join("pwned.txt"), repo.join("notes.md")).expect("symlink");
 
-            write_file(repo.to_string_lossy().as_ref(), "notes.md", "hello")
+            write_file(repo.to_string_lossy().as_ref(), "notes.md", "hello", None)
                 .expect_err("write through a dangling symlink should be refused");
 
             assert!(!outside.join("pwned.txt").exists());

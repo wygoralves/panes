@@ -322,6 +322,7 @@ describe("fileStore", () => {
       "apps/app/source/page.tsx",
       "updated\n",
       "ws-1",
+      "plain\n",
     );
   });
 
@@ -375,7 +376,7 @@ describe("fileStore", () => {
     await useFileStore.getState().saveTab(tabId);
 
     const tab = useFileStore.getState().tabs[0]!;
-    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "saved\n", "ws-1");
+    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "saved\n", "ws-1", "after\n");
     expect(mockGitStore.invalidateRepoCache).toHaveBeenCalledWith("/repo");
     expect(mockGitStore.refresh).toHaveBeenCalledWith("/repo", { force: true });
     expect(mockIpc.getGitFileCompare).toHaveBeenLastCalledWith(
@@ -406,7 +407,7 @@ describe("fileStore", () => {
     mockIpc.readFile.mockResolvedValueOnce(makeReadFileResult("a"));
     await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
 
-    expect(mockIpc.writeFile).toHaveBeenLastCalledWith("/repo", "src/app.bat", "a\r\nb\r\n", "ws-1");
+    expect(mockIpc.writeFile).toHaveBeenLastCalledWith("/repo", "src/app.bat", "a\r\nb\r\n", "ws-1", "a");
   });
 
   it("clears a pending reveal only when the nonce matches", async () => {
@@ -516,7 +517,13 @@ describe("fileStore", () => {
     useFileStore.getState().setTabContent(tabId, "a\nb\nc\n");
     await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
 
-    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "win.bat", "a\r\nb\r\nc\r\n", "ws-1");
+    expect(mockIpc.writeFile).toHaveBeenCalledWith(
+      "/repo",
+      "win.bat",
+      "a\r\nb\r\nc\r\n",
+      "ws-1",
+      "a\r\nb\r\n",
+    );
     expect(useFileStore.getState().tabs[0]!.isDirty).toBe(false);
   });
 
@@ -616,7 +623,7 @@ describe("fileStore", () => {
     await useFileStore.getState().resolveDiskConflict(tabId, "keep-mine");
 
     expect(mockIpc.writeFile).toHaveBeenCalledTimes(1);
-    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "mine\n", "ws-1");
+    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "mine\n", "ws-1", null);
     const tab = useFileStore.getState().tabs[0]!;
     expect(tab.isDirty).toBe(false);
     expect(tab.diskConflict).toBeNull();
@@ -636,6 +643,24 @@ describe("fileStore", () => {
     expect(tab.isDirty).toBe(false);
     expect(tab.diskConflict).toBeNull();
     expect(mockIpc.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("raises the conflict banner when the file changes between the disk check and the write", async () => {
+    await useFileStore.getState().openFile("/repo", "src/app.ts");
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    useFileStore.getState().setTabContent(tabId, "mine\n");
+    mockIpc.writeFile.mockRejectedValueOnce(
+      "file changed on disk after the save checked it",
+    );
+
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+
+    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "mine\n", "ws-1", "plain\n");
+    const tab = useFileStore.getState().tabs[0]!;
+    expect(tab.isDirty).toBe(true);
+    expect(tab.diskConflict).toEqual({ diskContent: "" });
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(false);
+    expect(mockIpc.writeFile).toHaveBeenCalledTimes(1);
   });
 
   it("writes once when two saves overlap", async () => {
@@ -682,7 +707,13 @@ describe("fileStore", () => {
 
     await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
 
-    expect(mockIpc.writeFile).toHaveBeenCalledWith("/repo", "src/app.ts", "a\r\nb\r\nc\r\n", "ws-1");
+    expect(mockIpc.writeFile).toHaveBeenCalledWith(
+      "/repo",
+      "src/app.ts",
+      "a\r\nb\r\nc\r\n",
+      "ws-1",
+      "a\r\nb\r\n",
+    );
     expect(useFileStore.getState().tabs[0]!.lineEnding).toBe("\r\n");
   });
 
@@ -697,6 +728,6 @@ describe("fileStore", () => {
     useFileStore.getState().setTabContent(tabId, "a\nb\n");
     await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
 
-    expect(mockIpc.writeFile).toHaveBeenLastCalledWith("/repo", "win.bat", "a\r\nb\r\n", "ws-1");
+    expect(mockIpc.writeFile).toHaveBeenLastCalledWith("/repo", "win.bat", "a\r\nb\r\n", "ws-1", "a");
   });
 });
