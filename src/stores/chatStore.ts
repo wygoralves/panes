@@ -115,6 +115,20 @@ const STREAM_EVENT_QUEUE_FLUSH_THRESHOLD = 500;
  */
 let turnFinishedQueueListener: Promise<unknown> | null = null;
 
+/**
+ * Releases heard so far, numbered in arrival order, with the latest per
+ * thread: a view that was binding when its thread's turn was released applies
+ * that release once its snapshot and the buffered events are in place.
+ */
+let turnReleaseCount = 0;
+const latestTurnRelease = new Map<
+  string,
+  { order: number; status: TurnCompletionStatus; messageId?: string }
+>();
+
+/** Flushes the open view's queued stream events, so a release lands after them. */
+let openViewStreamFlush: { threadId: string; flush: () => void } | null = null;
+
 function ensureTurnFinishedQueueListener() {
   if (turnFinishedQueueListener) {
     return;
@@ -126,6 +140,12 @@ function ensureTurnFinishedQueueListener() {
         : event.status === "interrupted"
           ? "interrupted"
           : "failed";
+    turnReleaseCount += 1;
+    latestTurnRelease.set(event.threadId, {
+      order: turnReleaseCount,
+      status,
+      messageId: event.messageId,
+    });
     releaseFinishedTurnInView(event.threadId, status, event.messageId);
     void useChatStore.getState().drainQueue(event.threadId, status);
   }).catch((error) => {
@@ -145,8 +165,12 @@ function releaseFinishedTurnInView(
   status: TurnCompletionStatus,
   messageId: string | undefined,
 ) {
+  if (openViewStreamFlush?.threadId === threadId) {
+    // Stream events of this turn still waiting in the batch come first.
+    openViewStreamFlush.flush();
+  }
   const state = useChatStore.getState();
-  if (state.threadId !== threadId || !state.streaming) {
+  if (state.threadId !== threadId) {
     return;
   }
   let latestIndex = state.messages.length - 1;
@@ -158,8 +182,12 @@ function releaseFinishedTurnInView(
   if (latest?.status === "streaming" && !releasedIsLatest) {
     return;
   }
+  const settleReply = releasedIsLatest && latest.status === "streaming";
+  if (!settleReply && !state.streaming) {
+    return;
+  }
   let messages = state.messages;
-  if (releasedIsLatest && latest.status === "streaming") {
+  if (settleReply) {
     messages = [...state.messages];
     messages[latestIndex] = {
       ...latest,
@@ -2142,6 +2170,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     activeThreadBindSeq += 1;
     const bindSeq = activeThreadBindSeq;
+    const releasesBeforeBind = turnReleaseCount;
 
     // Tear down the current listener. A thread left mid-turn keeps draining
     // its queue through the turn-finished listener.
@@ -2393,6 +2422,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       };
 
+      // The view is in place: later releases flush its batch first, and a
+      // release heard while it was binding applies now.
+      const finishBind = () => {
+        openViewStreamFlush = { threadId, flush: flushQueuedStreamEvents };
+        const release = latestTurnRelease.get(threadId);
+        if (release && release.order > releasesBeforeBind) {
+          releaseFinishedTurnInView(threadId, release.status, release.messageId);
+        }
+      };
+
       const unlisten = () => {
         if (streamFlushTimer !== null) {
           globalThis.clearTimeout(streamFlushTimer);
@@ -2446,6 +2485,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // The visible messages were kept, not replaced by the snapshot, so
           // nothing buffered is covered by it.
           replayPreBindEvents(null);
+          finishBind();
         }
         return;
       }
@@ -2473,6 +2513,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
       releaseStream = null;
       replayPreBindEvents(coveredSeq);
+      finishBind();
 
       if (shouldRefreshUsageLimits) {
         const refreshRestoredUsageLimits = async () => {

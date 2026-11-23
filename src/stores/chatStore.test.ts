@@ -2389,6 +2389,85 @@ describe("chatStore send", () => {
     vi.useRealTimers();
   });
 
+  it("applies a release heard while binding, and after the batched deltas it follows", async () => {
+    vi.useFakeTimers();
+
+    let streamHandler: ((event: StreamEvent) => void) | null = null;
+    mockListenThreadEvents.mockImplementationOnce(async (_threadId, onEvent) => {
+      streamHandler = onEvent;
+      return () => {};
+    });
+    const releaseStopped = () => {
+      for (const handler of turnFinishedHandlers) {
+        handler({ threadId: "thread-1", status: "interrupted", messageId: "assistant-stopping" });
+      }
+    };
+    mockIpc.getThreadMessagesWindow.mockImplementationOnce(async () => {
+      releaseStopped();
+      return {
+        messages: [
+          {
+            id: "assistant-stopping",
+            threadId: "thread-1",
+            role: "assistant",
+            status: "streaming",
+            schemaVersion: 1,
+            blocks: [
+              {
+                type: "action",
+                actionId: "action-1",
+                actionType: "command",
+                summary: "ls",
+                details: {},
+                outputChunks: [],
+                status: "running",
+              },
+            ],
+            createdAt: new Date().toISOString(),
+            streamSeq: 5,
+          },
+        ],
+        nextCursor: null,
+      };
+    });
+
+    await useChatStore.getState().setActiveThread("thread-1");
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      status: "interrupted",
+      blocks: [{ type: "action", status: "error" }],
+    });
+
+    // A delta still in the batch when the release lands applies before it.
+    useChatStore.setState({
+      status: "streaming",
+      streaming: true,
+      messages: [
+        {
+          id: "assistant-stopping",
+          threadId: "thread-1",
+          role: "assistant",
+          status: "streaming",
+          schemaVersion: 1,
+          blocks: [{ type: "text", content: "Hel" }],
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    streamHandler!({ type: "TextDelta", content: "lo", seq: 6 } as StreamEvent);
+    releaseStopped();
+    await vi.advanceTimersByTimeAsync(20);
+
+    const state = useChatStore.getState();
+    expect(state.streaming).toBe(false);
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toMatchObject({
+      status: "interrupted",
+      blocks: [{ type: "text", content: "Hello" }],
+    });
+
+    vi.useRealTimers();
+  });
+
   it("settles open approvals, actions and subagents when the user stops the turn", async () => {
     mockIpc.cancelTurn.mockResolvedValueOnce(undefined);
     useChatStore.setState({
