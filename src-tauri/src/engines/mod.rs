@@ -21,7 +21,6 @@ use crate::{
     },
 };
 
-pub mod api_direct;
 pub mod claude_sidecar;
 pub mod codex;
 pub mod codex_event_mapper;
