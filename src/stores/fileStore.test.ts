@@ -387,6 +387,28 @@ describe("fileStore", () => {
     expect(tab.isDirty).toBe(false);
   });
 
+  it("keeps a git diff tab CRLF after a save leaves the file on one line", async () => {
+    mockIpc.getGitFileCompare
+      .mockResolvedValueOnce(makeCompare({ modifiedContent: "a\r\nb\r\n" }))
+      .mockResolvedValue(makeCompare({ modifiedContent: "a" }));
+    await useFileStore
+      .getState()
+      .openGitDiffFile("/repo", "src/app.bat", { source: "changes" });
+    const tabId = useFileStore.getState().tabs[0]!.id;
+    expect(useFileStore.getState().tabs[0]!.lineEnding).toBe("\r\n");
+
+    useFileStore.getState().setTabContent(tabId, "a");
+    mockIpc.readFile.mockResolvedValueOnce(makeReadFileResult("a\r\nb\r\n"));
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
+    expect(useFileStore.getState().tabs[0]!.lineEnding).toBe("\r\n");
+
+    useFileStore.getState().setTabContent(tabId, "a\nb\n");
+    mockIpc.readFile.mockResolvedValueOnce(makeReadFileResult("a"));
+    await expect(useFileStore.getState().saveTab(tabId)).resolves.toBe(true);
+
+    expect(mockIpc.writeFile).toHaveBeenLastCalledWith("/repo", "src/app.bat", "a\r\nb\r\n", "ws-1");
+  });
+
   it("clears a pending reveal only when the nonce matches", async () => {
     await useFileStore
       .getState()

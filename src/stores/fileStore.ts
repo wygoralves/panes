@@ -36,14 +36,14 @@ interface DiskFileState {
   readOnlyReason: EditorReadOnlyReason | null;
 }
 
-function toDiskFileState(result: ReadFileResult): DiskFileState {
+function toDiskFileState(result: ReadFileResult, knownLineEnding?: EditorLineEnding): DiskFileState {
   if (result.isBinary) {
     return { content: "", isBinary: true, lineEnding: "\n", readOnlyReason: null };
   }
   return {
     content: normalizeLineEndings(result.content),
     isBinary: false,
-    lineEnding: detectLineEnding(result.content),
+    lineEnding: detectLineEnding(result.content, knownLineEnding),
     readOnlyReason: result.isLossyDecode ? "non-utf8" : null,
   };
 }
@@ -128,7 +128,7 @@ function applyGitCompare(tab: EditorTab, compare: GitFileCompare): EditorTab {
     savedContent,
     lineEnding: preserveDirtyContent
       ? tab.lineEnding
-      : detectLineEnding(compare.modifiedContent),
+      : detectLineEnding(compare.modifiedContent, tab.lineEnding),
     isDirty: preserveDirtyContent ? tab.content !== tab.savedContent : false,
     isLoading: false,
     isBinary: compare.isBinary,
@@ -576,7 +576,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
 
     let disk: DiskFileState;
     try {
-      disk = toDiskFileState(await ipc.readFile(tab.rootPath, tab.filePath));
+      disk = toDiskFileState(await ipc.readFile(tab.rootPath, tab.filePath), tab.lineEnding);
     } catch {
       // Deleted or unreadable: keep the buffer so the user can still save it.
       return;
@@ -622,7 +622,10 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     }
 
     try {
-      const disk = toDiskFileState(await ipc.readFile(tab.rootPath, tab.filePath));
+      const disk = toDiskFileState(
+        await ipc.readFile(tab.rootPath, tab.filePath),
+        tab.lineEnding,
+      );
       set((state) => ({
         tabs: state.tabs.map((t) =>
           t.id === tabId
@@ -662,7 +665,7 @@ async function writeTabToDisk(
       diskContent = normalizeLineEndings(disk.content);
       unchanged = !disk.isBinary && diskContent === tab.savedContent;
       // Same text: keep the line ending the file has on disk now, if it has one.
-      if (disk.content.includes("\n")) lineEnding = detectLineEnding(disk.content);
+      lineEnding = detectLineEnding(disk.content, tab.lineEnding);
     } catch {
       // Treated as a conflict below.
     }
