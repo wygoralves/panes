@@ -26,7 +26,33 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob: https: http:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "worker-src": "'self'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "frame-src": "'none'",
+        "form-action": "'none'"
+      },
+      "devCsp": {
+        "default-src": "'self' http://localhost:1420",
+        "script-src": "'self' 'wasm-unsafe-eval' http://localhost:1420",
+        "style-src": "'self' 'unsafe-inline' http://localhost:1420",
+        "img-src": "'self' data: blob: https: http:",
+        "font-src": "'self' data: http://localhost:1420",
+        "connect-src": "'self' ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420",
+        "worker-src": "'self' http://localhost:1420",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "frame-src": "'none'",
+        "form-action": "'none'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
