@@ -2260,9 +2260,15 @@ impl Engine for ClaudeSidecarEngine {
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => {
+                    // The sidecar denies the query's open approvals as it
+                    // cancels, so an answer from now on is refused.
+                    self.state
+                        .lock()
+                        .await
+                        .pending_approvals
+                        .retain(|_, (owner, _)| owner != &request_id);
                     cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                     let mut state = self.state.lock().await;
-                    state.pending_approvals.retain(|_, (owner, _)| owner != &request_id);
                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
                         if config.active_request_id.as_deref() == Some(request_id.as_str()) {
                             config.active_request_id = None;
@@ -3381,6 +3387,61 @@ mod tests {
         timeout(Duration::from_secs(5), turn)
             .await
             .expect("the turn ends")
+            .expect("turn task");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn approvals_answered_during_a_user_cancel_are_refused() {
+        let (transport, mut commands) = echo_transport();
+        let engine = Arc::new(engine_with_transport(&transport).await);
+        let (event_tx, mut events) = mpsc::channel(4);
+        let cancellation = CancellationToken::new();
+
+        let turn = tokio::spawn({
+            let engine = Arc::clone(&engine);
+            let cancellation = cancellation.clone();
+            async move {
+                engine
+                    .send_message("thread-1", turn_input(), event_tx, cancellation)
+                    .await
+                    .expect("send_message");
+            }
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+        request_approval(&transport, &mut events, &request_id, "approval-1").await;
+
+        cancellation.cancel();
+        let cancel = next_command(&mut commands).await;
+        assert_eq!(cancel["method"], "cancel");
+        // The sidecar denies the query's open approvals as it cancels, so an
+        // answer written while the engine waits for the acknowledgement would
+        // be ignored there yet recorded as given.
+        let late = engine
+            .respond_to_approval(
+                "approval-1",
+                serde_json::json!({ "decision": "accept" }),
+                None,
+            )
+            .await
+            .expect_err("an approval of a cancelled query is not delivered");
+        assert_eq!(
+            late.to_string(),
+            crate::db::actions::APPROVAL_NOT_PENDING_ERROR
+        );
+
+        transport
+            .event_tx
+            .send(SidecarEvent::CancelResult {
+                id: cancel["id"].as_str().map(str::to_string),
+                request_id: Some(request_id),
+                closed: false,
+            })
+            .expect("the turn is still subscribed");
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends after the cancel is acknowledged")
             .expect("turn task");
     }
 
