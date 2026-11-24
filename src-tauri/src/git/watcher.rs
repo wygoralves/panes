@@ -229,12 +229,14 @@ fn make_event_handler(
 }
 
 fn should_fallback_to_polling(error: &notify::Error) -> bool {
+    // Watch limits are reported as MaxFilesWatch on every platform: inotify on
+    // Linux, and the per process FSEvents path cap on macOS.
+    if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) {
+        return true;
+    }
+
     #[cfg(target_os = "linux")]
     {
-        if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) {
-            return true;
-        }
-
         if let notify::ErrorKind::Io(io_error) = &error.kind {
             if io_error.raw_os_error() == Some(28) {
                 return true;
@@ -246,7 +248,6 @@ fn should_fallback_to_polling(error: &notify::Error) -> bool {
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = error;
         false
     }
 }
@@ -377,6 +378,15 @@ mod tests {
         let io_error =
             notify::Error::new(notify::ErrorKind::Io(std::io::Error::from_raw_os_error(28)));
         assert!(should_fallback_to_polling(&io_error));
+    }
+
+    #[test]
+    fn watch_limit_errors_enable_poll_fallback_on_every_platform() {
+        let max_files = notify::Error::new(notify::ErrorKind::MaxFilesWatch);
+        assert!(should_fallback_to_polling(&max_files));
+
+        let generic = notify::Error::generic("watcher failed");
+        assert!(!should_fallback_to_polling(&generic));
     }
 
     #[test]

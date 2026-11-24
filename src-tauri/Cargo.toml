@@ -2,7 +2,7 @@
 name = "Panes"
 version = "0.67.0"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.91"
 authors = ["Panes contributors"]
 license = "MIT"
 
