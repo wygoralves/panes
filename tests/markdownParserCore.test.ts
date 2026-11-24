@@ -113,6 +113,20 @@ describe("renderMarkdownToHtml", () => {
     expect(findEventHandlerAttributes(html)).toEqual([]);
   });
 
+  it("leaves link-shaped text inside inline code unchanged", () => {
+    const html = renderMarkdownToHtml("Use `<a href='about:blank'>` here");
+
+    expect(html).toContain("<code>&lt;a href='about:blank'&gt;</code>");
+  });
+
+  it("leaves link-shaped text inside code blocks unchanged", () => {
+    const fenced = renderMarkdownToHtml("```text\n<a href='about:blank'>\n```");
+    expect(fenced).toContain("&lt;a href=&#x27;about:blank&#x27;&gt;");
+
+    const indented = renderMarkdownToHtml("    <img src='javascript:x'>");
+    expect(indented).toContain("<pre><code>&lt;img src='javascript:x'&gt;\n</code></pre>");
+  });
+
   it("encodes raw HTML that the old regex filter let through", () => {
     const payloads = [
       "<div <>\n<img src=x a/onerror=alert(1) <>",

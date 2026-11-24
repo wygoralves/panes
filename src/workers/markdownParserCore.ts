@@ -91,13 +91,25 @@ function sanitizeUrl(url: string, attrName: string): string | null {
 }
 
 function sanitizeRenderedHtml(html: string): string {
+  // Only attributes of real <a> and <img> tags are checked; escaped text such
+  // as "&lt;a href=...&gt;" inside code stays exactly as written.
   const withSafeLinks = html.replace(
-    /\s(href|src)\s*=\s*("([^"]*)"|'([^']*)')/gi,
-    (_full, attrName: string, _quoted: string, doubleValue: string, singleValue: string) => {
-      const rawValue = typeof doubleValue === "string" ? doubleValue : singleValue;
-      const safe = sanitizeUrl(rawValue, attrName);
-      return safe === null ? "" : ` ${attrName}="${safe}"`;
-    },
+    /<(a|img)\b([^>]*)>/gi,
+    (_tag, tagName: string, attrs: string) =>
+      `<${tagName}${attrs.replace(
+        /\s(href|src)\s*=\s*("([^"]*)"|'([^']*)')/gi,
+        (
+          _full,
+          attrName: string,
+          _quoted: string,
+          doubleValue: string,
+          singleValue: string,
+        ) => {
+          const rawValue = typeof doubleValue === "string" ? doubleValue : singleValue;
+          const safe = sanitizeUrl(rawValue, attrName);
+          return safe === null ? "" : ` ${attrName}="${safe}"`;
+        },
+      )}>`,
   );
 
   return withSafeLinks.replace(
