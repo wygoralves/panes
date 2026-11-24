@@ -166,6 +166,16 @@ interface DeletePending {
   dirtyTabIds: string[];
 }
 
+export function isExplorerTextFieldTarget(
+  target: EventTarget | null,
+  container: EventTarget | null,
+): boolean {
+  if (!target || target === container) return false;
+  const element = target as Element;
+  if (typeof element.closest !== "function") return false;
+  return element.closest("input, textarea, [contenteditable='true']") !== null;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -1236,6 +1246,9 @@ export function FileExplorer() {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // Keys typed in the filter or an inline input belong to that field.
+      if (isExplorerTextFieldTarget(e.target, e.currentTarget)) return;
+
       const modKey = isMac ? e.metaKey : e.ctrlKey;
 
       // Cancel rename / create
