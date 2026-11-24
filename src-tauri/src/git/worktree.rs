@@ -295,6 +295,10 @@ pub const WORKTREE_HAS_SUBMODULES_ERROR_PREFIX: &str = "worktree_has_submodules:
 /// `--force` also skips git's check for checked-out submodules, and a
 /// submodule's work is never part of what the caller confirmed losing, so a
 /// forced removal is refused while the worktree's index has any submodule.
+/// Without force, git does not see files saved inside an uninitialized
+/// submodule directory and deletes them, so an unforced removal is refused
+/// unless every submodule path is empty. Both refusals start with
+/// [`WORKTREE_HAS_SUBMODULES_ERROR_PREFIX`].
 pub fn remove_worktree(
     repo_path: &str,
     worktree_path: &str,
@@ -312,10 +316,16 @@ pub fn remove_worktree(
         }
     }
 
-    if force && Path::new(worktree_path).is_dir() && !indexed_gitlinks(worktree_path)?.is_empty() {
-        anyhow::bail!(
-            "{WORKTREE_HAS_SUBMODULES_ERROR_PREFIX}the worktree has submodules, so Panes does not remove it by force"
-        );
+    if Path::new(worktree_path).is_dir() {
+        if force {
+            if !indexed_gitlinks(worktree_path)?.is_empty() {
+                anyhow::bail!(
+                    "{WORKTREE_HAS_SUBMODULES_ERROR_PREFIX}the worktree has submodules, so Panes does not remove it by force"
+                );
+            }
+        } else if let Err(error) = ensure_submodule_paths_empty(worktree_path) {
+            anyhow::bail!("{WORKTREE_HAS_SUBMODULES_ERROR_PREFIX}{error:#}");
+        }
     }
 
     let mut args = vec!["worktree", "remove"];
@@ -1173,6 +1183,50 @@ mod tests {
             .starts_with(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX));
         assert!(Path::new(&worktree_path).join("a.txt").is_file());
         assert!(branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn unforced_removal_keeps_files_inside_an_uninitialized_submodule_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        let sub = Path::new(&worktree_path).join("sub");
+        fs::create_dir_all(&sub).expect("create submodule dir");
+        fs::write(sub.join("notes.txt"), "unsaved\n").expect("write note");
+
+        let error = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect_err("git does not see files under a submodule path, so Panes refuses");
+
+        assert!(error
+            .to_string()
+            .starts_with(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX));
+        assert!(sub.join("notes.txt").is_file());
+        assert!(branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn unforced_removal_removes_a_worktree_with_an_empty_submodule_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        fs::create_dir_all(Path::new(&worktree_path).join("sub")).expect("create submodule dir");
+
+        remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect("an empty submodule directory holds nothing to lose");
+
+        assert!(!Path::new(&worktree_path).exists());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isWorktreeSubmoduleRefusal,
   readBusyWorktreeThreads,
   readThreadWorktreePath,
   resolveThreadWorkingDirectory,
@@ -58,5 +59,16 @@ describe("readBusyWorktreeThreads", () => {
 
   it("ignores unrelated failures", () => {
     expect(readBusyWorktreeThreads("fatal: not a working tree")).toBeNull();
+  });
+});
+
+describe("isWorktreeSubmoduleRefusal", () => {
+  it("recognizes the forced and unforced submodule refusals as the backend sends them", () => {
+    expect(
+      isWorktreeSubmoduleRefusal(
+        "worktree_has_submodules:the worktree has content at submodule path sub, which Panes does not inspect",
+      ),
+    ).toBe(true);
+    expect(isWorktreeSubmoduleRefusal(new Error("failed to remove worktree"))).toBe(false);
   });
 });

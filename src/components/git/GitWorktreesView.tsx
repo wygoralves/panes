@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { closeGitFlyoutIfFocusLeft, GitFlyoutContext } from "../../lib/gitFlyoutRegion";
 import { defaultWorktreePath } from "../../lib/gitWorktreePaths";
-import { readBusyWorktreeThreads } from "../../lib/threadWorktree";
+import { isWorktreeSubmoduleRefusal, readBusyWorktreeThreads } from "../../lib/threadWorktree";
 import { getActionMenuPosition } from "./actionMenuPosition";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
@@ -257,7 +257,12 @@ export function GitWorktreesView({ repo, onError }: Props) {
       onError(
         busyThreads && busyThreads.length > 0
           ? t("worktrees.errors.threadRunning", { threads: busyThreads.join(", ") })
-          : String(e),
+          : isWorktreeSubmoduleRefusal(e)
+            ? t("app:terminal.toasts.worktreesKeptAfterChange", {
+                count: 1,
+                names: branch || abbreviatePath(wtPath, repo.path),
+              })
+            : String(e),
       );
     } finally {
       setLoadingKey(null);

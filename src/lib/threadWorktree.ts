@@ -37,3 +37,14 @@ export function readBusyWorktreeThreads(error: unknown): string[] | null {
     .map((name) => name.trim())
     .filter((name) => name.length > 0);
 }
+
+/** Marker the backend puts on a worktree removal it refused because the
+ * worktree has submodules whose contents it cannot check. The worktree is
+ * kept, not failed, and the UI swaps the marker for localized copy. */
+export const WORKTREE_HAS_SUBMODULES_ERROR_PREFIX = "worktree_has_submodules:";
+
+/** Whether a worktree removal failed because the backend kept a worktree that
+ * has submodules. */
+export function isWorktreeSubmoduleRefusal(error: unknown): boolean {
+  return String(error).includes(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX);
+}

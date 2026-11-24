@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ipc, writeCommandToNewSession } from "../lib/ipc";
 import { t } from "../i18n";
+import { isWorktreeSubmoduleRefusal } from "../lib/threadWorktree";
 import { toast } from "./toastStore";
 import { useHarnessStore } from "./harnessStore";
 import { resolveActiveRepoId, useWorkspaceStore } from "./workspaceStore";
@@ -690,12 +691,6 @@ interface WorktreeRemovalResult {
   keptWorktrees: string[];
 }
 
-/**
- * Starts the error the backend returns when it refuses a forced removal
- * because the worktree has submodules; that worktree is kept, not failed.
- */
-const WORKTREE_HAS_SUBMODULES_ERROR_PREFIX = "worktree_has_submodules:";
-
 /** Whether git may discard uncommitted files and unmerged commits, or "keep". */
 type WorktreeRemovalDecision = { forceWorktree: boolean; forceBranch: boolean } | "keep";
 
@@ -733,7 +728,7 @@ async function removeWorktreesSequential(
         keptBranches.push(worktree.branch || worktree.worktreePath);
       }
     } catch (error) {
-      if (String(error).includes(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX)) {
+      if (isWorktreeSubmoduleRefusal(error)) {
         keptWorktrees.push(worktree.branch || worktree.worktreePath);
         continue;
       }
