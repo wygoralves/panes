@@ -1,5 +1,5 @@
 import hljs from "highlight.js/lib/common";
-import { micromark } from "micromark";
+import { micromark, type Options } from "micromark";
 import { gfm, gfmHtml } from "micromark-extension-gfm";
 import {
   DISALLOWED_LOCAL_PREFIX_CHAR_RE,
@@ -24,39 +24,31 @@ interface IndentInfo {
   nextIndex: number;
 }
 
-const SAFE_HTML_TAG_RE = /<(br|hr)\s*\/?>/gi;
-const RAW_HTML_FRAGMENT_RE =
-  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<![a-z][^>]*>|<\?[\s\S]*?\?>|<\/[a-z][a-z0-9-]*\s*>|<[a-z][a-z0-9-]*(?:\s+(?:"[^"]*"|'[^']*'|[^"'<>])*)?\s*\/?>/gi;
+type HtmlExtension = NonNullable<Options["htmlExtensions"]>[number];
 
-function escapeHtmlFragment(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
+const SAFE_HTML_TAG_RE = /^<(?:br|hr)\s*\/?>$/i;
+// Fenced code is swapped for a plain-text sentinel before micromark runs, so
+// the highlighted HTML never passes through the markdown parser.
+const FENCE_SENTINEL_CHAR = "\uE000";
 
-function escapeNonFenceHtml(input: string): string {
-  // Preserve known safe self-closing HTML tags (<br>, <hr>) by replacing them
-  // with placeholders before escaping, then restoring after.
-  const placeholders: { placeholder: string; tag: string }[] = [];
-  let idx = 0;
-  const withPlaceholders = input.replace(SAFE_HTML_TAG_RE, (match) => {
-    const placeholder = `\x00SAFE_TAG_${idx++}\x00`;
-    placeholders.push({ placeholder, tag: match });
-    return placeholder;
-  });
-
-  let escaped = withPlaceholders.replace(
-    RAW_HTML_FRAGMENT_RE,
-    (match) => escapeHtmlFragment(match),
-  );
-
-  for (const { placeholder, tag } of placeholders) {
-    escaped = escaped.replace(placeholder, tag);
-  }
-
-  return escaped;
-}
+// micromark encodes every raw HTML fragment as text. The one exception is a
+// lone <br> or <hr> (inline, or alone on a line of an HTML block), which is
+// passed through as markup.
+const safeHtmlTagExtension: HtmlExtension = {
+  exit: {
+    htmlFlowData(token) {
+      const value = this.sliceSerialize(token);
+      this.raw(SAFE_HTML_TAG_RE.test(value.trim()) ? value : this.encode(value));
+    },
+  },
+  enter: {
+    htmlText(token) {
+      if (SAFE_HTML_TAG_RE.test(this.sliceSerialize(token))) {
+        this.setData("ignoreEncode", true);
+      }
+    },
+  },
+};
 
 function sanitizeUrl(url: string, attrName: string): string {
   const trimmed = url.trim();
@@ -66,6 +58,12 @@ function sanitizeUrl(url: string, attrName: string): string {
 
   if (attrName.toLowerCase() === "href" && isLocalFileLinkSyntax(trimmed)) {
     return trimmed;
+  }
+
+  // Protocol-relative ("//host") and backslash-prefixed links resolve to a
+  // remote host against the app origin, so they never pass as relative paths.
+  if (/^[\\/]{2}/.test(trimmed)) {
+    return "#";
   }
 
   if (
@@ -91,19 +89,7 @@ function sanitizeUrl(url: string, attrName: string): string {
 }
 
 function sanitizeRenderedHtml(html: string): string {
-  const withoutDangerousTags = html
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
-    .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, "")
-    .replace(/<object[\s\S]*?>[\s\S]*?<\/object>/gi, "")
-    .replace(/<embed[\s\S]*?>[\s\S]*?<\/embed>/gi, "");
-
-  const withoutEventHandlers = withoutDangerousTags.replace(
-    /\s+on[a-z]+\s*=\s*(".*?"|'.*?'|[^\s>]+)/gi,
-    "",
-  );
-
-  const withSafeLinks = withoutEventHandlers.replace(
+  const withSafeLinks = html.replace(
     /\s(href|src)\s*=\s*("([^"]*)"|'([^']*)')/gi,
     (_full, attrName: string, _quoted: string, doubleValue: string, singleValue: string) => {
       const rawValue = typeof doubleValue === "string" ? doubleValue : singleValue;
@@ -300,6 +286,9 @@ function tokenizeFences(markdown: string): { source: string; fences: FenceToken[
   let source = "";
   let plainBuffer = "";
   let fenceIndex = 0;
+  // Text can spell the sentinel with character references, so each render
+  // uses its own to keep user text from taking a fence's place.
+  const nonce = Math.random().toString(36).slice(2);
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const opening = parseFenceOpening(lines[lineIndex]);
@@ -321,12 +310,14 @@ function tokenizeFences(markdown: string): { source: string; fences: FenceToken[
     // An unclosed fence (a code block still streaming in) renders the same way
     // a closed one does, so finishing the block does not restyle it.
     if (plainBuffer) {
-      source += escapeNonFenceHtml(plainBuffer);
+      source += plainBuffer;
       plainBuffer = "";
     }
 
-    const placeholder = `<panes-code-block data-panes-id="${fenceIndex}"></panes-code-block>`;
-    source += placeholder;
+    // The sentinel sits in its own paragraph so micromark renders it as
+    // `<p>sentinel</p>`, which is then swapped for the highlighted block.
+    const placeholder = `${FENCE_SENTINEL_CHAR}PANES_FENCE_${nonce}_${fenceIndex}${FENCE_SENTINEL_CHAR}`;
+    source += `\n${placeholder}\n\n`;
 
     fences.push({
       placeholder,
@@ -341,7 +332,7 @@ function tokenizeFences(markdown: string): { source: string; fences: FenceToken[
   }
 
   if (plainBuffer) {
-    source += escapeNonFenceHtml(plainBuffer);
+    source += plainBuffer;
   }
 
   return { source, fences };
@@ -351,14 +342,19 @@ export function renderMarkdownToHtml(markdown: string): string {
   const { source, fences } = tokenizeFences(markdown);
   const html = micromark(source, {
     extensions: [gfm()],
-    htmlExtensions: [gfmHtml()],
-    allowDangerousHtml: true,
+    htmlExtensions: [gfmHtml(), safeHtmlTagExtension],
+    allowDangerousHtml: false,
+    // Link protocols are checked by sanitizeUrl, which also admits local
+    // file links that micromark's own allowlist would drop.
     allowDangerousProtocol: true,
   });
 
   let finalHtml = html;
   for (const fence of fences) {
-    finalHtml = finalHtml.replace(fence.placeholder, fence.html);
+    const paragraph = `<p>${fence.placeholder}</p>`;
+    finalHtml = finalHtml.includes(paragraph)
+      ? finalHtml.replace(paragraph, () => fence.html)
+      : finalHtml.replace(fence.placeholder, () => fence.html);
   }
 
   return linkifyLocalFileReferencesInHtml(sanitizeRenderedHtml(finalHtml));

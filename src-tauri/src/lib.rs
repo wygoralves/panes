@@ -127,8 +127,23 @@ pub fn run() {
                 main_window_config
             };
 
+            // `tauri dev` serves the frontend from the dev server; every other
+            // build serves it from the app's own protocol.
+            let app_url = if tauri::is_dev() {
+                app.config().build.dev_url.clone()
+            } else {
+                None
+            }
+            .unwrap_or_else(|| app_protocol_url(main_window_config.use_https_scheme));
             let main_window = WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
                 .enable_clipboard_access()
+                .on_navigation(move |url| {
+                    let allowed = is_app_navigation(url, &app_url);
+                    if !allowed {
+                        log::warn!("blocked main window navigation to {url}");
+                    }
+                    allowed
+                })
                 .build()?;
             #[cfg(not(target_os = "linux"))]
             let _ = &main_window;
@@ -374,6 +389,36 @@ struct ThreadUpdatedEvent {
     workspace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     thread: Option<ThreadDto>,
+}
+
+/// The origin Tauri serves bundled frontend assets from on this platform.
+fn app_protocol_url(https: bool) -> tauri::Url {
+    let url = if cfg!(windows) || cfg!(target_os = "android") {
+        if https {
+            "https://tauri.localhost"
+        } else {
+            "http://tauri.localhost"
+        }
+    } else {
+        "tauri://localhost"
+    };
+    url.parse().expect("valid app protocol url")
+}
+
+/// Whether the main window may navigate to `url`. Only the app's own entry
+/// document is allowed, so a stray link or script can never replace the Panes
+/// UI with another page. Other paths on the app origin are refused too: the
+/// app never navigates between documents, and loading one (a relative link
+/// activated through accessibility, which skips the DOM click handler) would
+/// reload the app and drop unsaved state. Fragment changes stay allowed.
+fn is_app_navigation(url: &tauri::Url, app_url: &tauri::Url) -> bool {
+    // Custom schemes have opaque origins, so compare the parts directly.
+    let same_origin = url.scheme() == app_url.scheme()
+        && url.host_str() == app_url.host_str()
+        && url.port_or_known_default() == app_url.port_or_known_default();
+    let entry_document =
+        matches!(url.path(), "" | "/" | "/index.html") || url.path() == app_url.path();
+    url.as_str() == "about:blank" || (same_origin && entry_document)
 }
 
 async fn run_codex_runtime_bridge(app: tauri::AppHandle, state: AppState) {
@@ -1016,4 +1061,110 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
 
     #[allow(unreachable_code)]
     Menu::with_items(handle, &[])
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::is_app_navigation;
+
+    fn url(value: &str) -> tauri::Url {
+        value.parse().expect("valid url")
+    }
+
+    #[test]
+    fn allows_only_the_app_protocol_origin() {
+        let mac_linux = url("tauri://localhost");
+        assert!(is_app_navigation(&url("tauri://localhost/"), &mac_linux));
+        assert!(is_app_navigation(
+            &url("tauri://localhost/index.html"),
+            &mac_linux
+        ));
+        assert!(is_app_navigation(&url("about:blank"), &mac_linux));
+        assert!(!is_app_navigation(
+            &url("http://tauri.localhost/"),
+            &mac_linux
+        ));
+        assert!(!is_app_navigation(
+            &url("tauri://localhost:8080/"),
+            &mac_linux
+        ));
+
+        let windows = url("http://tauri.localhost");
+        assert!(is_app_navigation(
+            &url("http://tauri.localhost/index.html"),
+            &windows
+        ));
+        assert!(!is_app_navigation(
+            &url("https://tauri.localhost/"),
+            &windows
+        ));
+        assert!(!is_app_navigation(&url("tauri://localhost/"), &windows));
+        assert!(!is_app_navigation(
+            &url("http://tauri.localhost:8080/"),
+            &windows
+        ));
+    }
+
+    #[test]
+    fn allows_the_dev_server_origin_when_it_serves_the_app() {
+        let dev = url("http://localhost:1420");
+        assert!(is_app_navigation(&url("http://localhost:1420/"), &dev));
+        assert!(!is_app_navigation(&url("http://localhost:8080/"), &dev));
+        assert!(!is_app_navigation(&url("tauri://localhost/"), &dev));
+        assert!(!is_app_navigation(
+            &url("http://localhost:1420/notes"),
+            &dev
+        ));
+    }
+
+    #[test]
+    fn allows_fragments_but_not_other_documents_on_the_app_origin() {
+        for app_url in ["tauri://localhost", "http://tauri.localhost"] {
+            let app = url(app_url);
+            for allowed in [
+                app_url.to_string(),
+                format!("{app_url}/"),
+                format!("{app_url}/index.html"),
+                format!("{app_url}#user-content-fn-1"),
+                format!("{app_url}/#user-content-fn-1"),
+            ] {
+                assert!(
+                    is_app_navigation(&url(&allowed), &app),
+                    "{allowed} should be allowed"
+                );
+            }
+            for blocked in [
+                format!("{app_url}/notes"),
+                format!("{app_url}/src/main.rs:2"),
+                format!("{app_url}/x/index.html"),
+            ] {
+                assert!(
+                    !is_app_navigation(&url(&blocked), &app),
+                    "{blocked} should be blocked"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blocks_every_other_destination() {
+        for app_url in ["tauri://localhost", "http://tauri.localhost"] {
+            let app_url = url(app_url);
+            for target in [
+                "http://evil.example/login",
+                "https://evil.example/",
+                "tauri://evil.example/",
+                "http://tauri.localhost.evil.example/",
+                "file:///etc/passwd",
+                "javascript:alert(1)",
+                "data:text/html,hi",
+                "about:srcdoc",
+            ] {
+                assert!(
+                    !is_app_navigation(&url(target), &app_url),
+                    "{target} should be blocked"
+                );
+            }
+        }
+    }
 }
