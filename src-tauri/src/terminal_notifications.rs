@@ -1251,7 +1251,8 @@ fn inspect_codex_notification_integration() -> TerminalNotificationIntegrationSt
     match std::fs::read_to_string(&config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))
         .and_then(|raw| {
-            raw.parse::<toml::Value>()
+            raw.parse::<toml::Table>()
+                .map(toml::Value::Table)
                 .context("failed to parse Codex config TOML")
         }) {
         Ok(doc) => match codex_notify_setting_status(&doc) {
@@ -1304,7 +1305,8 @@ fn install_codex_notification_integration() -> anyhow::Result<()> {
     let mut doc = if config_path.exists() {
         std::fs::read_to_string(&config_path)
             .with_context(|| format!("failed to read {}", config_path.display()))?
-            .parse::<toml::Value>()
+            .parse::<toml::Table>()
+            .map(toml::Value::Table)
             .context("failed to parse Codex config TOML")?
     } else {
         toml::Value::Table(toml::map::Map::new())
@@ -2398,7 +2400,11 @@ mod tests {
             assert!(status.codex.configured);
             let config_path = codex_config_path().expect("Codex config path should resolve");
             let saved = fs::read_to_string(&config_path).expect("Codex config should read");
-            let parsed: toml::Value = saved.parse().expect("Codex config should parse");
+            let parsed = toml::Value::Table(
+                saved
+                    .parse::<toml::Table>()
+                    .expect("Codex config should parse"),
+            );
             assert!(is_managed_codex_notify_value(
                 parsed
                     .as_table()
@@ -2424,6 +2430,63 @@ mod tests {
             let status = inspect_codex_notification_integration();
             assert!(!status.configured);
             assert!(status.conflict);
+        });
+    }
+
+    #[test]
+    fn install_codex_notification_integration_preserves_existing_config() {
+        with_temp_app_data_env(|| {
+            let config_path = codex_config_path().expect("Codex config path should resolve");
+            fs::create_dir_all(config_path.parent().expect("Codex parent should exist"))
+                .expect("Codex dir should exist");
+            fs::write(
+                &config_path,
+                r#"model = "x"
+approval_policy = "on-request"
+
+[profiles.default]
+model = "y"
+model_reasoning_effort = "high"
+
+[mcp_servers.foo]
+command = "foo-server"
+args = ["--port", "8080"]
+"#,
+            )
+            .expect("Codex config should write");
+
+            let status = install_terminal_notification_integration(
+                TerminalNotificationIntegrationKind::Codex,
+            )
+            .expect("Codex integration should install");
+            assert!(status.codex.configured);
+            assert!(!status.codex.conflict);
+
+            let saved = fs::read_to_string(&config_path).expect("Codex config should read");
+            let parsed = saved
+                .parse::<toml::Table>()
+                .expect("Codex config should parse");
+            assert_eq!(parsed["model"].as_str(), Some("x"));
+            assert_eq!(parsed["approval_policy"].as_str(), Some("on-request"));
+            let profile = parsed["profiles"]["default"]
+                .as_table()
+                .expect("profiles.default should remain a table");
+            assert_eq!(profile["model"].as_str(), Some("y"));
+            assert_eq!(profile["model_reasoning_effort"].as_str(), Some("high"));
+            let server = parsed["mcp_servers"]["foo"]
+                .as_table()
+                .expect("mcp_servers.foo should remain a table");
+            assert_eq!(server["command"].as_str(), Some("foo-server"));
+            let args: Vec<&str> = server["args"]
+                .as_array()
+                .expect("args should remain an array")
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect();
+            assert_eq!(args, vec!["--port", "8080"]);
+            assert!(is_managed_codex_notify_value(
+                parsed.get("notify").expect("notify should be set")
+            ));
         });
     }
 }
