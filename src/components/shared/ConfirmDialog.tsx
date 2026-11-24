@@ -9,6 +9,11 @@ interface Props {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Optional third action rendered between cancel and confirm. */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+  /** Which button takes focus on open, so Return runs it. Defaults to confirm. */
+  initialFocus?: "confirm" | "secondary";
   onConfirm: () => void;
   onCancel: () => void;
   onDismiss?: () => void;
@@ -20,21 +25,28 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   cancelLabel,
+  secondaryLabel,
+  onSecondary,
+  initialFocus = "confirm",
   onConfirm,
   onCancel,
   onDismiss,
 }: Props) {
   const { t } = useTranslation("common");
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const secondaryRef = useRef<HTMLButtonElement>(null);
   const handleDismiss = onDismiss ?? onCancel;
   const resolvedConfirmLabel = confirmLabel ?? t("actions.discard");
   const resolvedCancelLabel = cancelLabel ?? t("actions.cancel");
 
   useEffect(() => {
     if (!open) return;
-    const timer = window.setTimeout(() => confirmRef.current?.focus(), 30);
+    const timer = window.setTimeout(() => {
+      const target = initialFocus === "secondary" ? secondaryRef.current : null;
+      (target ?? confirmRef.current)?.focus();
+    }, 30);
     return () => clearTimeout(timer);
-  }, [open]);
+  }, [open, initialFocus]);
 
   useEffect(() => {
     if (!open) return;
@@ -70,6 +82,16 @@ export function ConfirmDialog({
           >
             {resolvedCancelLabel}
           </button>
+          {secondaryLabel && onSecondary ? (
+            <button
+              ref={secondaryRef}
+              type="button"
+              className="btn btn-outline confirm-dialog-btn-cancel"
+              onClick={onSecondary}
+            >
+              {secondaryLabel}
+            </button>
+          ) : null}
           <button
             ref={confirmRef}
             type="button"

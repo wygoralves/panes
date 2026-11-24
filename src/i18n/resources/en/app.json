@@ -470,6 +470,20 @@
     "unsavedChangesMessage": "\"{{name}}\" has unsaved changes. Discard them?",
     "discard": "Discard",
     "cancel": "Cancel",
+    "nonUtf8ReadOnly": "This file is not valid UTF-8, so it opened read-only to keep its encoding intact.",
+    "mixedLineEndingsReadOnly": "This file mixes line endings, so it opened read-only to keep every line as it is on disk.",
+    "diskConflict": {
+      "message": "{{name}} changed on disk while you were editing it.",
+      "reload": "Reload from disk",
+      "keepMine": "Keep mine"
+    },
+    "unsavedOnExit": {
+      "title": "Unsaved changes",
+      "message": "These files have unsaved changes: {{names}}.",
+      "saveAll": "Save all",
+      "discard": "Discard",
+      "cancel": "Cancel"
+    },
     "gitDiff": {
       "unavailable": "Git compare is unavailable for this tab.",
       "sourceChanges": "Changes",
@@ -498,7 +512,8 @@
       }
     },
     "toasts": {
-      "modifiedExternally": "{{name}} was modified externally. Save again to overwrite.",
+      "modifiedExternally": "{{name}} changed on disk. Choose which version to keep.",
+      "reloadFailed": "Failed to reload {{name}}: {{error}}",
       "saved": "Saved {{name}}",
       "saveFailed": "Failed to save: {{error}}",
       "openExternalFailed": "Failed to open file in the default app"

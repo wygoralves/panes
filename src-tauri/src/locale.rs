@@ -32,6 +32,7 @@ pub struct NativeStrings {
     pub search: &'static str,
     pub toggle_terminal: &'static str,
     pub close: &'static str,
+    pub quit: &'static str,
 }
 
 pub fn normalize_app_locale(input: &str) -> Option<&'static str> {
@@ -106,6 +107,7 @@ pub fn native_strings(locale: &str) -> NativeStrings {
             search: "Buscar no workspace",
             toggle_terminal: "Alternar terminal",
             close: "Fechar",
+            quit: "Encerrar o Panes",
         },
         _ => NativeStrings {
             app_menu: "Panes",
@@ -126,6 +128,7 @@ pub fn native_strings(locale: &str) -> NativeStrings {
             search: "Search Workspace",
             toggle_terminal: "Toggle Terminal",
             close: "Close",
+            quit: "Quit Panes",
         },
     }
 }

@@ -70,6 +70,7 @@ pub async fn write_file(
     file_path: String,
     content: String,
     workspace_id: Option<String>,
+    expected_content: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.clone();
     let cache = state.file_tree_cache.clone();
@@ -98,7 +99,13 @@ pub async fn write_file(
                 );
             }
         }
-        fs_ops::write_file(&repo_path, &file_path, &content).map_err(err_to_string)?;
+        fs_ops::write_file(
+            &repo_path,
+            &file_path,
+            &content,
+            expected_content.as_deref(),
+        )
+        .map_err(err_to_string)?;
         cache.invalidate_containing_path(target_for_repo_lookup.to_string_lossy().as_ref());
         Ok(())
     })

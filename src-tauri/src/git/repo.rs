@@ -401,16 +401,23 @@ pub fn get_git_file_compare(
         None
     };
 
+    // A lossy base only affects the read-only left pane; the working file is
+    // still safe to edit and save as long as its own bytes are valid UTF-8.
+    let (base_content, _) = decode_compare_content(base_bytes.as_deref());
+    let (modified_content, modified_is_lossy_decode) =
+        decode_compare_content(modified_bytes.as_deref());
+
     Ok(GitFileCompareDto {
         source,
-        base_content: decode_compare_content(base_bytes.as_deref()),
-        modified_content: decode_compare_content(modified_bytes.as_deref()),
+        base_content,
+        modified_content,
         base_label,
         modified_label,
         change_type,
         has_staged_changes,
         has_unstaged_changes,
         is_binary,
+        modified_is_lossy_decode,
         is_editable: Some(is_editable),
         fallback_reason,
     })
@@ -1695,10 +1702,16 @@ fn is_binary_content(content: &[u8]) -> bool {
         .any(|&byte| byte == 0)
 }
 
-fn decode_compare_content(content: Option<&[u8]>) -> String {
-    content
-        .map(|value| String::from_utf8_lossy(value).to_string())
-        .unwrap_or_default()
+/// Decodes one side of a compare, returning whether invalid UTF-8 had to be
+/// replaced to produce the text.
+fn decode_compare_content(content: Option<&[u8]>) -> (String, bool) {
+    match content {
+        Some(value) => match std::str::from_utf8(value) {
+            Ok(text) => (text.to_string(), false),
+            Err(_) => (String::from_utf8_lossy(value).into_owned(), true),
+        },
+        None => (String::new(), false),
+    }
 }
 
 fn index_status_label(status: Status) -> Option<String> {
@@ -1852,13 +1865,13 @@ mod tests {
 
     use super::{
         build_diff_preview, checkout_git_branch, create_git_branch, discard_files, fetch_repo,
-        get_commit_diff, get_file_diff, get_git_status, get_workspace_file_tree_page,
-        is_diff_preview_metadata_line, is_network_command_config_key, list_git_commits,
-        parse_porcelain_v1_status, rename_git_branch, run_git, search_workspace_files, stage_files,
-        truncate_utf8_prefix, unstage_files, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
-        GIT_DIFF_PREVIEW_MAX_LINES,
+        get_commit_diff, get_file_diff, get_git_file_compare, get_git_status,
+        get_workspace_file_tree_page, is_diff_preview_metadata_line, is_network_command_config_key,
+        list_git_commits, parse_porcelain_v1_status, rename_git_branch, run_git,
+        search_workspace_files, stage_files, truncate_utf8_prefix, unstage_files, FileTreeCache,
+        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
     };
-    use crate::models::{FileTreeEntryDto, TrustLevelDto};
+    use crate::models::{FileTreeEntryDto, GitCompareSourceDto, TrustLevelDto};
     use uuid::Uuid;
 
     struct TempRepo {
@@ -3017,5 +3030,31 @@ mod tests {
         assert!(cache.get("/workspace/apps/app").is_none());
         assert!(cache.get("workspace::/workspace").is_none());
         assert!(cache.get("/workspace/other").is_some());
+    }
+
+    #[test]
+    fn git_compare_flags_a_lossy_working_tree_but_not_a_lossy_base() {
+        let repo = TempRepo::init();
+        fs::write(repo.path.join("latin1.txt"), b"caf\xe9\n").expect("write latin1");
+        fs::write(repo.path.join("fixed.txt"), b"caf\xe9\n").expect("write latin1 base");
+        repo.commit_all("init");
+        fs::write(repo.path.join("latin1.txt"), b"caf\xe9 au lait\n").expect("edit latin1");
+        fs::write(repo.path.join("fixed.txt"), "caf\u{e9}\n").expect("write utf-8");
+
+        let lossy =
+            get_git_file_compare(repo.path_str(), "latin1.txt", GitCompareSourceDto::Changes)
+                .expect("compare latin1");
+        assert!(lossy.modified_is_lossy_decode);
+        assert_eq!(lossy.modified_content, "caf\u{fffd} au lait\n");
+
+        let fixed =
+            get_git_file_compare(repo.path_str(), "fixed.txt", GitCompareSourceDto::Changes)
+                .expect("compare fixed");
+        assert!(!fixed.modified_is_lossy_decode);
+        assert_eq!(fixed.base_content, "caf\u{fffd}\n");
+        assert_eq!(fixed.modified_content, "caf\u{e9}\n");
+
+        let json = serde_json::to_value(&lossy).expect("serialize compare");
+        assert_eq!(json["modifiedIsLossyDecode"], serde_json::Value::Bool(true));
     }
 }

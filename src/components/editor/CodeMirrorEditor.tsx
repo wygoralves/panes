@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightActiveLine, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from "@codemirror/view";
-import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import {
   defaultKeymap,
   history,
@@ -253,7 +253,8 @@ const MAX_CACHED_EDITOR_BYTES = 10 * 1024 * 1024;
 interface CachedEditor {
   view: EditorView;
   filePath: string;
-  onChangeRef: { current: (content: string) => void };
+  /** Only ever set by a component showing this tab, so edits reach the right tab. */
+  onChange: (content: string) => void;
   extraExtensionsCompartment: Compartment;
   readOnlyCompartment: Compartment;
   lastAccess: number;
@@ -261,6 +262,9 @@ interface CachedEditor {
 }
 
 const editorCache = new Map<string, CachedEditor>();
+
+/** Marks content synced in from the store, which must not echo back through onChange. */
+const externalContentSync = Annotation.define<boolean>();
 
 function estimateDocumentBytes(content: string): number {
   return content.length * 2;
@@ -337,9 +341,6 @@ export function CodeMirrorEditor({
 }: Props) {
   const extensions = rawExtensions ?? EMPTY_EXTENSIONS;
   const containerRef = useRef<HTMLDivElement>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-  const isExternalUpdate = useRef(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -348,7 +349,7 @@ export function CodeMirrorEditor({
 
     if (cached && cached.filePath === filePath) {
       // Reattach existing view to the new container
-      cached.onChangeRef = onChangeRef;
+      cached.onChange = onChange;
       cached.lastAccess = Date.now();
       containerRef.current.appendChild(cached.view.dom);
       return () => {
@@ -365,8 +366,6 @@ export function CodeMirrorEditor({
 
     // Create new editor
     const lang = getLanguageExtension(filePath);
-    const changeRef = onChangeRef;
-    const externalRef = isExternalUpdate;
     const extraExtensionsCompartment = new Compartment();
     const readOnlyCompartment = new Compartment();
 
@@ -414,9 +413,10 @@ export function CodeMirrorEditor({
           }
           evictLruEditors(tabId);
 
-          if (!externalRef.current) {
-            const nextContent = update.state.doc.toString();
-            changeRef.current(nextContent);
+          // The callback lives on the cache entry, not on the component: a panel
+          // reused for another tab would otherwise receive this document.
+          if (!update.transactions.some((tr) => tr.annotation(externalContentSync))) {
+            cached?.onChange(update.state.doc.toString());
           }
         }
       }),
@@ -430,7 +430,7 @@ export function CodeMirrorEditor({
     editorCache.set(tabId, {
       view,
       filePath,
-      onChangeRef: changeRef,
+      onChange,
       extraExtensionsCompartment,
       readOnlyCompartment,
       lastAccess: Date.now(),
@@ -447,17 +447,21 @@ export function CodeMirrorEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, filePath, readOnly]);
 
+  useEffect(() => {
+    const cached = editorCache.get(tabId);
+    if (cached) cached.onChange = onChange;
+  }, [tabId, onChange]);
+
   // Sync external content changes (e.g. reload after save)
   useEffect(() => {
     const cached = editorCache.get(tabId);
     if (!cached) return;
     const current = cached.view.state.doc.toString();
     if (current !== content) {
-      isExternalUpdate.current = true;
       cached.view.dispatch({
         changes: { from: 0, to: current.length, insert: content },
+        annotations: externalContentSync.of(true),
       });
-      isExternalUpdate.current = false;
     }
   }, [tabId, content]);
 

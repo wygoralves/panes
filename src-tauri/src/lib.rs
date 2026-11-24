@@ -1,3 +1,4 @@
+mod app_termination;
 mod commands;
 mod config;
 mod db;
@@ -184,13 +185,15 @@ pub fn run() {
             }
             tauri::async_runtime::block_on(state.engines.set_resource_dir(resource_dir));
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
+            #[cfg(target_os = "macos")]
+            app_termination::install(app.handle());
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
                     "toggle-sidebar" | "toggle-git-panel" | "toggle-focus-mode"
                     | "toggle-fullscreen" | "toggle-search" | "toggle-terminal"
-                    | "close-window" | "edit-undo" | "edit-redo" | "edit-cut" | "edit-copy"
-                    | "edit-paste" | "edit-select-all" => {
+                    | "close-window" | "quit" | "edit-undo" | "edit-redo" | "edit-cut"
+                    | "edit-copy" | "edit-paste" | "edit-select-all" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -211,6 +214,7 @@ pub fn run() {
             commands::app::set_composer_legacy_models_visible,
             commands::app::get_ui_zoom_percent,
             commands::app::set_ui_zoom_percent,
+            commands::app::set_unsaved_editor_tabs,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::power::get_power_settings,
@@ -950,6 +954,10 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
     {
         let strings = native_strings(locale);
 
+        // A custom item instead of the predefined quit, so Cmd+Q goes through the
+        // frontend's unsaved-changes prompt before the window closes.
+        let quit = MenuItem::with_id(handle, "quit", strings.quit, true, Some("CmdOrCtrl+Q"))?;
+
         let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
             .about(Some(AboutMetadata {
                 name: Some("Panes".to_string()),
@@ -976,7 +984,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
             .hide_others()
             .show_all()
             .separator()
-            .quit()
+            .item(&quit)
             .build()?;
 
         let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
