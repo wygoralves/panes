@@ -689,10 +689,19 @@ interface WorktreeRemovalResult {
   keptBranches: string[];
   /** Worktrees left in place because they gained work nobody confirmed losing. */
   keptWorktrees: string[];
+  /** Worktrees still in place because their removal failed (named in `failures`). */
+  failedWorktrees: string[];
 }
 
-/** Whether git may discard uncommitted files and unmerged commits, or "keep". */
-type WorktreeRemovalDecision = { forceWorktree: boolean; forceBranch: boolean } | "keep";
+/**
+ * Whether git may discard uncommitted files and unmerged commits, or "keep".
+ * `retryUnforcedOnSubmodules` retries a forced removal the backend refused for
+ * submodules without force; the backend then keeps a worktree only if a
+ * submodule path holds files.
+ */
+type WorktreeRemovalDecision =
+  | { forceWorktree: boolean; forceBranch: boolean; retryUnforcedOnSubmodules?: boolean }
+  | "keep";
 
 /**
  * Removes worktrees one at a time. `decide` picks per worktree whether git may
@@ -708,21 +717,36 @@ async function removeWorktreesSequential(
   const failures: string[] = [];
   const keptBranches: string[] = [];
   const keptWorktrees: string[] = [];
+  const failedWorktrees: string[] = [];
   for (const worktree of worktrees) {
     const decision = await decide(worktree);
     if (decision === "keep") {
       keptWorktrees.push(worktree.branch || worktree.worktreePath);
       continue;
     }
-    try {
-      const result = await ipc.removeGitWorktree(
+    const remove = (forceWorktree: boolean) =>
+      ipc.removeGitWorktree(
         worktree.repoPath,
         worktree.worktreePath,
-        decision.forceWorktree,
+        forceWorktree,
         worktree.branch,
         true,
         decision.forceBranch,
       );
+    try {
+      let result;
+      try {
+        result = await remove(decision.forceWorktree);
+      } catch (error) {
+        if (
+          !decision.forceWorktree
+          || !decision.retryUnforcedOnSubmodules
+          || !isWorktreeSubmoduleRefusal(error)
+        ) {
+          throw error;
+        }
+        result = await remove(false);
+      }
       // The directory is gone either way; only the branch survived.
       if (result?.branchDeleteError) {
         keptBranches.push(worktree.branch || worktree.worktreePath);
@@ -733,15 +757,26 @@ async function removeWorktreesSequential(
         continue;
       }
       failures.push(`${worktree.branch || worktree.worktreePath}: ${String(error)}`);
+      failedWorktrees.push(worktree.branch || worktree.worktreePath);
     }
   }
-  return { failures, keptBranches, keptWorktrees };
+  return { failures, keptBranches, keptWorktrees, failedWorktrees };
 }
 
+/**
+ * Rolls back worktrees the same launch just created. The backend refuses force
+ * on any worktree with submodules, so such a rollback retries unforced.
+ */
 const forceRollback = async (): Promise<WorktreeRemovalDecision> => ({
   forceWorktree: true,
   forceBranch: true,
+  retryUnforcedOnSubmodules: true,
 });
+
+/** Warns about the worktrees a launch rollback left behind. */
+function warnRollbackSurvivors({ keptWorktrees, failedWorktrees }: WorktreeRemovalResult) {
+  warnKeptWorktrees([...keptWorktrees, ...failedWorktrees]);
+}
 
 /**
  * Re-inspects each worktree right before it is removed, because agents can keep
@@ -1179,7 +1214,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
 
         if (worktreeSetupFailed) {
-          await removeWorktreesSequential(createdWorktrees, forceRollback);
+          warnRollbackSurvivors(await removeWorktreesSequential(createdWorktrees, forceRollback));
           Object.keys(worktreesByLogicalSessionId).forEach((sessionId) => {
             delete worktreesByLogicalSessionId[sessionId];
           });
@@ -1253,11 +1288,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           delete logicalSessionIdToRuntimeId[sessionId];
         });
         if (resolvedWorktreeConfig) {
-          await removeWorktreesSequential(
-            Object.values(worktreesByLogicalSessionId).filter(
-              (worktree): worktree is WorktreeSessionInfo => worktree !== null,
+          warnRollbackSurvivors(
+            await removeWorktreesSequential(
+              Object.values(worktreesByLogicalSessionId).filter(
+                (worktree): worktree is WorktreeSessionInfo => worktree !== null,
+              ),
+              forceRollback,
             ),
-            forceRollback,
           );
         }
         continue;

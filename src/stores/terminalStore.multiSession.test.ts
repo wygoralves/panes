@@ -32,6 +32,8 @@ vi.mock("../lib/ipc", () => ({
 import { useTerminalStore } from "./terminalStore";
 import { useHarnessStore } from "./harnessStore";
 import { useWorkspaceStore } from "./workspaceStore";
+import { toast } from "./toastStore";
+import { initializeI18n } from "../i18n";
 
 function makeSession(id: string): TerminalSession {
   return {
@@ -1191,6 +1193,91 @@ describe("terminalStore.createMultiSessionGroup", () => {
     expect(runtimeWorkspace?.activeSessionId).toBe("s2");
     expect(runtimeWorkspace?.broadcastGroupId).toBeNull();
     expect(mockIpc.terminalCloseSession).toHaveBeenCalledWith("ws-1", "s1");
+  });
+
+  it("retries a startup rollback the backend refuses to force for submodules, and warns about a worktree it keeps", async () => {
+    await initializeI18n("en");
+    const workspace = makeWorkspace("ws-1", "/workspace/ws-1");
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      archivedWorkspaces: [],
+      activeWorkspaceId: "ws-1",
+      repos: [],
+      activeRepoId: null,
+      reposLoading: false,
+      loading: false,
+      error: undefined,
+    });
+    const warning = vi.spyOn(toast, "warning");
+    mockIpc.terminalCreateSession
+      .mockResolvedValueOnce(makeSession("s1"))
+      .mockRejectedValueOnce(new Error("create failed"))
+      .mockRejectedValueOnce(new Error("create failed"));
+    const refusal =
+      "worktree_has_submodules:the worktree has submodules, so Panes does not remove it by force";
+    mockIpc.removeGitWorktree
+      // The first worktree is fresh: the unforced retry removes it.
+      .mockRejectedValueOnce(refusal)
+      .mockResolvedValueOnce({ branchDeleteError: null })
+      // The second holds files at a submodule path: the retry keeps it.
+      .mockRejectedValueOnce(refusal)
+      .mockRejectedValueOnce(
+        "worktree_has_submodules:the worktree has content at submodule path sub, which Panes does not inspect",
+      );
+
+    const applied = await useTerminalStore.getState().materializeWorkspaceStartupPreset("ws-1", {
+      version: 1,
+      defaultView: "split",
+      splitPanelSize: 32,
+      terminal: {
+        applyWhen: "no_live_sessions",
+        groups: [
+          {
+            id: "g1",
+            name: "Agents",
+            worktree: {
+              enabled: true,
+              repoMode: "fixed_repo",
+              repoPath: "/repo",
+              baseBranch: "main",
+              baseDir: ".panes/worktrees",
+              branchPrefix: "panes/preset",
+            },
+            sessions: [
+              { id: "pane-a", cwd: ".", cwdBase: "worktree" },
+              { id: "pane-b", cwd: ".", cwdBase: "worktree" },
+            ],
+            root: {
+              type: "split",
+              direction: "vertical",
+              ratio: 0.5,
+              children: [
+                { type: "leaf", sessionId: "pane-a" },
+                { type: "leaf", sessionId: "pane-b" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    expect(applied).toBe(false);
+    const calls = mockIpc.removeGitWorktree.mock.calls;
+    expect(calls.map((call) => [call[2], call[5]])).toEqual([
+      [true, true],
+      [false, true],
+      [true, true],
+      [false, true],
+    ]);
+    expect(calls[0]?.[1]).toBe(calls[1]?.[1]);
+    expect(calls[2]?.[1]).toBe(calls[3]?.[1]);
+    const keptBranch = String(calls[2]?.[3]);
+    expect(
+      warning.mock.calls.some(
+        ([message]) => message.includes(keptBranch) && !message.includes(String(calls[0]?.[3])),
+      ),
+    ).toBe(true);
+    warning.mockRestore();
   });
 
   it("applies a preset keeping or forcing only the worktrees the user chose", async () => {
