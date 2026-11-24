@@ -17,7 +17,8 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 }
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
-const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+// Node CLIs can take several seconds to print a version on a cold start, so the bound is generous.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------
 // Harness definitions
