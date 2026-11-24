@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use super::cli_fallback::{run_git, run_git_read};
+use super::cli_fallback::{run_git, run_git_read, run_git_read_files};
 use crate::models::GitWorktreeDto;
 
 /// Directory Panes keeps its own repo-local scratch state in, worktrees included.
@@ -358,7 +358,7 @@ pub fn inspect_worktree(
     let mut tips = Vec::new();
 
     if Path::new(worktree_path).is_dir() {
-        let status = run_git(
+        let status = run_git_read_files(
             worktree_path,
             &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         )
@@ -373,8 +373,8 @@ pub fn inspect_worktree(
             tips.push(head);
         }
 
-        let head = run_git(worktree_path, &["rev-parse", "HEAD"]).unwrap_or_default();
-        let staged = run_git(
+        let head = run_git_read(worktree_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+        let staged = run_git_read(
             worktree_path,
             &["diff", "--cached", "--raw", "--no-abbrev", "-z"],
         )
@@ -393,7 +393,7 @@ pub fn inspect_worktree(
     let mut removed_branch = None;
     if let Some(branch) = branch_name.filter(|branch| !branch.trim().is_empty()) {
         let branch_ref = format!("refs/heads/{branch}");
-        if let Ok(tip) = run_git(
+        if let Ok(tip) = run_git_read(
             repo_path,
             &[
                 "rev-parse",
@@ -427,7 +427,7 @@ fn count_commits_held_only_by_head(repo_path: &str, worktree_path: &str) -> anyh
 
 /// The commit the worktree's HEAD points at, if it has one.
 fn worktree_head(worktree_path: &str) -> Option<String> {
-    run_git(
+    run_git_read(
         worktree_path,
         &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
     )
@@ -474,7 +474,7 @@ fn count_commits_at_risk(
     args.push("--glob=refs/*");
     args.extend(other_heads.iter().map(String::as_str));
 
-    let count = run_git(repo_path, &args).context("failed to count unmerged commits")?;
+    let count = run_git_read(repo_path, &args).context("failed to count unmerged commits")?;
     Ok(count.trim().parse::<usize>().unwrap_or(0))
 }
 
