@@ -12,6 +12,8 @@ use notify::{
 };
 use tokio::sync::Mutex;
 
+const POLL_FALLBACK_INTERVAL: Duration = Duration::from_secs(2);
+
 pub type WatchCallback = Arc<dyn Fn(String) + Send + Sync + 'static>;
 type BoxedWatcher = Box<dyn Watcher + Send>;
 
@@ -88,11 +90,8 @@ fn create_repo_watcher(
                 last_emit,
                 debounce_window,
             );
-            let mut poll_watcher = PollWatcher::new(
-                poll_handler,
-                Config::default().with_poll_interval(Duration::from_secs(2)),
-            )?;
-            watch_git_paths(&mut poll_watcher, &watch_paths)?;
+            let poll_watcher =
+                create_poll_watcher(poll_handler, &watch_paths, POLL_FALLBACK_INTERVAL)?;
             Ok(Box::new(poll_watcher))
         }
         Err(error) => Err(error),
@@ -126,6 +125,49 @@ fn watch_git_paths<W: Watcher>(watcher: &mut W, paths: &[PathBuf]) -> notify::Re
         watcher.watch(path, git_watch_recursive_mode(path))?;
     }
     Ok(())
+}
+
+fn create_poll_watcher<F: notify::EventHandler>(
+    event_handler: F,
+    paths: &[PathBuf],
+    interval: Duration,
+) -> notify::Result<PollWatcher> {
+    let mut watcher = PollWatcher::new(
+        event_handler,
+        Config::default().with_poll_interval(interval),
+    )?;
+    for (path, mode) in poll_watch_targets(paths) {
+        watcher.watch(&path, mode)?;
+    }
+    Ok(watcher)
+}
+
+/// What the polling fallback registers. A poll watcher reads the metadata of
+/// every file under a recursive root on each tick, so a git directory is
+/// narrowed to what the event filter can act on: its top level (HEAD, index,
+/// FETCH_HEAD, packed-refs) and its refs tree. objects/ and logs/ stay
+/// unscanned.
+fn poll_watch_targets(paths: &[PathBuf]) -> Vec<(PathBuf, RecursiveMode)> {
+    let mut targets = Vec::new();
+    for path in paths {
+        if is_git_metadata_dir(path) {
+            targets.push((path.clone(), RecursiveMode::NonRecursive));
+            let refs = path.join("refs");
+            if refs.is_dir() {
+                targets.push((refs, RecursiveMode::Recursive));
+            }
+        } else {
+            targets.push((path.clone(), git_watch_recursive_mode(path)));
+        }
+    }
+    targets
+}
+
+/// A repository's git directory holds HEAD and objects/. A linked worktree's
+/// holds HEAD and a commondir pointer instead.
+fn is_git_metadata_dir(path: &Path) -> bool {
+    path.join("HEAD").is_file()
+        && (path.join("objects").is_dir() || path.join("commondir").is_file())
 }
 
 fn format_watch_paths(paths: &[PathBuf]) -> String {
@@ -229,12 +271,14 @@ fn make_event_handler(
 }
 
 fn should_fallback_to_polling(error: &notify::Error) -> bool {
+    // Watch limits are reported as MaxFilesWatch on every platform: inotify on
+    // Linux, and the per process FSEvents path cap on macOS.
+    if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) {
+        return true;
+    }
+
     #[cfg(target_os = "linux")]
     {
-        if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) {
-            return true;
-        }
-
         if let notify::ErrorKind::Io(io_error) = &error.kind {
             if io_error.raw_os_error() == Some(28) {
                 return true;
@@ -246,7 +290,6 @@ fn should_fallback_to_polling(error: &notify::Error) -> bool {
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = error;
         false
     }
 }
@@ -377,6 +420,109 @@ mod tests {
         let io_error =
             notify::Error::new(notify::ErrorKind::Io(std::io::Error::from_raw_os_error(28)));
         assert!(should_fallback_to_polling(&io_error));
+    }
+
+    #[test]
+    fn watch_limit_errors_enable_poll_fallback_on_every_platform() {
+        let max_files = notify::Error::new(notify::ErrorKind::MaxFilesWatch);
+        assert!(should_fallback_to_polling(&max_files));
+
+        let generic = notify::Error::generic("watcher failed");
+        assert!(!should_fallback_to_polling(&generic));
+    }
+
+    #[test]
+    fn poll_fallback_reports_metadata_changes_without_scanning_objects() {
+        let root = std::env::temp_dir().join(format!(
+            "panes-watcher-poll-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let git_dir = root.join(".git");
+        fs::create_dir_all(git_dir.join("refs").join("heads")).expect("refs should exist");
+        fs::create_dir_all(git_dir.join("objects").join("ab")).expect("objects should exist");
+        fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD should write");
+        let git_dir = canonicalize_existing_path(git_dir);
+
+        assert_eq!(
+            poll_watch_targets(std::slice::from_ref(&git_dir)),
+            vec![
+                (git_dir.clone(), RecursiveMode::NonRecursive),
+                (git_dir.join("refs"), RecursiveMode::Recursive),
+            ]
+        );
+
+        let (sender, receiver) = std::sync::mpsc::channel::<Event>();
+        let _watcher = create_poll_watcher(
+            move |result: notify::Result<Event>| {
+                if let Ok(event) = result {
+                    let _ = sender.send(event);
+                }
+            },
+            std::slice::from_ref(&git_dir),
+            Duration::from_millis(50),
+        )
+        .expect("poll watcher should start");
+
+        fs::write(git_dir.join("objects").join("ab").join("cdef"), "blob")
+            .expect("object should write");
+        fs::write(git_dir.join("refs").join("heads").join("feature"), "0\n")
+            .expect("ref should write");
+        fs::write(git_dir.join("FETCH_HEAD"), "0\n").expect("FETCH_HEAD should write");
+
+        let ref_suffix = Path::new("refs").join("heads").join("feature");
+        let mut seen: Vec<PathBuf> = Vec::new();
+        let saw = |seen: &[PathBuf], suffix: &Path| seen.iter().any(|path| path.ends_with(suffix));
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut settle_until: Option<Instant> = None;
+        loop {
+            let now = Instant::now();
+            if let Some(until) = settle_until {
+                if now >= until {
+                    break;
+                }
+            } else if saw(&seen, &ref_suffix) && saw(&seen, Path::new("FETCH_HEAD")) {
+                // Give a few more ticks so a scan of objects/ would have shown up.
+                settle_until = Some(now + Duration::from_millis(400));
+            } else if now >= deadline {
+                break;
+            }
+            if let Ok(event) = receiver.recv_timeout(Duration::from_millis(50)) {
+                seen.extend(event.paths);
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(saw(&seen, &ref_suffix), "ref change not reported: {seen:?}");
+        assert!(
+            saw(&seen, Path::new("FETCH_HEAD")),
+            "FETCH_HEAD change not reported: {seen:?}"
+        );
+        let object_suffix = Path::new("objects").join("ab").join("cdef");
+        assert!(
+            !saw(&seen, &object_suffix),
+            "objects/ was scanned: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn poll_fallback_keeps_a_plain_folder_recursive() {
+        let root = std::env::temp_dir().join(format!(
+            "panes-watcher-plain-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("folder should exist");
+        // A project file that happens to be called HEAD does not make this a
+        // git directory.
+        fs::write(root.join("HEAD"), "notes\n").expect("file should write");
+
+        let targets = poll_watch_targets(std::slice::from_ref(&root));
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(targets, vec![(root, RecursiveMode::Recursive)]);
     }
 
     #[test]

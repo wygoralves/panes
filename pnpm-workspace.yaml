@@ -1,3 +1,8 @@
 packages:
   - .
   - src-tauri/src/sidecars/claude_agent
+
+# Keep in step with "pnpm.overrides" in package.json. pnpm 11 reads overrides
+# only from this file and pnpm 9 only from package.json; pnpm 10 reads both.
+overrides:
+  release-it>undici: ^6.29.1
