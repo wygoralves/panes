@@ -6,26 +6,30 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Jobs get read access by default. The release jobs that publish ask for
+# write access themselves.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# Pull requests cancel their stale runs. Pushes queue instead: cancelling a
+# push run after release-it has published a release would leave that release
+# without installers. Manual runs get their own group so they cannot replace
+# a pending push run, the only kind that releases.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 9
-      - uses: actions/setup-node@v4
+          version: 10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
@@ -44,7 +48,7 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
@@ -55,11 +59,13 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: "src-tauri -> target"
       - name: Ensure frontendDist placeholder
         run: |
           mkdir -p dist
@@ -71,19 +77,29 @@ jobs:
         run: cargo fmt -- --check
       - name: Rust check
         working-directory: src-tauri
-        run: cargo check
+        run: cargo check --locked
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib --locked
+      # Reports lints without failing the job: the tree still carries style
+      # warnings. Deny-by-default lints still fail it.
+      - name: Rust clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked
 
   macos_compat:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust targets for macOS compatibility checks
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: "src-tauri -> target"
       - name: Ensure frontendDist placeholder
         run: |
           mkdir -p dist
@@ -92,18 +108,23 @@ jobs:
           fi
       - name: Rust check for Intel macOS target
         working-directory: src-tauri
-        run: cargo check --target x86_64-apple-darwin
+        run: cargo check --target x86_64-apple-darwin --locked
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib --locked
 
   windows_compat:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: "src-tauri -> target"
       - name: Ensure frontendDist placeholder
         shell: pwsh
         run: |
@@ -113,52 +134,39 @@ jobs:
           }
       - name: Rust check on Windows
         working-directory: src-tauri
-        run: cargo check
-      - name: Windows runtime env tests
+        run: cargo check --locked
+      # The skipped tests expect forward-slash relative paths, but the file
+      # tree scanner returns native separators on Windows.
+      - name: Rust tests on Windows
         working-directory: src-tauri
-        run: cargo test runtime_env --lib
-      - name: Windows app config tests
-        working-directory: src-tauri
-        run: cargo test app_config --lib
-      - name: Windows file command tests
-        working-directory: src-tauri
-        run: cargo test commands::files::tests --lib
-      - name: Windows keep awake tests
-        working-directory: src-tauri
-        run: cargo test commands::power::tests --lib
-      - name: Windows keep awake backend tests
-        working-directory: src-tauri
-        run: cargo test power::tests --lib
-      - name: Windows terminal tests
-        working-directory: src-tauri
-        run: cargo test terminal::tests --lib
-      - name: Windows Codex engine tests
-        working-directory: src-tauri
-        run: cargo test codex::tests --lib
-      - name: Windows Claude sidecar tests
-        working-directory: src-tauri
-        run: cargo test claude_sidecar::tests --lib
+        run: >-
+          cargo test --lib --locked --
+          --skip git::repo::tests::workspace_file_tree_page_includes_workspace_files_and_skips_git_dir
+          --skip git::repo::tests::workspace_file_search_matches_plain_queries_against_file_names
+          --skip git::repo::tests::workspace_file_search_returns_bounded_ranked_file_matches
 
   windows_bundle_check:
     runs-on: windows-latest
     needs: [frontend, windows_compat]
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 9
-      - uses: actions/setup-node@v4
+          version: 10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: "src-tauri -> target"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build desktop assets
@@ -237,30 +245,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
-      should_release: ${{ steps.release_check.outputs.should_release }}
+      should_release: ${{ steps.tested_commit.outputs.should_release }}
       released_tag: ${{ steps.release_meta.outputs.tag }}
     permissions:
       contents: write
 
     steps:
-      - name: Checkout release branch with full history
-        uses: actions/checkout@v4
+      - name: Checkout tested commit with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
           token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           persist-credentials: false
 
       - name: Fetch tags
         run: git fetch --force --tags origin
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 9
+          version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -304,21 +312,40 @@ jobs:
           git config --local --unset-all http.https://github.com/.extraheader || true
           git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${{ github.repository }}.git"
 
-      - name: Configure git user for release commit
+      # Release only the commit the gating jobs tested. When the branch has
+      # moved on, the run queued for the newer commit tests and releases it.
+      # release-it needs a named branch with an upstream, so the tested commit
+      # is attached to the branch only once it is still the tip.
+      - name: Confirm the branch still points at the tested commit
+        id: tested_commit
         if: steps.release_check.outputs.should_release == 'true'
+        run: |
+          git fetch --no-tags origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}"
+          remote_sha="$(git rev-parse "origin/${GITHUB_REF_NAME}")"
+          if [ "$remote_sha" != "$GITHUB_SHA" ]; then
+            echo "::notice::Skipping release: ${GITHUB_REF_NAME} moved from the tested commit ${GITHUB_SHA} to ${remote_sha}. The run for the newer commit releases it."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git checkout -B "$GITHUB_REF_NAME" "$GITHUB_SHA"
+          git branch --set-upstream-to "origin/${GITHUB_REF_NAME}"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git user for release commit
+        if: steps.tested_commit.outputs.should_release == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Run release-it
-        if: steps.release_check.outputs.should_release == 'true'
+        if: steps.tested_commit.outputs.should_release == 'true'
         run: pnpm release -- --ci
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Capture released tag
         id: release_meta
-        if: steps.release_check.outputs.should_release == 'true'
+        if: steps.tested_commit.outputs.should_release == 'true'
         run: |
           tag="$(git describe --tags --abbrev=0)"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -334,18 +361,18 @@ jobs:
       contents: read
     steps:
       - name: Checkout released tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.release.outputs.released_tag }}
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          version: 9
+          version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -356,7 +383,7 @@ jobs:
         run: pnpm run build:desktop
 
       - name: Upload desktop artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-desktop-assets
           compression-level: 0
@@ -378,14 +405,17 @@ jobs:
         platform: [macos-15, ubuntu-22.04, windows-latest]
 
     steps:
+      # No later step pushes, so the write-scoped token stays out of
+      # .git/config while dependency install scripts and build.rs run.
       - name: Checkout released tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.release.outputs.released_tag }}
+          persist-credentials: false
 
       - name: Download prebuilt desktop artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-desktop-assets
           path: dist
@@ -404,27 +434,29 @@ jobs:
 
       - name: Install Rust for universal macOS build
         if: matrix.platform == 'macos-15'
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Install Rust
         if: matrix.platform != 'macos-15'
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 9
+          workspaces: "src-tauri -> target"
 
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
-          node-version: 20
+          version: 10
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -445,6 +477,15 @@ jobs:
 
       - name: Build platform Claude sidecar assets
         run: pnpm run build:claude-sidecar
+
+      # The app is compiled without any signing secret in the environment, so
+      # dependency build scripts never see them. Only the bundle steps that
+      # sign get the updater key (and on macOS the Apple secrets).
+      - name: Compile universal macOS app
+        if: matrix.platform == 'macos-15'
+        env:
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
+        run: pnpm exec tauri build --target universal-apple-darwin --no-bundle
 
       # Developer ID signing gives the bundle a stable code identity, which is
       # what lets macOS keep privacy (TCC) grants across updates. The Apple
@@ -477,7 +518,7 @@ jobs:
           else
             echo "Apple code signing and notarization enabled."
           fi
-          pnpm exec tauri build --target universal-apple-darwin
+          pnpm exec tauri bundle --target universal-apple-darwin
 
       - name: Verify macOS keep-awake helper payload
         if: matrix.platform == 'macos-15'
@@ -503,9 +544,15 @@ jobs:
           file "$APP_BINARY" | grep -Eq 'arm64|aarch64'
           file "$APP_BINARY" | grep -q 'x86_64'
 
+      - name: Compile Linux and Windows app
+        if: matrix.platform != 'macos-15'
+        run: pnpm exec tauri build --no-bundle
+        env:
+          PANES_SKIP_DESKTOP_PREBUILD: "1"
+
       - name: Build Linux Tauri bundles
         if: matrix.platform == 'ubuntu-22.04'
-        run: pnpm tauri:build
+        run: pnpm exec tauri bundle
         env:
           NO_STRIP: "true"
           PANES_SKIP_DESKTOP_PREBUILD: "1"
@@ -514,7 +561,7 @@ jobs:
 
       - name: Build Windows Tauri bundles
         if: matrix.platform == 'windows-latest'
-        run: pnpm tauri:build
+        run: pnpm exec tauri bundle
         env:
           PANES_SKIP_DESKTOP_PREBUILD: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -522,7 +569,7 @@ jobs:
 
       - name: Upload Linux assets to GitHub Release
         if: matrix.platform == 'ubuntu-22.04'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.release.outputs.released_tag }}
           files: |
@@ -536,7 +583,7 @@ jobs:
 
       - name: Upload macOS assets to GitHub Release
         if: matrix.platform == 'macos-15'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.release.outputs.released_tag }}
           files: |
@@ -550,7 +597,7 @@ jobs:
 
       - name: Upload Windows assets to GitHub Release
         if: matrix.platform == 'windows-latest'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.release.outputs.released_tag }}
           files: |
@@ -569,11 +616,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
 
       - name: Generate latest.json
         run: node scripts/generate-update-manifest.mjs "${{ needs.release.outputs.released_tag }}"
@@ -616,19 +663,19 @@ jobs:
 
       - name: Checkout released tag
         if: steps.tap_token.outputs.present == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.release.outputs.released_tag }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.tap_token.outputs.present == 'true'
         with:
-          node-version: 20
+          node-version: 26
 
       - name: Checkout tap repository
         if: steps.tap_token.outputs.present == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.HOMEBREW_TAP_REPO }}
           path: homebrew-tap
@@ -672,9 +719,9 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
 
       - name: Download Linux release assets
         env:
@@ -828,9 +875,9 @@ jobs:
       RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
       HOMEBREW_TAP_REPO: wygoralves/homebrew-tap
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
 
       - name: Download macOS release assets
         env:
@@ -982,9 +1029,9 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.release.outputs.released_tag }}
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 26
 
       - name: Download Windows release assets
         shell: pwsh
