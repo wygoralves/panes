@@ -48,7 +48,7 @@ tar = "0.4"
 
 git2 = { version = "0.19", features = ["vendored-openssl"] }
 notify = "6"
-portable-pty = "0.8"
+portable-pty = "0.9"
 sys-locale = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
