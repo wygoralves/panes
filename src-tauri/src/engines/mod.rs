@@ -1181,6 +1181,21 @@ impl EngineManager {
         }
     }
 
+    /// Records a finished macOS sandbox preflight for a Codex instance
+    /// without running one.
+    #[cfg(test)]
+    pub(crate) async fn set_codex_sandbox_probe_result_for_test(
+        &self,
+        engine_id: &str,
+        force_external_sandbox: bool,
+    ) {
+        if let Some(EngineHandle::Codex(engine)) = self.handle(engine_id).await {
+            engine
+                .set_sandbox_probe_result_for_test(force_external_sandbox)
+                .await;
+        }
+    }
+
     pub async fn read_thread_preview(
         &self,
         thread: &ThreadDto,

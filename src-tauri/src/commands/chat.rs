@@ -704,20 +704,12 @@ async fn prepare_send_message_turn(
 
     // Codex drops a thread's permission profile and runs on the sandbox mode,
     // so the profile cannot waive the multi-repo write confirmation.
-    if let Some(sandbox_mode) = sandbox_mode.as_deref() {
-        if workspace_write_confirmation_required(
-            workspace_writable_roots.as_ref(),
-            super::threads::sandbox_mode_for_write_confirmation(
-                sandbox_mode,
-                codex_external_sandbox_active,
-            ),
-            workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
-        ) {
-            return Err(
-                "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
-            );
-        }
-    }
+    ensure_workspace_write_confirmed(
+        workspace_writable_roots.as_ref(),
+        sandbox_mode.as_deref(),
+        codex_external_sandbox_active,
+        thread.engine_metadata.as_ref(),
+    )?;
 
     if requested_model_id.is_some() || reasoning_effort != stored_reasoning_effort {
         let mut metadata = thread
@@ -811,11 +803,15 @@ async fn prepare_send_message_turn(
         project_settings_trusted,
     };
 
-    let engine_thread_id = state
-        .engines
-        .ensure_engine_thread(&thread, Some(effective_model_id.as_str()), scope, sandbox)
-        .await
-        .map_err(err_to_string)?;
+    let engine_thread_id = ensure_engine_thread_for_turn(
+        state,
+        &thread,
+        effective_model_id.as_str(),
+        scope,
+        sandbox,
+        workspace_writable_roots.as_ref(),
+    )
+    .await?;
 
     if thread.engine_thread_id.as_deref() != Some(&engine_thread_id) {
         run_db(db.clone(), {
@@ -5167,6 +5163,66 @@ fn resolve_workspace_writable_roots<'a>(
     }
 }
 
+fn ensure_workspace_write_confirmed(
+    resolution: Option<&WorkspaceWritableRootsResolution>,
+    sandbox_mode: Option<&str>,
+    codex_external_sandbox_active: bool,
+    metadata: Option<&Value>,
+) -> Result<(), String> {
+    let Some(sandbox_mode) = sandbox_mode else {
+        return Ok(());
+    };
+    if workspace_write_confirmation_required(
+        resolution,
+        super::threads::sandbox_mode_for_write_confirmation(
+            sandbox_mode,
+            codex_external_sandbox_active,
+        ),
+        workspace_write_opt_in_enabled(metadata),
+    ) {
+        return Err(
+            "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Starts or resumes the engine thread for a turn. Codex runs its
+/// workspace-write sandbox probe here and can fall back to external sandbox
+/// mode, where no OS sandbox holds a read-only thread read-only, so the
+/// multi-repo write confirmation is checked again against the sandbox state
+/// the engine ended on, before the turn is dispatched.
+async fn ensure_engine_thread_for_turn(
+    state: &AppState,
+    thread: &ThreadDto,
+    model_id: &str,
+    scope: ThreadScope,
+    sandbox: SandboxPolicy,
+    workspace_writable_roots: Option<&WorkspaceWritableRootsResolution>,
+) -> Result<String, String> {
+    let sandbox_mode = sandbox.sandbox_mode.clone();
+    let engine_thread_id = state
+        .engines
+        .ensure_engine_thread(thread, Some(model_id), scope, sandbox)
+        .await
+        .map_err(err_to_string)?;
+
+    if engine_kind(&thread.engine_id) == "codex" {
+        let codex_external_sandbox_active = state
+            .engines
+            .codex_uses_external_sandbox_for(&thread.engine_id)
+            .await;
+        ensure_workspace_write_confirmed(
+            workspace_writable_roots,
+            sandbox_mode.as_deref(),
+            codex_external_sandbox_active,
+            thread.engine_metadata.as_ref(),
+        )?;
+    }
+
+    Ok(engine_thread_id)
+}
+
 fn sandbox_mode_requires_workspace_opt_in(mode: &str) -> bool {
     !mode.eq_ignore_ascii_case("read-only")
 }
@@ -7667,6 +7723,126 @@ mod tests {
         };
 
         assert!(error.contains("requires explicit confirmation"));
+    }
+
+    /// The macOS preflight passed, so a read-only multi-repo thread needs no
+    /// confirmation before the engine thread exists. The workspace-write
+    /// probe that runs while Codex starts the thread then fails, which moves
+    /// Codex to external sandbox mode with no OS sandbox holding the thread
+    /// read-only, so the turn must stop for the confirmation.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn codex_sandbox_fallback_while_starting_the_thread_requires_the_multi_repo_confirmation()
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script_dir =
+            std::env::temp_dir().join(format!("panes-chat-fake-codex-{}", Uuid::new_v4()));
+        fs::create_dir_all(&script_dir).expect("failed to create script dir");
+        let script = script_dir.join("codex");
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/^{"id":\("[^"]*"\),.*/\1/p')
+  [ -z "$id" ] && continue
+  case "$line" in
+    *'"method":"command/exec"'*)
+      printf '{"id":%s,"result":{"exitCode":1,"stderr":"sandbox_apply: Operation not permitted"}}\n' "$id" ;;
+    *'"method":"thread/start"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"fake-engine-thread"}}}\n' "$id" ;;
+    *)
+      printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+        )
+        .expect("failed to write fake codex");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755))
+            .expect("failed to make fake codex executable");
+
+        let mut state = test_app_state();
+        let mut config = AppConfig::default();
+        config.chat_providers = vec![crate::config::app_config::ChatProviderInstanceConfig {
+            id: "codex".to_string(),
+            kind: "codex".to_string(),
+            display_name: "Codex".to_string(),
+            binary_path: Some(script.to_string_lossy().into_owned()),
+            enabled: true,
+            ..Default::default()
+        }];
+        state.engines = Arc::new(EngineManager::from_config(&config));
+        state
+            .engines
+            .set_codex_sandbox_probe_result_for_test("codex", false)
+            .await;
+
+        let thread = test_thread(&state, "codex", "gpt-6.2-sol");
+        let workspace = db::workspaces::list_workspaces(&state.db)
+            .expect("failed to list workspaces")
+            .into_iter()
+            .find(|workspace| workspace.id == thread.workspace_id)
+            .expect("workspace should exist");
+        let repo_paths: Vec<String> = ["repo-a", "repo-b"]
+            .iter()
+            .map(|name| {
+                let path = std::path::Path::new(&workspace.root_path).join(name);
+                fs::create_dir_all(&path).expect("failed to create repo dir");
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+        let resolution = resolve_workspace_writable_roots(
+            repo_paths.iter().map(String::as_str),
+            &workspace.root_path,
+            thread.engine_metadata.as_ref(),
+        )
+        .expect("roots should resolve");
+
+        // The check made before the engine thread exists lets the turn on.
+        assert!(ensure_workspace_write_confirmed(
+            Some(&resolution),
+            Some("read-only"),
+            state.engines.codex_uses_external_sandbox_for("codex").await,
+            thread.engine_metadata.as_ref(),
+        )
+        .is_ok());
+
+        let sandbox = SandboxPolicy {
+            writable_roots: repo_paths.clone(),
+            allow_network: false,
+            approval_policy: None,
+            permission_profile: None,
+            approvals_reviewer: None,
+            reasoning_effort: None,
+            sandbox_mode: Some("read-only".to_string()),
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            opencode_agent: None,
+            project_settings_trusted: false,
+        };
+        let result = ensure_engine_thread_for_turn(
+            &state,
+            &thread,
+            "gpt-6.2-sol",
+            ThreadScope::Workspace {
+                root_path: workspace.root_path.clone(),
+                writable_roots: repo_paths,
+            },
+            sandbox,
+            Some(&resolution),
+        )
+        .await;
+        let fell_back = state.engines.codex_uses_external_sandbox_for("codex").await;
+        drop(state);
+        let _ = fs::remove_dir_all(&script_dir);
+
+        assert!(
+            fell_back,
+            "the failed probe should switch Codex to external mode"
+        );
+        let error = result.expect_err("the fallback must require the multi-repo confirmation");
+        assert!(error.contains("requires explicit confirmation"), "{error}");
     }
 
     #[tokio::test]
