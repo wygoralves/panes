@@ -6,7 +6,13 @@
        strings macOS either kills the process or shows a blank consent dialog
        when a terminal or agent touches a protected folder. -->
   <key>NSAppleEventsUsageDescription</key>
-  <string>Panes uses an administrator prompt only when you enable lid-close sleep prevention without the background helper.</string>
+  <string>A command or agent running in Panes wants to control another app, for example through osascript.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>A program running in a Panes terminal wants to use the microphone.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>A program running in a Panes terminal wants to use the camera.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Panes and the programs running in its terminals connect to devices on your local network, such as a local development server.</string>
   <key>NSDesktopFolderUsageDescription</key>
   <string>Panes opens repositories and terminals in the folders you choose, including ones on your Desktop.</string>
   <key>NSDocumentsFolderUsageDescription</key>

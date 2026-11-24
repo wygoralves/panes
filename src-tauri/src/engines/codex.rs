@@ -3838,34 +3838,65 @@ fn codex_fix_commands(
     codex_fix_commands_for_platform(runtime_env::platform_id(), resolution, execution_error)
 }
 
+/// `launchctl setenv PATH` replaces the PATH every later GUI app inherits, so
+/// keep Homebrew, the system directories and the entries Panes inherited
+/// (launchd's PATH for a Finder launch) after Codex's own directory. The value
+/// runs through the user's login shell, so it is single-quoted, which is
+/// literal in sh, zsh, bash, fish and PowerShell as long as it holds no quote
+/// (PowerShell also ends a string at typographic single quotes) or backslash.
+/// When any entry holds one there is no fix, since dropping the entry would
+/// remove it from every later GUI app. Parsed with macOS rules on any host.
+fn launchctl_set_path_fix(bin_dir: &Path, app_path: Option<&str>) -> Option<String> {
+    let literal =
+        |entry: &str| !entry.contains(['\'', '\\', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}']);
+    let bin_dir = bin_dir.display().to_string();
+    let system = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    let inherited: Vec<&str> = app_path
+        .into_iter()
+        .flat_map(|value| value.split(':'))
+        .filter(|entry| entry.starts_with('/'))
+        .collect();
+    if !literal(&bin_dir) || !inherited.iter().all(|entry| literal(entry)) {
+        return None;
+    }
+    let mut path: Vec<&str> = Vec::new();
+    for entry in std::iter::once(bin_dir.as_str())
+        .chain(system.split(':'))
+        .chain(inherited)
+    {
+        if !path.contains(&entry) {
+            path.push(entry);
+        }
+    }
+    Some(format!("launchctl setenv PATH '{}'", path.join(":")))
+}
+
 fn codex_fix_commands_for_platform(
     platform: &str,
     resolution: &CodexExecutableResolution,
     execution_error: Option<&str>,
 ) -> Vec<String> {
     if platform == "macos" {
+        let app_path = resolution.app_path.as_deref();
         let mut fixes = Vec::new();
         if resolution.executable.is_none() {
-            if let Some(shell_path) = &resolution.login_shell_executable {
-                if let Some(bin_dir) = shell_path.parent() {
-                    fixes.push(format!(
-                        "launchctl setenv PATH \"{}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
-                        bin_dir.display()
-                    ));
-                    fixes.push("open -a Panes".to_string());
-                }
-            } else {
-                fixes.push("/bin/zsh -lic 'command -v codex && codex --version'".to_string());
-                fixes.push("open -a Panes".to_string());
-            }
+            let path_fix = resolution
+                .login_shell_executable
+                .as_deref()
+                .and_then(Path::parent)
+                .and_then(|bin_dir| launchctl_set_path_fix(bin_dir, app_path));
+            fixes.push(path_fix.unwrap_or_else(|| {
+                "/bin/zsh -lic 'command -v codex && codex --version'".to_string()
+            }));
+            fixes.push("open -a Panes".to_string());
         } else if execution_error.is_some() {
-            if let Some(executable) = resolution.executable.as_ref() {
-                if let Some(bin_dir) = executable.parent() {
-                    fixes.push(format!(
-                        "launchctl setenv PATH \"{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"",
-                        bin_dir.display()
-                    ));
-                }
+            if let Some(path_fix) = resolution
+                .executable
+                .as_deref()
+                .and_then(Path::parent)
+                .and_then(|bin_dir| launchctl_set_path_fix(bin_dir, app_path))
+            {
+                fixes.push(path_fix);
             }
             fixes.push(
                 "/bin/zsh -lic 'command -v node && command -v codex && codex --version'"
@@ -3912,20 +3943,21 @@ fn app_path_preview(path: Option<&str>) -> String {
         .to_string()
 }
 
-fn codex_augmented_path(executable: &Path) -> Option<OsString> {
-    runtime_env::augmented_path_with_prepend(
+async fn codex_augmented_path(executable: &Path) -> Option<OsString> {
+    runtime_env::engine_path_with_prepend(
         executable
             .parent()
             .into_iter()
             .map(|value| value.to_path_buf()),
     )
+    .await
 }
 
 async fn codex_command(executable: &Path) -> Command {
     let mut command = Command::new(executable);
     process_utils::configure_tokio_command(&mut command);
     runtime_env::apply_missing_login_shell_env(&mut command).await;
-    if let Some(augmented_path) = codex_augmented_path(executable) {
+    if let Some(augmented_path) = codex_augmented_path(executable).await {
         command.env("PATH", augmented_path);
     }
     command
@@ -9182,6 +9214,84 @@ mod tests {
 
         assert!(details.contains("%APPDATA%\\npm"));
         assert!(details.contains("App PATH"));
+    }
+
+    #[test]
+    fn codex_fix_commands_for_macos_keep_homebrew_and_quote_the_codex_dir() {
+        let resolution = |codex: &str, app_path: &str| CodexExecutableResolution {
+            executable: None,
+            source: "unavailable",
+            app_path: Some(app_path.to_string()),
+            login_shell_executable: Some(std::path::PathBuf::from(codex)),
+        };
+        let app_path = "/usr/bin:/Users/panes/.cargo/bin:relative/bin:/bin";
+
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &resolution("/Users/panes/$(touch x) `id`/bin/codex", app_path),
+            None,
+        );
+        assert_eq!(
+            fixes,
+            vec![
+                "launchctl setenv PATH '/Users/panes/$(touch x) `id`/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/panes/.cargo/bin'".to_string(),
+                "open -a Panes".to_string(),
+            ]
+        );
+
+        let diagnostic = vec![
+            "/bin/zsh -lic 'command -v codex && codex --version'".to_string(),
+            "open -a Panes".to_string(),
+        ];
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &resolution("/Users/it's/bin/codex", app_path),
+            None,
+        );
+        assert_eq!(fixes, diagnostic);
+
+        for quote in ['\'', '\\', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
+            let app_path = format!("/usr/bin:/Users/O{quote}Brien/bin:/bin");
+            let fixes = codex_fix_commands_for_platform(
+                "macos",
+                &resolution("/opt/codex/bin/codex", &app_path),
+                None,
+            );
+            assert_eq!(fixes, diagnostic, "inherited PATH {app_path}");
+        }
+    }
+
+    #[test]
+    fn codex_fix_commands_for_macos_execution_error_keep_inherited_path() {
+        let resolution = |app_path: &str| CodexExecutableResolution {
+            executable: Some(std::path::PathBuf::from("/opt/codex/bin/codex")),
+            source: "login-shell",
+            app_path: Some(app_path.to_string()),
+            login_shell_executable: Some(std::path::PathBuf::from("/opt/codex/bin/codex")),
+        };
+        let diagnostic =
+            "/bin/zsh -lic 'command -v node && command -v codex && codex --version'".to_string();
+
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &resolution("/usr/bin:/Users/panes/.nvm/bin:/bin"),
+            Some("env: node: No such file or directory"),
+        );
+        assert_eq!(
+            fixes,
+            vec![
+                "launchctl setenv PATH '/opt/codex/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/panes/.nvm/bin'".to_string(),
+                diagnostic.clone(),
+                "open -a Panes".to_string(),
+            ]
+        );
+
+        let fixes = codex_fix_commands_for_platform(
+            "macos",
+            &resolution("/usr/bin:/Users/it's/bin:/bin"),
+            Some("env: node: No such file or directory"),
+        );
+        assert_eq!(fixes, vec![diagnostic, "open -a Panes".to_string()]);
     }
 
     #[test]

@@ -30,6 +30,18 @@ export function isMacDesktop(): boolean {
     && isTauri();
 }
 
+/**
+ * App shortcuts use Cmd on macOS and Ctrl elsewhere. On macOS, Ctrl+letter
+ * belongs to Cocoa and CodeMirror editing (Ctrl+E line end, Ctrl+K kill line),
+ * so it must not trigger app actions.
+ */
+export function hasAppShortcutModifier(
+  event: Pick<KeyboardEvent, "metaKey" | "ctrlKey">,
+  isMac: boolean = isMacDesktop(),
+): boolean {
+  return isMac ? event.metaKey : event.metaKey || event.ctrlKey;
+}
+
 export function usesCustomWindowFrame(): boolean {
   return isLinuxDesktop() || isWindowsDesktop();
 }
