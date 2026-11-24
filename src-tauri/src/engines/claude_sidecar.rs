@@ -246,12 +246,19 @@ enum SidecarEvent {
         #[serde(rename = "bundledClaudeCodeVersion")]
         bundled_claude_code_version: Option<String>,
     },
+    /// Raised locally when the sidecar's stdout closes. It never comes off the
+    /// wire: the transport keeps its own sender alive, so the broadcast channel
+    /// never reports Closed and waiters need this to learn the process is gone.
+    #[serde(skip)]
+    Terminated {
+        reason: String,
+    },
 }
 
 impl SidecarEvent {
     fn request_id(&self) -> Option<&str> {
         match self {
-            SidecarEvent::Ready => None,
+            SidecarEvent::Ready | SidecarEvent::Terminated { .. } => None,
             SidecarEvent::SessionInit { id, .. }
             | SidecarEvent::TurnStarted { id, .. }
             | SidecarEvent::TextDelta { id, .. }
@@ -341,6 +348,59 @@ struct ClaudeRuntimeInfo {
 
 // ── Transport ─────────────────────────────────────────────────────────
 
+/// Parses the sidecar's stdout into events until the stream ends, then raises
+/// `Terminated` so every turn waiting on the channel learns the process died.
+fn spawn_stdout_reader<R>(stdout: R, tx: broadcast::Sender<SidecarEvent>)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        let reason = loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => match serde_json::from_str::<SidecarEvent>(&line) {
+                    Ok(event) => {
+                        let _ = tx.send(trim_sidecar_event_for_buffer(event));
+                    }
+                    Err(e) => {
+                        // The line can carry prompts, tool inputs and file
+                        // contents, and serde's message can quote them, so
+                        // only the line's shape and the error class are logged.
+                        log::warn!(
+                            "claude sidecar: failed to parse event type={} len={}: {:?} error at column {}",
+                            sidecar_line_event_type(&line),
+                            line.len(),
+                            e.classify(),
+                            e.column()
+                        );
+                    }
+                },
+                Ok(None) => {
+                    log::info!("claude sidecar stdout EOF");
+                    break "the sidecar process exited".to_string();
+                }
+                Err(e) => {
+                    log::warn!("claude sidecar stdout read error: {e}");
+                    break format!("reading the sidecar output failed: {e}");
+                }
+            }
+        };
+        let _ = tx.send(SidecarEvent::Terminated { reason });
+    });
+}
+
+fn sidecar_line_event_type(line: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 struct ClaudeTransport {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
@@ -421,34 +481,7 @@ impl ClaudeTransport {
         let (event_tx, _) = broadcast::channel(SIDECAR_EVENT_BUFFER_CAPACITY);
 
         // Stdout reader: parse JSON lines → broadcast SidecarEvents
-        {
-            let tx = event_tx.clone();
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(stdout).lines();
-                loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => match serde_json::from_str::<SidecarEvent>(&line) {
-                            Ok(event) => {
-                                let _ = tx.send(trim_sidecar_event_for_buffer(event));
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "claude sidecar: failed to parse event: {e} — line: {line}"
-                                );
-                            }
-                        },
-                        Ok(None) => {
-                            log::info!("claude sidecar stdout EOF");
-                            break;
-                        }
-                        Err(e) => {
-                            log::warn!("claude sidecar stdout read error: {e}");
-                            break;
-                        }
-                    }
-                }
-            });
-        }
+        spawn_stdout_reader(stdout, event_tx.clone());
 
         // Stderr reader: log only
         {
@@ -831,10 +864,11 @@ impl ClaudeSidecarEngine {
                     Ok(SidecarEvent::Error { message, .. }) => {
                         anyhow::bail!("claude sidecar startup error: {message}");
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("claude sidecar process terminated during startup");
                     }
+                    Ok(_) => continue,
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
@@ -942,11 +976,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed while steering the turn");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -1033,11 +1068,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed while reading usage limits");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -1082,11 +1118,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed during model discovery");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -1133,11 +1170,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed while reading runtime information");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -2085,6 +2123,7 @@ impl Engine for ClaudeSidecarEngine {
             "sandboxMode": thread_config.sandbox.sandbox_mode.clone(),
             "reasoningEffort": thread_config.sandbox.reasoning_effort.clone(),
             "planMode": plan_mode,
+            "projectSettingsTrusted": thread_config.sandbox.project_settings_trusted,
         });
 
         if let Some(ref session_id) = thread_config.agent_session_id {
@@ -2109,21 +2148,7 @@ impl Engine for ClaudeSidecarEngine {
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => {
-                    let cancel_id = Uuid::new_v4().to_string();
-                    let cancel_cmd = serde_json::json!({
-                        "id": cancel_id.clone(),
-                        "method": "cancel",
-                        "params": { "requestId": request_id.clone() },
-                    });
-                    let _ = transport.send_command(&cancel_cmd).await;
-                    // The sidecar answers only once the cancelled query has
-                    // stopped. Releasing the thread before that would let the
-                    // next turn overlap the query being torn down.
-                    if !wait_for_cancel_ack(&mut rx, &request_id, &cancel_id).await {
-                        log::warn!(
-                            "claude sidecar did not acknowledge the cancel for request {request_id}"
-                        );
-                    }
+                    cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                     let mut state = self.state.lock().await;
                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
                         if config.active_request_id.as_deref() == Some(request_id.as_str()) {
@@ -2493,6 +2518,41 @@ impl Engine for ClaudeSidecarEngine {
                                         break;
                                     }
                                 }
+                                SidecarEvent::Terminated { reason } => {
+                                    event_tx
+                                        .send(EngineEvent::Error {
+                                            message: format!(
+                                                "Claude sidecar process terminated unexpectedly: {reason}"
+                                            ),
+                                            recoverable: false,
+                                        })
+                                        .await
+                                        .ok();
+                                    event_tx
+                                        .send(EngineEvent::TurnCompleted {
+                                            token_usage: None,
+                                            status: TurnCompletionStatus::Failed,
+                                        })
+                                        .await
+                                        .ok();
+                                    let mut state = state_ref.lock().await;
+                                    if let Some(config) =
+                                        state.threads.get_mut(&engine_thread_id_owned)
+                                    {
+                                        config.active_request_id = None;
+                                    }
+                                    // Another caller may already have replaced
+                                    // the dead transport; keep that one.
+                                    if state
+                                        .transport
+                                        .as_ref()
+                                        .map(|current| Arc::ptr_eq(current, &transport))
+                                        .unwrap_or(false)
+                                    {
+                                        state.transport = None;
+                                    }
+                                    break;
+                                }
                                 SidecarEvent::Ready
                                 | SidecarEvent::Models { .. }
                                 | SidecarEvent::Version { .. }
@@ -2502,6 +2562,10 @@ impl Engine for ClaudeSidecarEngine {
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             log::warn!("claude sidecar: event receiver lagged by {n} messages");
+                            // The turn fails here, so the sidecar query must
+                            // stop too, or it keeps running tools unseen and
+                            // overlaps the next turn on the same session.
+                            cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                             let message = format!(
                                 "Claude sidecar event stream skipped {n} messages under load."
                             );
@@ -2673,6 +2737,27 @@ fn normalize_claude_sandbox_policy(mut sandbox: SandboxPolicy) -> SandboxPolicy 
     sandbox
 }
 
+/// Asks the sidecar to stop a query and waits for it to confirm.
+async fn cancel_sidecar_request(
+    transport: &ClaudeTransport,
+    rx: &mut broadcast::Receiver<SidecarEvent>,
+    request_id: &str,
+) {
+    let cancel_id = Uuid::new_v4().to_string();
+    let cancel_cmd = serde_json::json!({
+        "id": cancel_id.clone(),
+        "method": "cancel",
+        "params": { "requestId": request_id },
+    });
+    let _ = transport.send_command(&cancel_cmd).await;
+    // The sidecar answers only once the cancelled query has stopped.
+    // Releasing the thread before that would let the next turn overlap the
+    // query being torn down.
+    if !wait_for_cancel_ack(rx, request_id, &cancel_id).await {
+        log::warn!("claude sidecar did not acknowledge the cancel for request {request_id}");
+    }
+}
+
 /// Waits for the sidecar to confirm that a cancelled query stopped. Returns
 /// false when the acknowledgement never arrives so the caller can carry on
 /// instead of hanging.
@@ -2698,9 +2783,10 @@ async fn wait_for_cancel_ack(
                     }
                     return true;
                 }
+                Ok(SidecarEvent::Terminated { .. })
+                | Err(broadcast::error::RecvError::Closed) => return false,
                 Ok(_) => continue,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => return false,
             }
         }
     })
@@ -2726,7 +2812,203 @@ mod tests {
             personality: None,
             output_schema: None,
             opencode_agent: None,
+            project_settings_trusted: false,
         }
+    }
+
+    /// A transport whose child is `cat`, so every command the engine writes
+    /// comes back on the returned stdout for the test to read. Events reach
+    /// the engine only when the test sends them on the transport's channel.
+    #[cfg(unix)]
+    fn echo_transport() -> (
+        Arc<ClaudeTransport>,
+        tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    ) {
+        let mut child = Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("cat should spawn");
+        let stdin = child.stdin.take().expect("cat stdin");
+        let stdout = child.stdout.take().expect("cat stdout");
+        let (event_tx, _) = broadcast::channel(SIDECAR_EVENT_BUFFER_CAPACITY);
+        (
+            Arc::new(ClaudeTransport {
+                child: Mutex::new(child),
+                stdin: Mutex::new(stdin),
+                event_tx,
+            }),
+            BufReader::new(stdout).lines(),
+        )
+    }
+
+    #[cfg(unix)]
+    async fn engine_with_transport(transport: &Arc<ClaudeTransport>) -> ClaudeSidecarEngine {
+        let engine = ClaudeSidecarEngine::default();
+        {
+            let mut state = engine.state.lock().await;
+            state.transport = Some(Arc::clone(transport));
+            state.threads.insert(
+                "thread-1".to_string(),
+                ThreadConfig {
+                    scope: ThreadScope::Repo {
+                        repo_path: "/repo".to_string(),
+                    },
+                    model_id: "default".to_string(),
+                    sandbox: sandbox_policy("workspace-write", false),
+                    agent_session_id: None,
+                    active_request_id: None,
+                },
+            );
+        }
+        engine
+    }
+
+    #[cfg(unix)]
+    fn turn_input() -> TurnInput {
+        TurnInput {
+            message: "hello".to_string(),
+            attachments: Vec::new(),
+            plan_mode: false,
+            input_items: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    async fn next_command(
+        lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    ) -> serde_json::Value {
+        let line = timeout(Duration::from_secs(5), lines.next_line())
+            .await
+            .expect("timed out waiting for a sidecar command")
+            .expect("read command")
+            .expect("command line");
+        serde_json::from_str(&line).expect("command json")
+    }
+
+    #[tokio::test]
+    async fn stdout_eof_raises_terminated() {
+        let (tx, mut rx) = broadcast::channel(8);
+        spawn_stdout_reader(&b"{\"type\":\"ready\"}\n"[..], tx);
+
+        let first = timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("ready event")
+            .expect("channel open");
+        assert!(matches!(first, SidecarEvent::Ready));
+        let second = timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("terminated event")
+            .expect("channel open");
+        assert!(matches!(second, SidecarEvent::Terminated { .. }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sidecar_exit_mid_turn_fails_the_turn() {
+        let (transport, mut commands) = echo_transport();
+        let engine = engine_with_transport(&transport).await;
+        let (event_tx, mut events) = mpsc::channel(16);
+
+        let turn = tokio::spawn(async move {
+            engine
+                .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                .await
+                .expect("send_message");
+            engine
+        });
+        let query = next_command(&mut commands).await;
+        assert_eq!(query["method"], "query");
+
+        transport
+            .event_tx
+            .send(SidecarEvent::Terminated {
+                reason: "the sidecar process exited".to_string(),
+            })
+            .expect("a turn is subscribed");
+
+        let engine = timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends once the sidecar is gone")
+            .expect("turn task");
+        let mut received = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            received.push(event);
+        }
+        assert!(matches!(
+            received.first(),
+            Some(EngineEvent::Error {
+                recoverable: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            received.last(),
+            Some(EngineEvent::TurnCompleted {
+                status: TurnCompletionStatus::Failed,
+                ..
+            })
+        ));
+        assert!(engine.state.lock().await.transport.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn event_lag_cancels_the_sidecar_query() {
+        let (transport, mut commands) = echo_transport();
+        let engine = engine_with_transport(&transport).await;
+        // A one-slot channel that nobody drains holds the turn loop on its
+        // first forwarded delta while the broadcast buffer overflows.
+        let (event_tx, mut events) = mpsc::channel(1);
+
+        let turn = tokio::spawn(async move {
+            engine
+                .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                .await
+                .expect("send_message");
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+
+        for _ in 0..(SIDECAR_EVENT_BUFFER_CAPACITY + 8) {
+            let _ = transport.event_tx.send(SidecarEvent::TextDelta {
+                id: Some(request_id.clone()),
+                content: "x".to_string(),
+            });
+        }
+        let drain = tokio::spawn(async move {
+            let mut received = Vec::new();
+            while let Some(event) = events.recv().await {
+                received.push(event);
+            }
+            received
+        });
+
+        let cancel = next_command(&mut commands).await;
+        assert_eq!(cancel["method"], "cancel");
+        assert_eq!(cancel["params"]["requestId"], request_id.as_str());
+        transport
+            .event_tx
+            .send(SidecarEvent::CancelResult {
+                id: cancel["id"].as_str().map(str::to_string),
+                request_id: Some(request_id.clone()),
+                closed: false,
+            })
+            .expect("the turn is still subscribed");
+
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends after the cancel is acknowledged")
+            .expect("turn task");
+        let received = drain.await.expect("drain task");
+        assert!(matches!(
+            received.last(),
+            Some(EngineEvent::TurnCompleted {
+                status: TurnCompletionStatus::Failed,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -2401,6 +2401,7 @@ async fn build_codex_branch_context(
             personality: thread_personality(thread.engine_metadata.as_ref()),
             output_schema: thread_output_schema(thread.engine_metadata.as_ref()),
             opencode_agent: thread_opencode_agent(thread.engine_metadata.as_ref()),
+            project_settings_trusted: matches!(trust_level, TrustLevelDto::Trusted),
         },
     ))
 }

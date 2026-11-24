@@ -37,6 +37,10 @@ pub fn is_path_within_root(path: &str, root: &str) -> bool {
         return true;
     }
 
+    // Only a filesystem root ("/", "c:/") still ends in a separator here.
+    if normalized_root.ends_with('/') {
+        return normalized_path.starts_with(&normalized_root);
+    }
     normalized_path.starts_with(&format!("{normalized_root}/"))
 }
 
@@ -90,10 +94,27 @@ fn normalize_for_comparison(path: &str) -> String {
             .get(1)
             .is_some_and(|byte| *byte == b':')
     {
-        normalized.to_lowercase()
+        trim_trailing_separators(normalized.to_lowercase())
     } else {
-        normalized
+        trim_trailing_separators(normalized)
     }
+}
+
+/// Drops trailing separators so "/repo/" compares equal to "/repo", but keeps
+/// the one a filesystem root needs ("/", "c:/"), which cannot lose it.
+fn trim_trailing_separators(path: String) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.len() == path.len() {
+        return path;
+    }
+    if trimmed.is_empty() {
+        return "/".to_string();
+    }
+    let bytes = trimmed.as_bytes();
+    if bytes.len() == 2 && bytes[1] == b':' {
+        return format!("{trimmed}/");
+    }
+    trimmed.to_string()
 }
 
 #[cfg(test)]
@@ -154,6 +175,40 @@ mod tests {
             "/workspace/apps/api/src/main.ts",
             "/workspace/apps/app"
         ));
+    }
+
+    #[test]
+    fn drive_root_encloses_paths_on_that_drive() {
+        assert!(is_path_within_root(r"D:\work\repo", r"D:\"));
+        assert!(is_path_within_root(r"d:\Work\Repo", r"D:/"));
+        assert!(is_path_within_root(r"D:\", r"D:\"));
+        assert!(!is_path_within_root(r"E:\work\repo", r"D:\"));
+        assert!(!is_path_within_root(r"D:\", r"D:\work\repo"));
+    }
+
+    #[test]
+    fn posix_root_encloses_every_absolute_path() {
+        assert!(is_path_within_root("/home/panes/repo", "/"));
+        assert!(is_path_within_root("/", "/"));
+        assert!(!is_path_within_root("/", "/home/panes/repo"));
+    }
+
+    #[test]
+    fn trailing_separator_on_root_or_path_does_not_change_the_answer() {
+        assert!(is_path_within_root("/workspace/app/src", "/workspace/app/"));
+        assert!(is_path_within_root("/workspace/app", "/workspace/app/"));
+        assert!(is_path_within_root("/workspace/app/", "/workspace/app"));
+        assert!(is_path_within_root(
+            r"C:\workspace\app\src",
+            r"C:\workspace\app\"
+        ));
+    }
+
+    #[test]
+    fn sibling_with_shared_prefix_is_not_within_root() {
+        assert!(!is_path_within_root("/foobar", "/foo"));
+        assert!(!is_path_within_root("/foobar/src", "/foo/"));
+        assert!(!is_path_within_root(r"C:\foobar", r"C:\foo\"));
     }
 
     #[test]
