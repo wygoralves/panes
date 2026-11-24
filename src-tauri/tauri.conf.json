@@ -69,6 +69,13 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": true,
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/applications/com.panes.app.desktop": "linux/com.panes.app.desktop"
+        }
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "13.0",
       "entitlements": "entitlements.plist",

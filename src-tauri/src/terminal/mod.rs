@@ -1659,6 +1659,12 @@ fn configure_terminal_env(
     let config = build_terminal_env_config(notification_env);
     apply_terminal_env(cmd, &config);
     apply_notification_env(cmd, notification_env);
+    for change in crate::process_utils::child_env_changes() {
+        match change {
+            crate::process_utils::ChildEnvChange::Remove(key) => cmd.env_remove(key),
+            crate::process_utils::ChildEnvChange::Set(key, value) => cmd.env(key, value),
+        }
+    }
     config.snapshot
 }
 

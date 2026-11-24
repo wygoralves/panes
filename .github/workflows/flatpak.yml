@@ -1,0 +1,35 @@
+name: Flatpak
+
+on:
+  pull_request:
+    paths:
+      - "com.panes.app.yml"
+      - "flatpak/**"
+      - "scripts/build-claude-sidecar.mjs"
+      - ".github/workflows/flatpak.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flatpak:
+    name: Build Flatpak bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build manifest and upload bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
+        with:
+          manifest-path: com.panes.app.yml
+          bundle: panes.flatpak
+          artifact-name: panes-x86_64.flatpak
+          cache-key: flatpak-builder-${{ hashFiles('com.panes.app.yml', 'src-tauri/Cargo.lock', 'pnpm-lock.yaml') }}

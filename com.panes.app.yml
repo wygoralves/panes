@@ -17,9 +17,6 @@ finish-args:
   - --share=ipc
   # Codex, Claude, OpenCode, and git all need outbound network access.
   - --share=network
-  # System tray icon (Cargo.toml enables the tauri "tray-icon" feature).
-  - --talk-name=org.kde.StatusNotifierWatcher
-  - --filesystem=xdg-run/tray-icon:create
   # Desktop notifications for long-running agent turns.
   - --talk-name=org.freedesktop.Notifications
   # Git operations over SSH remotes.
@@ -57,7 +54,7 @@ modules:
     buildsystem: simple
     build-commands:
       - mkdir -p /app/bin /app/lib/node
-      - tar -xJf node.tar.xz --strip-components=1 -C /app/lib/node
+      - tar -xJf node.tar.xz --no-same-owner --strip-components=1 -C /app/lib/node
       - ln -sf ../lib/node/bin/corepack /app/bin/corepack
       - ln -sf ../lib/node/bin/node /app/bin/node
       - ln -sf ../lib/node/bin/npm /app/bin/npm
@@ -90,7 +87,12 @@ modules:
       - PANES_SKIP_DESKTOP_PREBUILD= npm exec --yes pnpm@9 run build:desktop
       - cargo build --manifest-path src-tauri/Cargo.toml --release
       - bin_path="$(find src-tauri/target/release -maxdepth 1 -type f -perm -111 \( -name 'Panes' -o -name 'panes' \) | head -n1)" && test -n "$bin_path" && install -Dm755 "$bin_path" /app/bin/Panes
-      - install -Dm644 src-tauri/sidecar-dist/claude-agent-sdk-server.mjs /app/lib/Panes/sidecar-dist/claude-agent-sdk-server.mjs
+      # On Linux the build packs the Claude SDK into claude-sdk-node_modules.tar.gz
+      # next to the sidecar, so copy the whole staged directory, then fail the
+      # build here rather than at the first Claude chat if the layout changes.
+      - rm -rf /app/lib/Panes/sidecar-dist && cp -a src-tauri/sidecar-dist /app/lib/Panes/sidecar-dist
+      - test -f /app/lib/Panes/sidecar-dist/claude-agent-sdk-server.mjs
+      - test -f /app/lib/Panes/sidecar-dist/claude-sdk-node_modules.tar.gz
       - install -Dm755 flatpak/panes-wrapper.sh /app/bin/panes-wrapper
       - install -Dm644 flatpak/mise-env.sh /app/etc/profile.d/mise-env.sh
       - install -Dm644 flatpak/com.panes.app.desktop /app/share/applications/com.panes.app.desktop

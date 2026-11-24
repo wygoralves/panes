@@ -1379,15 +1379,22 @@ fn is_managed_codex_notify_value(value: &toml::Value) -> bool {
 }
 
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
-    let home = runtime_env::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
-    Ok(home.join(".claude").join("settings.json"))
+    Ok(cli_config_dir("CLAUDE_CONFIG_DIR", ".claude")?.join("settings.json"))
 }
 
 fn codex_config_path() -> anyhow::Result<PathBuf> {
+    Ok(cli_config_dir("CODEX_HOME", ".codex")?.join("config.toml"))
+}
+
+/// The directory a CLI reads its config from: the CLI's own override variable
+/// when set (the Flatpak wrapper sets both), otherwise its dotfolder in home.
+fn cli_config_dir(override_var: &str, home_dir_name: &str) -> anyhow::Result<PathBuf> {
+    if let Some(dir) = std::env::var_os(override_var).filter(|dir| !dir.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
     let home = runtime_env::home_dir()
         .ok_or_else(|| anyhow::anyhow!("home directory is not available"))?;
-    Ok(home.join(".codex").join("config.toml"))
+    Ok(home.join(home_dir_name))
 }
 
 fn managed_panes_cli_path() -> anyhow::Result<PathBuf> {
@@ -1857,7 +1864,14 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    const APP_DATA_ENV_VARS: [&str; 4] = ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
+    const APP_DATA_ENV_VARS: [&str; 6] = [
+        "HOME",
+        "USERPROFILE",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+    ];
 
     fn with_temp_app_data_env<T>(f: impl FnOnce() -> T) -> T {
         let _guard = crate::config::app_config::app_data_env_lock()
@@ -1877,6 +1891,8 @@ mod tests {
         std::env::set_var("USERPROFILE", &root);
         std::env::set_var("LOCALAPPDATA", &local_app_data);
         std::env::set_var("APPDATA", &roaming_app_data);
+        std::env::remove_var("CODEX_HOME");
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
         let result = f();
         for (key, value) in previous {
             match value {
@@ -2342,6 +2358,32 @@ mod tests {
                 .expect("Stop hooks should be an array");
             assert_eq!(stop_groups.len(), 2);
             assert!(claude_settings_contains_managed_hook(&parsed));
+        });
+    }
+
+    #[test]
+    fn cli_config_paths_follow_codex_home_and_claude_config_dir() {
+        with_temp_app_data_env(|| {
+            let home = runtime_env::home_dir().expect("temp home should resolve");
+            assert_eq!(
+                codex_config_path().expect("Codex config path should resolve"),
+                home.join(".codex").join("config.toml")
+            );
+            assert_eq!(
+                claude_settings_path().expect("Claude settings path should resolve"),
+                home.join(".claude").join("settings.json")
+            );
+
+            std::env::set_var("CODEX_HOME", home.join("config").join("codex"));
+            std::env::set_var("CLAUDE_CONFIG_DIR", home.join("config").join("claude"));
+            assert_eq!(
+                codex_config_path().expect("Codex config path should resolve"),
+                home.join("config").join("codex").join("config.toml")
+            );
+            assert_eq!(
+                claude_settings_path().expect("Claude settings path should resolve"),
+                home.join("config").join("claude").join("settings.json")
+            );
         });
     }
 

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Panes
+Comment=Local-first cockpit for AI-assisted coding
+Exec=Panes
+Icon=Panes
+Terminal=false
+NoDisplay=true
