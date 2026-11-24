@@ -63,7 +63,7 @@
     "micromark-extension-gfm": "^3.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-i18next": "^16.2.4",
+    "react-i18next": "^16.6.5",
     "react-resizable-panels": "^2.1.4",
     "zustand": "^5.0.0"
   },
