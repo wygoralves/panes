@@ -358,9 +358,23 @@ pub fn inspect_worktree(
     let mut tips = Vec::new();
 
     if Path::new(worktree_path).is_dir() {
+        // Checking a submodule's contents runs `git status` inside it, under
+        // the submodule's own config, so status only compares its checked-out
+        // commit. Work inside a submodule then goes unseen, so a worktree with
+        // one checked out is never reported as safe to remove.
+        anyhow::ensure!(
+            !has_populated_submodule(worktree_path)?,
+            "the worktree has checked-out submodules whose work Panes does not inspect"
+        );
         let status = run_git_read_files(
             worktree_path,
-            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            &[
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--ignore-submodules=dirty",
+            ],
         )
         .context("failed to read worktree status")?;
         let (changed, untracked) = count_porcelain_entries(&status);
@@ -416,6 +430,29 @@ pub fn inspect_worktree(
         .context("failed to hash worktree fingerprint")?
         .to_string();
     Ok(inspection)
+}
+
+/// Whether the worktree has a submodule checked out, judged the way `git
+/// worktree remove` does before it refuses one: the worktree's git dir holds
+/// submodule repositories, or a submodule in its index has a `.git` on disk.
+/// Reads only the index and the filesystem, so no repo command runs.
+fn has_populated_submodule(worktree_path: &str) -> anyhow::Result<bool> {
+    let repo = git2::Repository::open(worktree_path).context("failed to open worktree")?;
+    if repo.path().join("modules").is_dir() {
+        return Ok(true);
+    }
+    let index = repo.index().context("failed to read worktree index")?;
+    const GITLINK_MODE: u32 = 0o160000;
+    for entry in index.iter().filter(|entry| entry.mode == GITLINK_MODE) {
+        // A path that is not UTF-8 cannot be checked, so it counts.
+        let Ok(path) = std::str::from_utf8(&entry.path) else {
+            return Ok(true);
+        };
+        if std::fs::symlink_metadata(Path::new(worktree_path).join(path).join(".git")).is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Commits reachable from the worktree's HEAD but from no ref and no other
@@ -974,6 +1011,75 @@ mod tests {
             .expect("inspection must not wait for a FIFO writer")
             .expect("inspect");
         assert_eq!(counts(&inspection), (0, 1, 0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspect_worktree_refuses_a_populated_submodule_without_running_its_config() {
+        let repo = TempRepo::init();
+        let source = repo.path.join(".git/sub-source");
+        fs::create_dir_all(&source).expect("create submodule source");
+        fs::write(source.join(".gitattributes"), "*.txt filter=x\n").expect("attributes");
+        fs::write(source.join("a.txt"), "a\n").expect("write file");
+        let source_str = source.to_str().expect("utf-8 source path");
+        run_git(source_str, &["init", "-q", "--initial-branch=main"]).expect("init source");
+        run_git(source_str, &["add", "-A"]).expect("add source");
+        run_git(
+            source_str,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "-m",
+                "sub",
+            ],
+        )
+        .expect("commit source");
+        run_git(
+            repo.path_str(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                source_str,
+                "sub",
+            ],
+        )
+        .expect("add submodule");
+        run_git(repo.path_str(), &["commit", "-q", "-m", "add submodule"]).expect("commit");
+
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        let fresh = inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect("an unpopulated submodule leaves the worktree inspectable");
+        assert_eq!(counts(&fresh), (0, 0, 0));
+
+        run_git(
+            &worktree_path,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+                "-q",
+            ],
+        )
+        .expect("populate submodule");
+        let sub = Path::new(&worktree_path).join("sub");
+        let marker = repo.path.join(".git/clean-ran");
+        let clean = format!("touch {}; cat", marker.display());
+        run_git(sub.to_str().unwrap(), &["config", "filter.x.clean", &clean])
+            .expect("set submodule filter");
+        fs::write(sub.join("a.txt"), "b\n").expect("edit submodule");
+
+        inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect_err("a populated submodule's work cannot be checked, so it is not safe");
+        assert!(!marker.exists(), "the submodule's clean filter ran");
     }
 
     #[test]
