@@ -26,8 +26,6 @@ use crate::models::{
     TerminalOutputThrottleSnapshotDto, TerminalRendererDiagnosticsDto, TerminalReplayChunkDto,
     TerminalResizeSnapshotDto, TerminalResumeSessionDto, TerminalSessionDto,
 };
-#[cfg(target_os = "windows")]
-use crate::process_utils;
 use crate::runtime_env;
 use crate::state::AppState;
 use crate::terminal_notifications::{TerminalNotificationManager, TerminalNotificationSessionEnv};
@@ -40,6 +38,7 @@ const TERMINAL_REPLAY_MAX_BYTES: usize = 4 * 1024 * 1024;
 const TERMINAL_COMPLETED_REPLAY_GRACE_MS: u64 = 60_000;
 const TERMINAL_COMPLETED_REPLAY_MAX_SESSIONS: usize = 32;
 const TERMINAL_COMPLETED_REPLAY_MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+const TERMINAL_FOREGROUND_PROBE_INTERVAL: Duration = Duration::from_millis(1500);
 
 #[derive(Default)]
 pub struct TerminalManager {
@@ -57,8 +56,10 @@ struct TerminalSessionHandle {
     // writer, master, and child each get their own lock: a write_all blocked on
     // a full PTY buffer must not wedge resize/kill/shutdown, and kill delivery
     // goes through the cloned killer so it never waits behind child.wait().
+    // The master is taken out (see release_pty) once the shell is gone: on
+    // Windows dropping it is what closes the pseudoconsole.
     writer: Mutex<Box<dyn Write + Send>>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     child: Mutex<Box<dyn Child + Send>>,
     child_killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
 }
@@ -171,6 +172,20 @@ impl SharedTerminalOutput {
         drop(state);
         self.ready.notify_one();
         (trimmed, total_bytes)
+    }
+
+    /// Tells the emitter no more output is coming. `done` is set under the
+    /// buffer lock because the emitter checks it and then waits on `ready`
+    /// while holding that lock; a store and notify outside the lock can land
+    /// between the two and leave the emitter asleep, so the reader never joins it.
+    fn finish(&self) {
+        let state = self
+            .buffer
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        self.done.store(true, Ordering::Relaxed);
+        drop(state);
+        self.ready.notify_one();
     }
 }
 
@@ -424,6 +439,8 @@ impl TerminalManager {
             Arc::clone(&spawned.session),
             spawned.reader,
         );
+        #[cfg(target_os = "windows")]
+        spawn_conpty_exit_waiter(&spawned.session);
 
         Ok(created)
     }
@@ -645,18 +662,12 @@ impl TerminalManager {
             let workspace_for_emitter = workspace_id.clone();
             let session_for_emitter = session_id.clone();
             let session_handle_for_emitter = Arc::clone(&session);
-            let emitter_shell_pid = session.shell_pid;
             let emitter = thread::spawn(move || {
                 // 60Hz is enough for TUIs while keeping IPC overhead bounded.
                 let min_emit_interval = Duration::from_millis(TERMINAL_OUTPUT_MIN_EMIT_INTERVAL_MS);
                 let mut last_emit_at = Instant::now()
                     .checked_sub(min_emit_interval)
                     .unwrap_or_else(Instant::now);
-
-                // Foreground process detection state — active when the PTY exposes a shell PID.
-                let fg_check_interval = Duration::from_millis(1500);
-                let mut last_fg_check_at: Option<Instant> = None;
-                let mut last_fg_process: Option<(u32, String)> = None;
 
                 loop {
                     let mut guard = shared_for_emitter
@@ -734,27 +745,39 @@ impl TerminalManager {
                             .store(now_ms as u64, Ordering::Relaxed);
                     }
                     last_emit_at = Instant::now();
-
-                    // Check foreground process reactively after output, debounced to 1.5s.
-                    if let Some(shell_pid) = emitter_shell_pid {
-                        let should_check = last_fg_check_at
-                            .map(|t| t.elapsed() >= fg_check_interval)
-                            .unwrap_or(true);
-                        if should_check {
-                            let current = detect_foreground_process(shell_pid);
-                            if current != last_fg_process {
-                                emit_foreground_changed(
-                                    &app_for_emitter,
-                                    &workspace_for_emitter,
-                                    &session_for_emitter,
-                                    current.clone(),
-                                );
-                                last_fg_process = current;
-                            }
-                            last_fg_check_at = Some(Instant::now());
-                        }
-                    }
                 }
+            });
+
+            // Foreground detection runs a subprocess (pgrep/ps) or walks the
+            // process table, so it lives on its own thread: the emitter above
+            // must never wait on it, or typed echo and TUI redraws stall.
+            let foreground_probe = session.shell_pid.map(|shell_pid| {
+                let shared_for_probe = Arc::clone(&shared);
+                let session_handle_for_probe = Arc::clone(&session);
+                let app_for_probe = app.clone();
+                let workspace_for_probe = workspace_id.clone();
+                let session_for_probe = session_id.clone();
+                thread::spawn(move || {
+                    run_foreground_probe_loop(
+                        &shared_for_probe.done,
+                        TERMINAL_FOREGROUND_PROBE_INTERVAL,
+                        || {
+                            session_handle_for_probe
+                                .io_counters
+                                .stdout_emits
+                                .load(Ordering::Relaxed)
+                        },
+                        || detect_foreground_process(shell_pid),
+                        |current| {
+                            emit_foreground_changed(
+                                &app_for_probe,
+                                &workspace_for_probe,
+                                &session_for_probe,
+                                current,
+                            )
+                        },
+                    );
+                })
             });
 
             let mut buf = [0_u8; 64 * 1024];
@@ -891,9 +914,12 @@ impl TerminalManager {
                 }
             }
 
-            shared.done.store(true, Ordering::Relaxed);
-            shared.ready.notify_one();
+            shared.finish();
             let _ = emitter.join();
+            if let Some(probe) = foreground_probe {
+                probe.thread().unpark();
+                let _ = probe.join();
+            }
 
             let manager_for_finalize = Arc::clone(&manager);
             let app_for_finalize = app.clone();
@@ -941,6 +967,46 @@ impl TerminalManager {
         tokio::time::sleep(Duration::from_millis(TERMINAL_COMPLETED_REPLAY_GRACE_MS)).await;
         self.remove_completed_replay(&workspace_id, &event_session_id)
             .await;
+    }
+}
+
+/// Polls the terminal's foreground process every `interval` until `done` is set,
+/// probing only when `output_marker` moved since the last probe (no output means
+/// nothing new to label) and reporting only changes. Wake the thread with
+/// `Thread::unpark` after setting `done` so it exits without waiting out the interval.
+fn run_foreground_probe_loop(
+    done: &AtomicBool,
+    interval: Duration,
+    output_marker: impl Fn() -> u64,
+    mut detect: impl FnMut() -> Option<(u32, String)>,
+    mut on_change: impl FnMut(Option<(u32, String)>),
+) {
+    let mut probed_marker = 0_u64;
+    let mut last_foreground: Option<(u32, String)> = None;
+    loop {
+        let deadline = Instant::now() + interval;
+        loop {
+            if done.load(Ordering::Relaxed) {
+                return;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            thread::park_timeout(deadline - now);
+        }
+
+        let marker = output_marker();
+        if marker == probed_marker {
+            continue;
+        }
+        probed_marker = marker;
+
+        let current = detect();
+        if current != last_foreground {
+            on_change(current.clone());
+            last_foreground = current;
+        }
     }
 }
 
@@ -1240,14 +1306,18 @@ impl TerminalSessionHandle {
             .master
             .lock()
             .map_err(|_| anyhow::anyhow!("terminal master lock poisoned"))?;
-        master
-            .resize(PtySize {
-                rows: rows.max(1),
-                cols: cols.max(1),
-                pixel_width,
-                pixel_height,
-            })
-            .context("failed resizing terminal pty")?;
+        let Some(pty) = master.as_ref() else {
+            // The pseudoconsole was already released; the pane may still send
+            // resizes for a dead session.
+            return Ok(());
+        };
+        pty.resize(PtySize {
+            rows: rows.max(1),
+            cols: cols.max(1),
+            pixel_width,
+            pixel_height,
+        })
+        .context("failed resizing terminal pty")?;
         drop(master);
 
         match self
@@ -1331,8 +1401,80 @@ impl TerminalSessionHandle {
                 log::warn!("unable to stop terminal session: {error}");
             }
         }
-        self.wait_for_exit()
+        let exit = self.wait_for_exit();
+        // Close the pseudoconsole too, so the reader and emitter threads see
+        // EOF and conhost and console-attached grandchildren go away.
+        #[cfg(target_os = "windows")]
+        self.release_pty();
+        exit
     }
+
+    /// Drops the PTY master. On Windows that runs ClosePseudoConsole: conhost
+    /// exits, attached clients get CTRL_CLOSE_EVENT and the output pipe breaks,
+    /// so the reader thread reaches EOF. ClosePseudoConsole can block until
+    /// pending output is drained, so never call this from the reader thread,
+    /// and the drop happens after the lock is released.
+    #[cfg(target_os = "windows")]
+    fn release_pty(&self) {
+        let master = {
+            let mut guard = self
+                .master
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            guard.take()
+        };
+        drop(master);
+    }
+}
+
+/// ConPTY keeps the output pipe open after the shell exits until the
+/// pseudoconsole is closed, and the session handle that owns it stays alive
+/// as long as the reader waits for EOF. Wait for the shell process on a
+/// separate thread and release the pseudoconsole when it exits, so typing
+/// `exit` ends the session like on other platforms.
+#[cfg(target_os = "windows")]
+fn spawn_conpty_exit_waiter(session: &Arc<TerminalSessionHandle>) {
+    use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
+    };
+
+    let Some(shell_pid) = session.shell_pid else {
+        return;
+    };
+    // The child handle portable-pty keeps open stops this PID from being
+    // reused, so opening it by PID reaches the shell itself.
+    // SAFETY: OpenProcess takes no pointers; a null result is handled below.
+    let process: HANDLE = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, FALSE, shell_pid) };
+    if process.is_null() {
+        log::warn!(
+            "unable to watch terminal shell for exit: session_id={}, pid={}, error={}",
+            session.meta.id,
+            shell_pid,
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+    // HANDLE is a raw pointer and not Send; carry it across as an integer.
+    let process = process as usize;
+    let session = Arc::downgrade(session);
+    thread::spawn(move || {
+        let process = process as HANDLE;
+        // SAFETY: `process` is a handle this thread owns; it is closed once.
+        let exited = unsafe {
+            let wait = WaitForSingleObject(process, INFINITE);
+            CloseHandle(process);
+            wait == WAIT_OBJECT_0
+        };
+        // A failed wait says nothing about the shell; closing the console
+        // then would end a live terminal.
+        if !exited {
+            return;
+        }
+        if let Some(session) = session.upgrade() {
+            session.release_pty();
+        }
+    });
 }
 
 fn prune_completed_replays(replays: &mut HashMap<String, HashMap<String, TerminalReplaySnapshot>>) {
@@ -1453,7 +1595,7 @@ fn spawn_session(
         replay_seq: AtomicU64::new(0),
         replay_state: Mutex::new(TerminalReplayState::default()),
         writer: Mutex::new(writer),
-        master: Mutex::new(pair.master),
+        master: Mutex::new(Some(pair.master)),
         child: Mutex::new(child),
         child_killer: Mutex::new(child_killer),
     });
@@ -1993,57 +2135,126 @@ fn extract_tool_name_from_args(pid: u32) -> Option<String> {
 }
 
 #[cfg(any(target_os = "windows", test))]
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "PascalCase")]
+#[derive(Debug, Clone)]
 struct WindowsChildProcess {
     process_id: u32,
     name: Option<String>,
     command_line: Option<String>,
 }
 
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(untagged)]
-enum WindowsChildProcessResponse {
-    One(WindowsChildProcess),
-    Many(Vec<WindowsChildProcess>),
-}
-
-#[cfg(target_os = "windows")]
-impl WindowsChildProcessResponse {
-    fn into_vec(self) -> Vec<WindowsChildProcess> {
-        match self {
-            Self::One(process) => vec![process],
-            Self::Many(processes) => processes,
-        }
-    }
-}
-
+/// Native replacement for a `Get-CimInstance Win32_Process` query: one
+/// Toolhelp snapshot of the process table, with command lines read only for
+/// shells and interpreters, the only names whose command line changes the label.
 #[cfg(target_os = "windows")]
 fn detect_foreground_process(shell_pid: u32) -> Option<(u32, String)> {
-    let script = format!(
-        "$children = @(Get-CimInstance Win32_Process -Filter 'ParentProcessId = {shell_pid}' | Sort-Object ProcessId | Select-Object ProcessId, Name, CommandLine); if ($children.Count -eq 0) {{ exit 1 }}; $children | ConvertTo-Json -Compress"
-    );
-    let mut command = std::process::Command::new("powershell.exe");
-    process_utils::configure_std_command(&mut command);
-    let output = command
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            &script,
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
+    let mut processes = windows_child_processes(shell_pid);
+    if processes.is_empty() {
         return None;
     }
-
-    let processes = serde_json::from_slice::<WindowsChildProcessResponse>(&output.stdout)
-        .ok()?
-        .into_vec();
+    for process in &mut processes {
+        let wraps_another_tool = process
+            .name
+            .as_deref()
+            .and_then(normalize_process_token)
+            .is_some_and(|name| is_windows_shell_or_interpreter(&name));
+        if wraps_another_tool {
+            process.command_line = windows_process_command_line(process.process_id);
+        }
+    }
     select_windows_foreground_process(&processes)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_child_processes(parent_pid: u32) -> Vec<WindowsChildProcess> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let mut children = Vec::new();
+    // SAFETY: the snapshot handle is checked before use and closed once; the
+    // entry is a properly sized PROCESSENTRY32W owned by this frame.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return children;
+        }
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut has_entry = Process32FirstW(snapshot, &mut entry) != 0;
+        while has_entry {
+            if entry.th32ParentProcessID == parent_pid && entry.th32ProcessID != 0 {
+                children.push(WindowsChildProcess {
+                    process_id: entry.th32ProcessID,
+                    name: Some(utf16_until_nul(&entry.szExeFile)),
+                    command_line: None,
+                });
+            }
+            has_entry = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+    }
+    children
+}
+
+#[cfg(target_os = "windows")]
+fn windows_process_command_line(pid: u32) -> Option<String> {
+    use windows_sys::Wdk::System::Threading::{
+        NtQueryInformationProcess, ProcessCommandLineInformation,
+    };
+    use windows_sys::Win32::Foundation::{CloseHandle, FALSE, UNICODE_STRING};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    // SAFETY: the process handle is checked and closed once. The buffer is
+    // u64-backed so the UNICODE_STRING header at its start is aligned, and the
+    // kernel points `Buffer` into that same allocation, which outlives the read.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if process.is_null() {
+            return None;
+        }
+        let mut needed: u32 = 0;
+        NtQueryInformationProcess(
+            process,
+            ProcessCommandLineInformation,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+        );
+        let mut command_line = None;
+        if needed as usize >= std::mem::size_of::<UNICODE_STRING>() {
+            let mut buffer = vec![0_u64; needed as usize / 8 + 1];
+            let status = NtQueryInformationProcess(
+                process,
+                ProcessCommandLineInformation,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+                &mut needed,
+            );
+            if status >= 0 {
+                let header = &*(buffer.as_ptr() as *const UNICODE_STRING);
+                if !header.Buffer.is_null() && header.Length > 0 {
+                    let chars =
+                        std::slice::from_raw_parts(header.Buffer, header.Length as usize / 2);
+                    command_line = Some(String::from_utf16_lossy(chars));
+                }
+            }
+        }
+        CloseHandle(process);
+        command_line
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn utf16_until_nul(value: &[u16]) -> String {
+    let len = value
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(value.len());
+    String::from_utf16_lossy(&value[..len])
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -2644,6 +2855,194 @@ mod tests {
                 .map(normalize_path)
                 .as_deref(),
             Some("C:/Users/panes/AppData/Local")
+        );
+    }
+
+    fn wait_until(condition: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        condition()
+    }
+
+    #[test]
+    fn foreground_probe_runs_only_after_output_and_reports_changes() {
+        let done = Arc::new(AtomicBool::new(false));
+        let marker = Arc::new(AtomicU64::new(0));
+        let detections = Arc::new(Mutex::new(VecDeque::from([
+            Some((7, "codex".to_string())),
+            Some((7, "codex".to_string())),
+            None,
+        ])));
+        let detect_calls = Arc::new(AtomicU64::new(0));
+        let changes = Arc::new(Mutex::new(Vec::new()));
+
+        let probe = {
+            let done = Arc::clone(&done);
+            let marker = Arc::clone(&marker);
+            let detections = Arc::clone(&detections);
+            let detect_calls = Arc::clone(&detect_calls);
+            let changes = Arc::clone(&changes);
+            thread::spawn(move || {
+                run_foreground_probe_loop(
+                    &done,
+                    Duration::from_millis(5),
+                    || marker.load(Ordering::SeqCst),
+                    || {
+                        detect_calls.fetch_add(1, Ordering::SeqCst);
+                        detections.lock().unwrap().pop_front().flatten()
+                    },
+                    |current| changes.lock().unwrap().push(current),
+                );
+            })
+        };
+
+        // No output yet: several intervals pass without a probe.
+        thread::sleep(Duration::from_millis(40));
+        assert_eq!(detect_calls.load(Ordering::SeqCst), 0);
+
+        for (step, expected_calls) in [(1, 1), (2, 2), (3, 3)] {
+            marker.store(step, Ordering::SeqCst);
+            assert!(wait_until(
+                || detect_calls.load(Ordering::SeqCst) == expected_calls
+            ));
+        }
+        // One probe per output burst, not one per interval.
+        thread::sleep(Duration::from_millis(40));
+        assert_eq!(detect_calls.load(Ordering::SeqCst), 3);
+
+        done.store(true, Ordering::SeqCst);
+        probe.thread().unpark();
+        probe.join().unwrap();
+
+        assert_eq!(
+            *changes.lock().unwrap(),
+            vec![Some((7, "codex".to_string())), None]
+        );
+    }
+
+    #[test]
+    fn foreground_probe_exits_promptly_when_woken_after_done() {
+        let done = Arc::new(AtomicBool::new(false));
+        let probe = {
+            let done = Arc::clone(&done);
+            thread::spawn(move || {
+                run_foreground_probe_loop(&done, Duration::from_secs(3600), || 1, || None, |_| {});
+            })
+        };
+
+        thread::sleep(Duration::from_millis(20));
+        let started = Instant::now();
+        done.store(true, Ordering::SeqCst);
+        probe.thread().unpark();
+        probe.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn utf16_until_nul_stops_at_the_first_nul() {
+        let mut exe_file = [0_u16; 260];
+        for (slot, unit) in exe_file.iter_mut().zip("node.exe".encode_utf16()) {
+            *slot = unit;
+        }
+        assert_eq!(utf16_until_nul(&exe_file), "node.exe");
+        assert_eq!(utf16_until_nul(&[0x63, 0x6d, 0x64]), "cmd");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_toolhelp_lists_child_processes_with_command_lines() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "ping -n 5 127.0.0.1 >NUL"])
+            .spawn()
+            .expect("spawn cmd");
+        let child_pid = child.id();
+
+        let children = windows_child_processes(std::process::id());
+        let command_line = windows_process_command_line(child_pid);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let found = children
+            .iter()
+            .find(|process| process.process_id == child_pid)
+            .expect("toolhelp snapshot lists the child");
+        assert_eq!(
+            found
+                .name
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("cmd.exe")
+        );
+        assert!(command_line
+            .as_deref()
+            .is_some_and(|line| line.contains("127.0.0.1")));
+    }
+
+    #[cfg(target_os = "windows")]
+    fn drain_reader_until_eof(mut reader: Box<dyn Read + Send>) -> std::sync::mpsc::Receiver<()> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = [0_u8; 4096];
+            while let Ok(read) = reader.read(&mut buf) {
+                if read == 0 {
+                    break;
+                }
+            }
+            let _ = sender.send(());
+        });
+        receiver
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_shell_exit_closes_the_pseudoconsole() {
+        let spawned = spawn_session(
+            "exit-test".to_string(),
+            "workspace".to_string(),
+            std::env::temp_dir().display().to_string(),
+            80,
+            24,
+            None,
+        )
+        .expect("spawn terminal session");
+        spawn_conpty_exit_waiter(&spawned.session);
+        let eof = drain_reader_until_eof(spawned.reader);
+
+        thread::sleep(Duration::from_millis(500));
+        spawned.session.write_raw(b"exit\r\n").expect("type exit");
+
+        assert!(
+            eof.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "the reader never reached EOF after the shell exited"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_kill_and_wait_closes_the_pseudoconsole() {
+        let spawned = spawn_session(
+            "kill-test".to_string(),
+            "workspace".to_string(),
+            std::env::temp_dir().display().to_string(),
+            80,
+            24,
+            None,
+        )
+        .expect("spawn terminal session");
+        let eof = drain_reader_until_eof(spawned.reader);
+
+        thread::sleep(Duration::from_millis(500));
+        spawned.session.kill_and_wait();
+
+        assert!(
+            eof.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "the reader never reached EOF after the session was closed"
         );
     }
 }
