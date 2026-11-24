@@ -9,6 +9,9 @@ use crate::models::{FileTreeEntryDto, ReadFileResultDto};
 
 const READ_FILE_MAX_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 const BINARY_DETECT_SCAN_SIZE: usize = 8192;
+/// Returned by `write_file` when the file no longer holds the content the
+/// caller checked; the frontend matches on this text to raise its conflict banner.
+pub const FILE_CHANGED_ON_DISK: &str = "file changed on disk after the save checked it";
 
 pub fn validate_repo_relative_path(path: &str) -> anyhow::Result<&Path> {
     let mut has_component = false;
@@ -67,7 +70,7 @@ pub fn list_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<Vec<FileTreeE
 
         let relative = path
             .strip_prefix(&repo_root)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| forward_slash_path(&p.to_string_lossy(), std::path::MAIN_SEPARATOR))
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
         entries.push(FileTreeEntryDto {
@@ -83,6 +86,16 @@ pub fn list_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<Vec<FileTreeE
     });
 
     Ok(entries)
+}
+
+/// Repo-relative paths cross IPC with `/` separators on every platform; the
+/// explorers and git views split on `/`.
+fn forward_slash_path(rendered: &str, separator: char) -> String {
+    if separator == '/' {
+        rendered.to_string()
+    } else {
+        rendered.replace(separator, "/")
+    }
 }
 
 pub fn read_file(repo_path: &str, file_path: &str) -> anyhow::Result<ReadFileResultDto> {
@@ -105,15 +118,21 @@ pub fn read_file(repo_path: &str, file_path: &str) -> anyhow::Result<ReadFileRes
     );
     let raw = fs::read(&abs_path).context("failed to read file")?;
     let is_binary = raw.iter().take(BINARY_DETECT_SCAN_SIZE).any(|&b| b == 0);
-    let content = if is_binary {
-        String::new()
+    let (content, is_lossy_decode) = if is_binary {
+        (String::new(), false)
     } else {
-        String::from_utf8_lossy(&raw).to_string()
+        match String::from_utf8(raw) {
+            Ok(text) => (text, false),
+            // Keep the replacement-character text for display only; the
+            // frontend opens these files read-only and write_file refuses them.
+            Err(error) => (String::from_utf8_lossy(error.as_bytes()).to_string(), true),
+        }
     };
     Ok(ReadFileResultDto {
         content,
         size_bytes,
         is_binary,
+        is_lossy_decode,
     })
 }
 
@@ -148,8 +167,17 @@ pub fn create_file(repo_path: &str, file_path: &str) -> anyhow::Result<()> {
         fs::create_dir_all(parent).context("failed to create parent directories")?;
     }
 
-    anyhow::ensure!(!target.exists(), "file already exists");
-    fs::write(&target, "").context("failed to create file")?;
+    // symlink_metadata also sees dangling links, which exists() reports as
+    // missing; create_new refuses to follow a link that appears in between.
+    anyhow::ensure!(
+        fs::symlink_metadata(&target).is_err(),
+        "file already exists"
+    );
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .context("failed to create file")?;
     Ok(())
 }
 
@@ -266,11 +294,28 @@ pub fn delete_path(repo_path: &str, file_path: &str) -> anyhow::Result<()> {
     delete_existing_entry(&target)
 }
 
-pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Result<()> {
+/// With `expected_content`, the write happens only if the file on disk still
+/// holds exactly those bytes, checked in the same call as the write.
+pub fn write_file(
+    repo_path: &str,
+    file_path: &str,
+    content: &str,
+    expected_content: Option<&str>,
+) -> anyhow::Result<()> {
     let repo_root = PathBuf::from(repo_path)
         .canonicalize()
         .context("failed to canonicalize repo path")?;
     let target = repo_root.join(file_path);
+
+    // A symlink whose target is missing would be followed by fs::write and
+    // create a file wherever it points, so it must resolve inside the repo.
+    let is_symlink = fs::symlink_metadata(&target)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false);
+    anyhow::ensure!(
+        !is_symlink || target.exists(),
+        "cannot write through a broken symlink"
+    );
 
     // If the file already exists, canonicalize and verify the full path
     if target.exists() {
@@ -281,7 +326,22 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
             canonical.starts_with(&repo_root),
             "path traversal not allowed"
         );
+        // The editor decodes non-UTF-8 files lossily for display; writing that
+        // text back would replace every invalid byte with U+FFFD.
+        if canonical.is_file() {
+            let existing = fs::read(&canonical).context("failed to read existing file")?;
+            anyhow::ensure!(
+                std::str::from_utf8(&existing).is_ok(),
+                "refusing to overwrite a file that is not valid UTF-8"
+            );
+            if let Some(expected) = expected_content {
+                anyhow::ensure!(existing == expected.as_bytes(), FILE_CHANGED_ON_DISK);
+            }
+        } else {
+            anyhow::ensure!(expected_content.is_none(), FILE_CHANGED_ON_DISK);
+        }
     } else {
+        anyhow::ensure!(expected_content.is_none(), FILE_CHANGED_ON_DISK);
         // New file — verify the parent directory is inside the repo
         let parent = target.parent().context("invalid file path")?;
         let parent_canonical = parent
@@ -301,7 +361,10 @@ pub fn write_file(repo_path: &str, file_path: &str, content: &str) -> anyhow::Re
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{create_dir, create_file, delete_path, rename_path};
+    use super::{
+        create_dir, create_file, delete_path, forward_slash_path, list_dir, read_file, rename_path,
+        write_file, FILE_CHANGED_ON_DISK,
+    };
     use uuid::Uuid;
 
     #[cfg(unix)]
@@ -313,6 +376,27 @@ mod tests {
         let result = f(root.clone());
         let _ = fs::remove_dir_all(&root);
         result
+    }
+
+    #[test]
+    fn list_dir_reports_forward_slash_relative_paths() {
+        assert_eq!(
+            forward_slash_path(r"src\components\Button.tsx", '\\'),
+            "src/components/Button.tsx"
+        );
+        assert_eq!(forward_slash_path(r"a\b.txt", '/'), r"a\b.txt");
+
+        with_temp_repo(|root| {
+            fs::create_dir_all(root.join("src").join("components")).expect("dirs should exist");
+            fs::write(root.join("src").join("components").join("Button.tsx"), "")
+                .expect("file should exist");
+
+            let entries = list_dir(root.to_string_lossy().as_ref(), "src/components")
+                .expect("nested listing should succeed");
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].path, "src/components/Button.tsx");
+        });
     }
 
     #[test]
@@ -435,6 +519,115 @@ mod tests {
 
             assert!(root.join("target.txt").is_file());
             assert!(fs::symlink_metadata(root.join("link.txt")).is_err());
+        });
+    }
+
+    #[test]
+    fn read_file_flags_non_utf8_content_as_lossy() {
+        with_temp_repo(|root| {
+            fs::write(root.join("latin1.txt"), b"caf\xe9\n").expect("file should exist");
+            fs::write(root.join("utf8.txt"), "\u{feff}café\r\n").expect("file should exist");
+
+            let lossy = read_file(root.to_string_lossy().as_ref(), "latin1.txt")
+                .expect("lossy read should succeed");
+            assert!(lossy.is_lossy_decode);
+            assert!(!lossy.is_binary);
+
+            let clean = read_file(root.to_string_lossy().as_ref(), "utf8.txt")
+                .expect("utf-8 read should succeed");
+            assert!(!clean.is_lossy_decode);
+            assert_eq!(clean.content, "\u{feff}café\r\n");
+        });
+    }
+
+    #[test]
+    fn write_file_refuses_to_overwrite_non_utf8_files() {
+        with_temp_repo(|root| {
+            fs::write(root.join("latin1.txt"), b"caf\xe9\n").expect("file should exist");
+
+            let error = write_file(
+                root.to_string_lossy().as_ref(),
+                "latin1.txt",
+                "caf\u{fffd}\n",
+                None,
+            )
+            .expect_err("lossy overwrite should be refused");
+
+            assert!(error.to_string().contains("not valid UTF-8"));
+            assert_eq!(
+                fs::read(root.join("latin1.txt")).expect("file should stay readable"),
+                b"caf\xe9\n"
+            );
+
+            fs::write(root.join("utf8.txt"), "old\n").expect("file should exist");
+            write_file(root.to_string_lossy().as_ref(), "utf8.txt", "new\n", None)
+                .expect("utf-8 overwrite should succeed");
+            assert_eq!(
+                fs::read_to_string(root.join("utf8.txt")).expect("file should be readable"),
+                "new\n"
+            );
+        });
+    }
+
+    #[test]
+    fn write_file_refuses_when_disk_no_longer_holds_the_checked_content() {
+        with_temp_repo(|root| {
+            let repo = root.to_string_lossy();
+            fs::write(root.join("notes.md"), "agent edit\n").expect("file should exist");
+
+            let error = write_file(repo.as_ref(), "notes.md", "mine\n", Some("checked\n"))
+                .expect_err("a changed file should not be overwritten");
+            assert_eq!(error.to_string(), FILE_CHANGED_ON_DISK);
+            assert_eq!(
+                fs::read_to_string(root.join("notes.md")).expect("file should be readable"),
+                "agent edit\n"
+            );
+
+            let error = write_file(repo.as_ref(), "gone.md", "mine\n", Some("checked\n"))
+                .expect_err("a deleted file should not be recreated");
+            assert_eq!(error.to_string(), FILE_CHANGED_ON_DISK);
+            assert!(!root.join("gone.md").exists());
+
+            write_file(repo.as_ref(), "notes.md", "mine\n", Some("agent edit\n"))
+                .expect("an unchanged file should be written");
+            assert_eq!(
+                fs::read_to_string(root.join("notes.md")).expect("file should be readable"),
+                "mine\n"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_file_refuses_dangling_symlink_pointing_outside_repo() {
+        with_temp_repo(|sandbox| {
+            let repo = sandbox.join("repo");
+            let outside = sandbox.join("outside");
+            fs::create_dir_all(&repo).expect("repo should exist");
+            fs::create_dir_all(&outside).expect("outside should exist");
+            symlink(outside.join("pwned.txt"), repo.join("notes.md")).expect("symlink");
+
+            write_file(repo.to_string_lossy().as_ref(), "notes.md", "hello", None)
+                .expect_err("write through a dangling symlink should be refused");
+
+            assert!(!outside.join("pwned.txt").exists());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_file_refuses_dangling_symlink_pointing_outside_repo() {
+        with_temp_repo(|sandbox| {
+            let repo = sandbox.join("repo");
+            let outside = sandbox.join("outside");
+            fs::create_dir_all(&repo).expect("repo should exist");
+            fs::create_dir_all(&outside).expect("outside should exist");
+            symlink(outside.join("pwned.txt"), repo.join("new.txt")).expect("symlink");
+
+            create_file(repo.to_string_lossy().as_ref(), "new.txt")
+                .expect_err("create over a dangling symlink should be refused");
+
+            assert!(!outside.join("pwned.txt").exists());
         });
     }
 }

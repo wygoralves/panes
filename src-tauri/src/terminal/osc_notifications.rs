@@ -230,10 +230,18 @@ impl TerminalOscNotificationParser {
 }
 
 fn parse_osc_9(rest: &str) -> Option<TerminalOscNotification> {
-    if rest.starts_with("4;") {
+    if is_conemu_osc_9_subcommand(rest) {
         return None;
     }
     notification_from_parts(String::new(), rest.to_string())
+}
+
+/// ConEmu and Windows Terminal reuse OSC 9 for numbered subcommands 1 to 12 (`9;4`
+/// progress, `9;9` working directory, `9;12` prompt start, ...). Those are the number
+/// followed by `;` or the end of the sequence, never a notification body.
+fn is_conemu_osc_9_subcommand(rest: &str) -> bool {
+    let (command, _) = rest.split_once(';').unwrap_or((rest, ""));
+    command.bytes().all(|byte| byte.is_ascii_digit()) && matches!(command.parse(), Ok(1_u8..=12))
 }
 
 fn parse_osc_777(rest: &str) -> Option<TerminalOscNotification> {
@@ -326,6 +334,36 @@ mod tests {
 
         assert_eq!(result.passthrough, input);
         assert!(result.notifications.is_empty());
+    }
+
+    #[test]
+    fn leaves_conemu_osc_9_subcommands_alone() {
+        for input in [
+            b"\x1b]9;9;\"C:\\Users\\panes\"\x1b\\".as_slice(),
+            b"\x1b]9;9;C:\\x\x07".as_slice(),
+            b"\x1b]9;12\x07".as_slice(),
+        ] {
+            let result = parse_all(input);
+
+            assert_eq!(result.passthrough, input);
+            assert!(result.notifications.is_empty());
+        }
+    }
+
+    #[test]
+    fn parses_osc_9_notifications_that_start_with_a_number() {
+        for body in ["3 tests failed", "404", "404; retry failed"] {
+            let result = parse_all(format!("\x1b]9;{body}\x07").as_bytes());
+
+            assert_eq!(
+                result.notifications,
+                vec![TerminalOscNotification {
+                    title: "Terminal".to_string(),
+                    body: body.to_string(),
+                    source: "terminal-osc".to_string(),
+                }]
+            );
+        }
     }
 
     #[test]

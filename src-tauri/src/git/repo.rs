@@ -14,10 +14,14 @@ use crate::models::{
     FileTreeEntryDto, FileTreePageDto, GitBranchDto, GitBranchPageDto, GitBranchScopeDto,
     GitChangeTypeDto, GitCommitDto, GitCommitPageDto, GitCompareSourceDto, GitDiffPreviewDto,
     GitFileCompareDto, GitFileStatusDto, GitInitRepoStatusDto, GitStashDto, GitStatusDto,
+    TrustLevelDto,
 };
 use crate::path_utils;
 
-use super::cli_fallback::run_git;
+use super::cli_fallback::{
+    hooks_disabled_config, repo_scoped_config_keys, run_git, run_git_network, run_git_read,
+    run_git_read_files, split_config_key, GIT_NETWORK_TIMEOUT,
+};
 
 const FILE_TREE_DEFAULT_PAGE_SIZE: usize = 2000;
 const FILE_TREE_MAX_PAGE_SIZE: usize = 5000;
@@ -29,6 +33,10 @@ const FILE_TREE_EXCLUDED_DIR_NAMES: &[&str] = &[
     ".git",
     ".next",
     ".nuxt",
+    // Panes' own repo-local state, worktrees included. Workspace scans do not
+    // consult git's excludes, so without this every agent worktree would show
+    // up as a second copy of the repository.
+    ".panes",
     ".pnpm-store",
     ".turbo",
     ".yarn",
@@ -134,7 +142,9 @@ pub fn get_git_status(repo_path: &str) -> anyhow::Result<GitStatusDto> {
 }
 
 fn get_git_status_via_cli(repo_path: &str) -> anyhow::Result<GitStatusDto> {
-    let output = run_git(
+    // Checking a submodule's contents runs `git status` inside it, under the
+    // submodule's own config, so only its checked-out commit is compared.
+    let output = run_git_read_files(
         repo_path,
         &[
             "status",
@@ -142,6 +152,7 @@ fn get_git_status_via_cli(repo_path: &str) -> anyhow::Result<GitStatusDto> {
             "-b",
             "-z",
             "--untracked-files=normal",
+            "--ignore-submodules=dirty",
         ],
     )
     .context("failed to read git status via cli")?;
@@ -335,14 +346,24 @@ pub fn get_file_diff(
     file_path: &str,
     staged: bool,
 ) -> anyhow::Result<GitDiffPreviewDto> {
-    let mut args = vec!["diff"];
+    // A repo's config or .gitattributes can name an external diff command or
+    // a textconv filter; the preview never runs either, and never starts a
+    // diff inside a submodule, which would run under the submodule's config.
+    let mut args = vec![
+        "--literal-pathspecs",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--ignore-submodules=dirty",
+        "--submodule=short",
+    ];
     if staged {
         args.push("--staged");
     }
     args.push("--");
     args.push(file_path);
 
-    let raw = run_git(repo_path, &args)?;
+    let raw = run_git_read_files(repo_path, &args)?;
     Ok(build_diff_preview(raw))
 }
 
@@ -384,16 +405,23 @@ pub fn get_git_file_compare(
         None
     };
 
+    // A lossy base only affects the read-only left pane; the working file is
+    // still safe to edit and save as long as its own bytes are valid UTF-8.
+    let (base_content, _) = decode_compare_content(base_bytes.as_deref());
+    let (modified_content, modified_is_lossy_decode) =
+        decode_compare_content(modified_bytes.as_deref());
+
     Ok(GitFileCompareDto {
         source,
-        base_content: decode_compare_content(base_bytes.as_deref()),
-        modified_content: decode_compare_content(modified_bytes.as_deref()),
+        base_content,
+        modified_content,
         base_label,
         modified_label,
         change_type,
         has_staged_changes,
         has_unstaged_changes,
         is_binary,
+        modified_is_lossy_decode,
         is_editable: Some(is_editable),
         fallback_reason,
     })
@@ -404,7 +432,8 @@ pub fn stage_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut args = vec!["add", "--"];
+    // Paths are literal: `app/[id]/page.tsx` must not also match `app/i/...`.
+    let mut args = vec!["--literal-pathspecs", "add", "--"];
     let file_refs: Vec<&str> = files.iter().map(|item| item.as_str()).collect();
     args.extend(file_refs);
     run_git(repo_path, &args)?;
@@ -416,7 +445,7 @@ pub fn unstage_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut args = vec!["restore", "--staged", "--"];
+    let mut args = vec!["--literal-pathspecs", "restore", "--staged", "--"];
     let file_refs: Vec<&str> = files.iter().map(|item| item.as_str()).collect();
     args.extend(file_refs);
     run_git(repo_path, &args)?;
@@ -431,6 +460,7 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
     let repo = Repository::open(repo_path).context("failed to open repository")?;
     let mut tracked = Vec::new();
     let mut untracked = Vec::new();
+    let mut conflicted = 0usize;
 
     for f in files {
         // Porcelain with --untracked-files=normal collapses a fully-untracked
@@ -445,21 +475,30 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
 
         let path = std::path::Path::new(f);
         let status = repo.status_file(path).unwrap_or(Status::empty());
-        if status.contains(Status::WT_NEW) {
+        if status.contains(Status::CONFLICTED) {
+            // `git checkout` refuses an unmerged path and would abort the
+            // whole batch, so Discard All leaves conflicts for the user to
+            // resolve and discards everything else.
+            conflicted += 1;
+        } else if status.contains(Status::WT_NEW) {
             untracked.push(f.as_str());
         } else {
             tracked.push(f.as_str());
         }
     }
 
+    if tracked.is_empty() && untracked.is_empty() && conflicted > 0 {
+        anyhow::bail!("cannot discard a file with merge conflicts; resolve the conflict first");
+    }
+
     if !tracked.is_empty() {
-        let mut args = vec!["checkout", "--"];
+        let mut args = vec!["--literal-pathspecs", "checkout", "--"];
         args.extend(&tracked);
         run_git(repo_path, &args)?;
     }
 
     if !untracked.is_empty() {
-        let mut args = vec!["clean", "-fd", "--"];
+        let mut args = vec!["--literal-pathspecs", "clean", "-fd", "--"];
         args.extend(&untracked);
         run_git(repo_path, &args)?;
     }
@@ -469,7 +508,7 @@ pub fn discard_files(repo_path: &str, files: &[String]) -> anyhow::Result<()> {
 
 pub fn commit(repo_path: &str, message: &str) -> anyhow::Result<String> {
     run_git(repo_path, &["commit", "-m", message])?;
-    let hash = run_git(repo_path, &["rev-parse", "HEAD"])?;
+    let hash = run_git_read(repo_path, &["rev-parse", "HEAD"])?;
     Ok(hash.trim().to_string())
 }
 
@@ -479,13 +518,102 @@ pub fn soft_reset_last_commit(repo_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn fetch_repo(repo_path: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["fetch", "--all", "--prune"]).context("failed to fetch from remotes")?;
+/// Whether a repo config key makes fetch, pull or push run a program: an ssh
+/// or proxy command, an upload or receive pack path, a credential helper, an
+/// askpass or signing program, or an alias git falls back to when a
+/// `<helper>::` url names a remote helper that is not installed.
+fn is_network_command_config_key(key: &str) -> bool {
+    matches!(
+        split_config_key(key),
+        Some(("core", None, "sshcommand" | "gitproxy" | "askpass"))
+            | Some(("remote", Some(_), "uploadpack" | "receivepack"))
+            | Some(("credential", _, "helper"))
+            | Some(("gpg", _, "program"))
+    ) || key
+        .get(..13)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("alias.remote-"))
+}
+
+/// Overrides for every network command on a repo that is not trusted. The
+/// `ext::` transport runs a command named in the url, which a repo's url
+/// rewrite could pick, and a submodule's own config is never checked, so
+/// neither is reached.
+const UNTRUSTED_NETWORK_OVERRIDES: &[&str] = &[
+    "-c",
+    "protocol.ext.allow=never",
+    "-c",
+    "submodule.recurse=false",
+    "-c",
+    "fetch.recurseSubmodules=false",
+    "-c",
+    "push.recurseSubmodules=no",
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NetworkCommand {
+    Fetch,
+    PullOrPush,
+}
+
+/// Checks a repo's own config before a network command and returns the `-c`
+/// overrides to run it with. Trusted repos run as configured. For standard
+/// and restricted repos, a command named in the repo's own config (as
+/// opposed to the user's global config) is refused, and hooks are turned off
+/// for fetch and, in restricted repos, for pull and push too.
+fn network_config_overrides(
+    repo_path: &str,
+    trust: &TrustLevelDto,
+    command: NetworkCommand,
+) -> anyhow::Result<Vec<String>> {
+    if matches!(trust, TrustLevelDto::Trusted) {
+        return Ok(Vec::new());
+    }
+
+    let keys = repo_scoped_config_keys(repo_path, is_network_command_config_key)
+        .context("failed to check the repository git config")?;
+    if !keys.is_empty() {
+        anyhow::bail!(
+            "this repository's own git config sets {}, which can run a program on fetch, pull and push; mark the repository as Trusted to allow it",
+            keys.join(", ")
+        );
+    }
+
+    let mut overrides: Vec<String> = UNTRUSTED_NETWORK_OVERRIDES
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+    if command == NetworkCommand::Fetch || matches!(trust, TrustLevelDto::Restricted) {
+        overrides.extend(["-c".to_string(), hooks_disabled_config()?]);
+    }
+    Ok(overrides)
+}
+
+fn with_overrides<'a>(overrides: &'a [String], args: &[&'a str]) -> Vec<&'a str> {
+    overrides
+        .iter()
+        .map(String::as_str)
+        .chain(args.iter().copied())
+        .collect()
+}
+
+pub fn fetch_repo(repo_path: &str, trust: &TrustLevelDto) -> anyhow::Result<()> {
+    let overrides = network_config_overrides(repo_path, trust, NetworkCommand::Fetch)?;
+    run_git_network(
+        repo_path,
+        &with_overrides(&overrides, &["fetch", "--all", "--prune"]),
+        GIT_NETWORK_TIMEOUT,
+    )
+    .context("failed to fetch from remotes")?;
     Ok(())
 }
 
-pub fn pull_repo(repo_path: &str) -> anyhow::Result<()> {
-    match run_git(repo_path, &["pull", "--ff-only"]) {
+pub fn pull_repo(repo_path: &str, trust: &TrustLevelDto) -> anyhow::Result<()> {
+    let overrides = network_config_overrides(repo_path, trust, NetworkCommand::PullOrPush)?;
+    match run_git_network(
+        repo_path,
+        &with_overrides(&overrides, &["pull", "--ff-only"]),
+        GIT_NETWORK_TIMEOUT,
+    ) {
         Ok(_) => Ok(()),
         Err(error) => {
             if is_no_upstream_error(&error) {
@@ -498,8 +626,13 @@ pub fn pull_repo(repo_path: &str) -> anyhow::Result<()> {
     }
 }
 
-pub fn push_repo(repo_path: &str) -> anyhow::Result<()> {
-    match run_git(repo_path, &["push"]) {
+pub fn push_repo(repo_path: &str, trust: &TrustLevelDto) -> anyhow::Result<()> {
+    let overrides = network_config_overrides(repo_path, trust, NetworkCommand::PullOrPush)?;
+    match run_git_network(
+        repo_path,
+        &with_overrides(&overrides, &["push"]),
+        GIT_NETWORK_TIMEOUT,
+    ) {
         Ok(_) => Ok(()),
         Err(error) => {
             if !is_no_upstream_error(&error) {
@@ -516,11 +649,16 @@ pub fn push_repo(repo_path: &str) -> anyhow::Result<()> {
             let push_args = [
                 "push",
                 "--set-upstream",
+                "--end-of-options",
                 remote_name.as_str(),
                 branch_name.as_str(),
             ];
-            run_git(repo_path, &push_args)
-                .context("failed to push current branch and set upstream")?;
+            run_git_network(
+                repo_path,
+                &with_overrides(&overrides, &push_args),
+                GIT_NETWORK_TIMEOUT,
+            )
+            .context("failed to push current branch and set upstream")?;
             Ok(())
         }
     }
@@ -545,7 +683,7 @@ pub fn list_git_branches(
         r = GIT_RECORD_SEPARATOR
     );
     let format_arg = format!("--format={format}");
-    let output = run_git(
+    let output = run_git_read(
         repo_path,
         &["for-each-ref", branch_ref, format_arg.as_str()],
     )
@@ -672,8 +810,11 @@ pub fn create_git_branch(
     from_ref: Option<&str>,
 ) -> anyhow::Result<()> {
     if let Some(reference) = from_ref.map(str::trim).filter(|value| !value.is_empty()) {
-        run_git(repo_path, &["checkout", "-b", branch_name, reference])
-            .context("failed to create git branch")?;
+        run_git(
+            repo_path,
+            &["checkout", "-b", branch_name, "--end-of-options", reference],
+        )
+        .context("failed to create git branch")?;
     } else {
         run_git(repo_path, &["checkout", "-b", branch_name])
             .context("failed to create git branch")?;
@@ -682,15 +823,21 @@ pub fn create_git_branch(
 }
 
 pub fn rename_git_branch(repo_path: &str, old_name: &str, new_name: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["branch", "-m", old_name, new_name])
-        .context("failed to rename git branch")?;
+    run_git(
+        repo_path,
+        &["branch", "-m", "--end-of-options", old_name, new_name],
+    )
+    .context("failed to rename git branch")?;
     Ok(())
 }
 
 pub fn delete_git_branch(repo_path: &str, branch_name: &str, force: bool) -> anyhow::Result<()> {
     let delete_flag = if force { "-D" } else { "-d" };
-    run_git(repo_path, &["branch", delete_flag, branch_name])
-        .context("failed to delete git branch")?;
+    run_git(
+        repo_path,
+        &["branch", delete_flag, "--end-of-options", branch_name],
+    )
+    .context("failed to delete git branch")?;
     Ok(())
 }
 
@@ -731,7 +878,7 @@ pub fn list_git_commits(
         r = GIT_RECORD_SEPARATOR
     );
 
-    let output = run_git(
+    let output = run_git_read(
         repo_path,
         &[
             "log",
@@ -785,7 +932,7 @@ pub fn list_git_stashes(repo_path: &str) -> anyhow::Result<Vec<GitStashDto>> {
         r = GIT_RECORD_SEPARATOR
     );
     let format_arg = format!("--format={format}");
-    let output = run_git(repo_path, &["stash", "list", format_arg.as_str()])
+    let output = run_git_read(repo_path, &["stash", "list", format_arg.as_str()])
         .context("failed to list stashes")?;
 
     let mut entries = Vec::new();
@@ -844,7 +991,17 @@ pub fn get_commit_diff(repo_path: &str, commit_hash: &str) -> anyhow::Result<Git
         !commit_hash.is_empty() && commit_hash.chars().all(|c| c.is_ascii_hexdigit()),
         "invalid commit hash"
     );
-    let raw = run_git(repo_path, &["diff-tree", "-p", commit_hash])?;
+    let raw = run_git_read(
+        repo_path,
+        &[
+            "diff-tree",
+            "-p",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--submodule=short",
+            commit_hash,
+        ],
+    )?;
     Ok(build_diff_preview(raw))
 }
 
@@ -1350,7 +1507,7 @@ fn default_remote_name(repo: &Repository) -> Option<String> {
 }
 
 fn count_head_commits(repo_path: &str) -> anyhow::Result<usize> {
-    match run_git(repo_path, &["rev-list", "--count", "HEAD"]) {
+    match run_git_read(repo_path, &["rev-list", "--count", "HEAD"]) {
         Ok(output) => Ok(output.trim().parse::<usize>().unwrap_or(0)),
         Err(error) => {
             if is_missing_head_error(&error) {
@@ -1549,10 +1706,16 @@ fn is_binary_content(content: &[u8]) -> bool {
         .any(|&byte| byte == 0)
 }
 
-fn decode_compare_content(content: Option<&[u8]>) -> String {
-    content
-        .map(|value| String::from_utf8_lossy(value).to_string())
-        .unwrap_or_default()
+/// Decodes one side of a compare, returning whether invalid UTF-8 had to be
+/// replaced to produce the text.
+fn decode_compare_content(content: Option<&[u8]>) -> (String, bool) {
+    match content {
+        Some(value) => match std::str::from_utf8(value) {
+            Ok(text) => (text.to_string(), false),
+            Err(_) => (String::from_utf8_lossy(value).into_owned(), true),
+        },
+        None => (String::new(), false),
+    }
 }
 
 fn index_status_label(status: Status) -> Option<String> {
@@ -1680,18 +1843,23 @@ pub fn list_remotes(repo_path: &str) -> anyhow::Result<Vec<crate::models::GitRem
 }
 
 pub fn add_remote(repo_path: &str, name: &str, url: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["remote", "add", name, url]).context("failed to add remote")?;
+    run_git(repo_path, &["remote", "add", "--end-of-options", name, url])
+        .context("failed to add remote")?;
     Ok(())
 }
 
 pub fn remove_remote(repo_path: &str, name: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["remote", "remove", name]).context("failed to remove remote")?;
+    run_git(repo_path, &["remote", "remove", "--end-of-options", name])
+        .context("failed to remove remote")?;
     Ok(())
 }
 
 pub fn rename_remote(repo_path: &str, old_name: &str, new_name: &str) -> anyhow::Result<()> {
-    run_git(repo_path, &["remote", "rename", old_name, new_name])
-        .context("failed to rename remote")?;
+    run_git(
+        repo_path,
+        &["remote", "rename", "--end-of-options", old_name, new_name],
+    )
+    .context("failed to rename remote")?;
     Ok(())
 }
 
@@ -1700,12 +1868,14 @@ mod tests {
     use std::fs;
 
     use super::{
-        build_diff_preview, checkout_git_branch, discard_files, get_workspace_file_tree_page,
-        is_diff_preview_metadata_line, parse_porcelain_v1_status, run_git, search_workspace_files,
-        truncate_utf8_prefix, FileTreeCache, GIT_DIFF_PREVIEW_MAX_BYTES,
-        GIT_DIFF_PREVIEW_MAX_LINES,
+        build_diff_preview, checkout_git_branch, create_git_branch, discard_files, fetch_repo,
+        get_commit_diff, get_file_diff, get_git_file_compare, get_git_status,
+        get_workspace_file_tree_page, is_diff_preview_metadata_line, is_network_command_config_key,
+        list_git_commits, parse_porcelain_v1_status, rename_git_branch, run_git,
+        search_workspace_files, stage_files, truncate_utf8_prefix, unstage_files, FileTreeCache,
+        GIT_DIFF_PREVIEW_MAX_BYTES, GIT_DIFF_PREVIEW_MAX_LINES,
     };
-    use crate::models::FileTreeEntryDto;
+    use crate::models::{FileTreeEntryDto, GitCompareSourceDto, TrustLevelDto};
     use uuid::Uuid;
 
     struct TempRepo {
@@ -1727,6 +1897,10 @@ mod tests {
             run_git(path_str, &["init", "--initial-branch=main"]).expect("git init");
             run_git(path_str, &["config", "user.email", "test@example.com"]).expect("config email");
             run_git(path_str, &["config", "user.name", "Test"]).expect("config name");
+            // Git for Windows sets core.autocrlf=true system-wide, which turns
+            // the LF files these tests commit into CRLF on checkout. Pin it
+            // off so file contents read back the way the tests wrote them.
+            run_git(path_str, &["config", "core.autocrlf", "false"]).expect("config autocrlf");
             Self {
                 path,
                 _env_guard: env_guard,
@@ -1807,6 +1981,577 @@ mod tests {
             !repo.path.join("newdir").exists(),
             "untracked directory must be removed"
         );
+    }
+
+    #[test]
+    fn discard_all_skips_conflicted_files_and_discards_the_rest() {
+        let repo = TempRepo::init();
+        repo.write("c.txt", "base\n");
+        repo.write("m.txt", "base\n");
+        repo.commit_all("init");
+        run_git(repo.path_str(), &["checkout", "-q", "-b", "other"]).expect("branch");
+        repo.write("c.txt", "other\n");
+        repo.commit_all("other");
+        run_git(repo.path_str(), &["checkout", "-q", "main"]).expect("back to main");
+        repo.write("c.txt", "main\n");
+        repo.commit_all("main");
+        let _ = run_git(repo.path_str(), &["merge", "other"]);
+        repo.write("m.txt", "edited\n");
+
+        let files = vec!["c.txt".to_string(), "m.txt".to_string()];
+        discard_files(repo.path_str(), &files).expect("discard the non-conflicted file");
+
+        assert_eq!(repo.read("m.txt"), "base\n");
+        assert!(
+            repo.read("c.txt").contains("<<<<<<<"),
+            "conflict is left alone"
+        );
+        assert!(discard_files(repo.path_str(), &["c.txt".to_string()]).is_err());
+    }
+
+    #[test]
+    fn discard_treats_bracketed_paths_literally() {
+        let repo = TempRepo::init();
+        repo.write("u/keep.txt", "keep\n");
+        repo.commit_all("init");
+        repo.write("u/[ab]/f.txt", "bracketed\n");
+        repo.write("u/a/f.txt", "unrelated\n");
+
+        discard_files(repo.path_str(), &["u/[ab]/".to_string()]).expect("discard");
+
+        assert!(
+            !repo.path.join("u/[ab]").exists(),
+            "the chosen folder is removed"
+        );
+        assert!(
+            repo.path.join("u/a/f.txt").exists(),
+            "an untracked folder the glob would match must survive"
+        );
+    }
+
+    #[test]
+    fn unstage_treats_bracketed_paths_literally() {
+        let repo = TempRepo::init();
+        repo.write("x/[id].ts", "one\n");
+        repo.write("x/i.ts", "one\n");
+        repo.commit_all("init");
+        repo.write("x/[id].ts", "two\n");
+        repo.write("x/i.ts", "two\n");
+        let both = vec!["x/[id].ts".to_string(), "x/i.ts".to_string()];
+        stage_files(repo.path_str(), &both).expect("stage");
+
+        unstage_files(repo.path_str(), &["x/[id].ts".to_string()]).expect("unstage");
+
+        let staged = run_git(repo.path_str(), &["diff", "--cached", "--name-only"]).expect("diff");
+        assert_eq!(staged.trim(), "x/i.ts", "only the chosen file is unstaged");
+    }
+
+    #[test]
+    fn create_branch_does_not_read_a_dash_prefixed_ref_as_an_option() {
+        let repo = TempRepo::init();
+        repo.write("a.txt", "committed\n");
+        repo.commit_all("init");
+        repo.write("a.txt", "committed\nDIRTY\n");
+
+        // Before the fix this ran `git checkout -b feature -f`, which wiped
+        // the uncommitted change.
+        let _ = create_git_branch(repo.path_str(), "feature", Some("-f"));
+
+        assert!(repo.read("a.txt").contains("DIRTY"));
+    }
+
+    #[test]
+    fn rename_branch_does_not_read_a_dash_prefixed_name_as_an_option() {
+        let repo = TempRepo::init();
+        repo.write("a.txt", "committed\n");
+        repo.commit_all("init");
+
+        // Before the fix this ran `git branch -m -M renamed`, renaming main.
+        let _ = rename_git_branch(repo.path_str(), "-M", "renamed");
+
+        let branches = run_git(repo.path_str(), &["branch", "--format=%(refname:short)"])
+            .expect("list branches");
+        assert_eq!(branches.trim(), "main");
+    }
+
+    /// A repo with one commit and an `origin` remote pointing at a bare
+    /// clone of it over file://.
+    fn repo_with_file_remote() -> (TempRepo, std::path::PathBuf) {
+        let repo = TempRepo::init();
+        repo.write("a.txt", "a\n");
+        repo.commit_all("init");
+        let remote = repo.path.join("remote.git");
+        run_git(
+            repo.path_str(),
+            &["clone", "--bare", "-q", ".", remote.to_str().unwrap()],
+        )
+        .expect("bare clone");
+        let url = format!("file://{}", remote.display());
+        run_git(repo.path_str(), &["remote", "add", "origin", &url]).expect("add remote");
+        (repo, remote)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_refuses_a_command_named_in_repo_config_unless_trusted() {
+        let (repo, _remote) = repo_with_file_remote();
+        let marker = repo.path.join("uploadpack-ran");
+        let uploadpack = format!("touch {}; git-upload-pack", marker.display());
+        run_git(
+            repo.path_str(),
+            &["config", "remote.origin.uploadpack", &uploadpack],
+        )
+        .expect("set uploadpack");
+
+        for trust in [TrustLevelDto::Standard, TrustLevelDto::Restricted] {
+            let error = fetch_repo(repo.path_str(), &trust).expect_err("fetch must be refused");
+            assert!(
+                error.to_string().contains("remote.origin.uploadpack"),
+                "{error}"
+            );
+            assert!(!marker.exists(), "uploadpack ran for {}", trust.as_str());
+        }
+
+        fetch_repo(repo.path_str(), &TrustLevelDto::Trusted).expect("trusted fetch runs");
+        assert!(marker.exists(), "trusted repos keep their own config");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_refuses_a_command_under_a_remote_name_that_is_not_utf8() {
+        use std::io::Write;
+
+        let (repo, remote) = repo_with_file_remote();
+        let marker = repo.path.join("uploadpack-ran");
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(repo.path.join(".git/config"))
+            .expect("open config");
+        config
+            .write_all(b"[remote \"\xff\"]\n")
+            .and_then(|_| writeln!(config, "\turl = file://{}", remote.display()))
+            .and_then(|_| {
+                writeln!(
+                    config,
+                    "\tuploadpack = touch {}; git-upload-pack",
+                    marker.display()
+                )
+            })
+            .expect("write config");
+
+        let error = fetch_repo(repo.path_str(), &TrustLevelDto::Standard)
+            .expect_err("fetch must be refused");
+
+        assert!(error.to_string().contains("uploadpack"), "{error}");
+        assert!(!marker.exists(), "uploadpack ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_on_a_standard_repo_runs_without_repo_hooks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (repo, _remote) = repo_with_file_remote();
+        let marker = repo.path.join("hook-ran");
+        let hook = repo.path.join(".git/hooks/reference-transaction");
+        fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker.display())).expect("hook");
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("chmod hook");
+
+        fetch_repo(repo.path_str(), &TrustLevelDto::Standard).expect("fetch");
+
+        assert!(
+            !marker.exists(),
+            "fetch ran the repo's reference-transaction hook"
+        );
+        let refs = run_git(repo.path_str(), &["branch", "-r"]).expect("list remote branches");
+        assert!(
+            refs.contains("origin/main"),
+            "fetch must still update refs: {refs}"
+        );
+    }
+
+    #[test]
+    fn fetch_on_a_standard_repo_allows_a_repo_that_disables_ext() {
+        let (repo, _remote) = repo_with_file_remote();
+        run_git(repo.path_str(), &["config", "protocol.ext.allow", "never"]).expect("config");
+
+        fetch_repo(repo.path_str(), &TrustLevelDto::Standard).expect("fetch");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_on_a_standard_repo_does_not_recurse_into_submodules() {
+        let (repo, _remote) = repo_with_file_remote();
+        add_submodule(&repo);
+
+        let marker = repo.path.join(".git/sub-uploadpack-ran");
+        let uploadpack = format!("touch {}; git-upload-pack", marker.display());
+        let sub = repo.path.join("sub");
+        for (key, value) in [
+            ("remote.origin.uploadpack", uploadpack.as_str()),
+            ("protocol.file.allow", "always"),
+        ] {
+            run_git(sub.to_str().unwrap(), &["config", key, value]).expect("submodule config");
+        }
+        run_git(
+            repo.path_str(),
+            &["config", "fetch.recurseSubmodules", "true"],
+        )
+        .expect("recurse config");
+
+        let _ = fetch_repo(repo.path_str(), &TrustLevelDto::Standard);
+
+        assert!(!marker.exists(), "fetch ran the submodule's uploadpack");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_reads_do_not_run_commands_from_repo_config() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let repo = TempRepo::init();
+        repo.write(".gitattributes", "*.txt diff=conv\n");
+        repo.write("a.txt", "original\n");
+        repo.commit_all("init");
+        repo.write("b.txt", "second\n");
+        repo.commit_all("second");
+        let head = run_git(repo.path_str(), &["rev-parse", "HEAD"]).expect("rev-parse");
+        repo.write("a.txt", "original\nchanged\n");
+
+        let markers = repo.path.join("markers");
+        fs::create_dir_all(&markers).expect("create marker dir");
+        let marker = |name: &str| markers.join(name).to_string_lossy().to_string();
+        let config = [
+            (
+                "core.fsmonitor",
+                format!("touch {}; false", marker("fsmonitor")),
+            ),
+            ("diff.external", format!("touch {};:", marker("external"))),
+            (
+                "diff.conv.textconv",
+                format!("touch {}; cat", marker("textconv")),
+            ),
+        ];
+        for (key, value) in &config {
+            run_git(repo.path_str(), &["config", key, value]).expect("set config");
+        }
+        let hook = repo.path.join(".git/hooks/post-index-change");
+        fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker("hook"))).expect("write hook");
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("chmod hook");
+
+        let status = get_git_status(repo.path_str()).expect("status");
+        let diff = get_file_diff(repo.path_str(), "a.txt", false).expect("file diff");
+        let commit_diff = get_commit_diff(repo.path_str(), head.trim()).expect("commit diff");
+
+        let ran: Vec<String> = fs::read_dir(&markers)
+            .expect("read marker dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(ran.is_empty(), "repo config commands ran: {ran:?}");
+        assert!(status.files.iter().any(|file| file.path == "a.txt"));
+        assert!(diff.content.contains("+changed"));
+        assert!(commit_diff.content.contains("+second"));
+    }
+
+    #[cfg(unix)]
+    fn write_script(path: &std::path::Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod script");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_reads_do_not_run_filters_or_signature_programs() {
+        let repo = TempRepo::init();
+        let markers = repo.path.join(".git/markers");
+        fs::create_dir_all(&markers).expect("create marker dir");
+        let signer = repo.path.join(".git/sign.sh");
+        write_script(
+            &signer,
+            "echo '[GNUPG:] SIG_CREATED D 1 8 00 0 0' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nx\\n-----END PGP SIGNATURE-----\\n'",
+        );
+        let verifier = repo.path.join(".git/verify.sh");
+        write_script(
+            &verifier,
+            &format!("touch {}/gpg\nexit 1", markers.display()),
+        );
+
+        repo.write(".gitattributes", "*.txt filter=x\n");
+        repo.write("a.txt", "original\n");
+        run_git(repo.path_str(), &["add", "-A"]).expect("git add");
+        let gpg = format!("gpg.program={}", signer.display());
+        run_git(
+            repo.path_str(),
+            &["-c", &gpg, "commit", "-q", "-S", "-m", "signed"],
+        )
+        .expect("signed commit");
+
+        let clean = format!("touch {}/clean; cat", markers.display());
+        let verify = verifier.display().to_string();
+        for (key, value) in [
+            ("filter.x.clean", clean.as_str()),
+            ("filter.x.required", "true"),
+            ("gpg.program", verify.as_str()),
+            ("log.showSignature", "true"),
+        ] {
+            run_git(repo.path_str(), &["config", key, value]).expect("set config");
+        }
+        // Same content, new timestamps: git has to hash the file to tell.
+        repo.write("a.txt", "original\n");
+
+        let status = get_git_status(repo.path_str()).expect("status");
+        get_file_diff(repo.path_str(), "a.txt", false).expect("file diff");
+        let commits = list_git_commits(repo.path_str(), 0, 10).expect("log");
+
+        let ran: Vec<String> = fs::read_dir(&markers)
+            .expect("read marker dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(ran.is_empty(), "repo config commands ran: {ran:?}");
+        assert!(status.files.is_empty(), "{:?}", status.files);
+        assert_eq!(commits.entries.len(), 1);
+    }
+
+    /// Adds a submodule at `sub` whose `.txt` files use a `x` filter driver.
+    /// Its source lives under .git so it is not a change in the repo.
+    fn add_submodule(repo: &TempRepo) {
+        let source = repo.path.join(".git/sub-source");
+        fs::create_dir_all(&source).expect("create submodule source");
+        fs::write(source.join(".gitattributes"), "*.txt filter=x\n").expect("attributes");
+        fs::write(source.join("a.txt"), "a\n").expect("write file");
+        let source_str = source.to_str().unwrap();
+        for args in [
+            &["init", "-q", "--initial-branch=main"][..],
+            &["add", "-A"],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "-m",
+                "sub",
+            ],
+        ] {
+            run_git(source_str, args).expect("prepare submodule source");
+        }
+        run_git(
+            repo.path_str(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                source_str,
+                "sub",
+            ],
+        )
+        .expect("add submodule");
+        repo.commit_all("add submodule");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_diff_does_not_start_a_diff_inside_a_submodule() {
+        let repo = TempRepo::init();
+        add_submodule(&repo);
+        let sub = repo.path.join("sub");
+        let sub_str = sub.to_str().unwrap();
+        let marker = repo.path.join(".git/external-ran");
+        let external = format!("touch {};:", marker.display());
+        run_git(sub_str, &["config", "diff.external", &external]).expect("submodule config");
+        fs::write(sub.join("a.txt"), "b\n").expect("edit submodule file");
+        run_git(
+            sub_str,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-qam",
+                "next",
+            ],
+        )
+        .expect("commit in submodule");
+        run_git(repo.path_str(), &["config", "diff.submodule", "diff"]).expect("config");
+
+        let diff = get_file_diff(repo.path_str(), "sub", false).expect("file diff");
+
+        assert!(!marker.exists(), "the submodule's diff.external ran");
+        assert!(
+            diff.content.contains("Subproject commit"),
+            "{}",
+            diff.content
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_never_run_a_filter_driver_whose_name_has_an_equals_sign() {
+        let repo = TempRepo::init();
+        repo.write(".gitattributes", "*.txt filter=a=b\n");
+        repo.write("a.txt", "a\n");
+        repo.commit_all("init");
+        let marker = repo.path.join(".git/clean-ran");
+        let clean = format!("touch {}; cat", marker.display());
+        run_git(repo.path_str(), &["config", "filter.a=b.clean", &clean]).expect("config");
+        repo.write("a.txt", "a\n");
+
+        let _ = get_git_status(repo.path_str());
+        let _ = get_file_diff(repo.path_str(), "a.txt", false);
+
+        assert!(!marker.exists(), "the filter driver ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_never_run_a_filter_driver_whose_name_is_not_utf8() {
+        use std::io::Write;
+
+        let repo = TempRepo::init();
+        repo.write("a.txt", "a\n");
+        repo.commit_all("init");
+        let marker = repo.path.join(".git/clean-ran");
+        fs::write(
+            repo.path.join(".git/info/attributes"),
+            b"*.txt filter=\xff\n",
+        )
+        .expect("attributes");
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(repo.path.join(".git/config"))
+            .expect("open config");
+        config
+            .write_all(b"[filter \"\xff\"]\n")
+            .and_then(|_| writeln!(config, "\tclean = touch {}; cat", marker.display()))
+            .expect("write config");
+        repo.write("a.txt", "a\n");
+
+        let _ = get_git_status(repo.path_str());
+        let _ = get_file_diff(repo.path_str(), "a.txt", false);
+
+        assert!(!marker.exists(), "the filter driver ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_refuses_a_remote_helper_alias_unless_trusted() {
+        let repo = TempRepo::init();
+        let marker = repo.path.join(".git/alias-ran");
+        let alias = format!("!touch {}", marker.display());
+        for (key, value) in [
+            ("remote.origin.url", "panes-missing-helper::x"),
+            ("alias.remote-panes-missing-helper", alias.as_str()),
+        ] {
+            run_git(repo.path_str(), &["config", key, value]).expect("config");
+        }
+
+        let error = fetch_repo(repo.path_str(), &TrustLevelDto::Standard)
+            .expect_err("fetch must be refused");
+
+        assert!(error.to_string().contains("alias.remote-"), "{error}");
+        assert!(!marker.exists(), "the alias ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn status_does_not_run_a_submodule_config_command() {
+        let repo = TempRepo::init();
+        add_submodule(&repo);
+
+        let marker = repo.path.join(".git/clean-ran");
+        let clean = format!("touch {}; cat", marker.display());
+        run_git(
+            repo.path.join("sub").to_str().unwrap(),
+            &["config", "filter.x.clean", &clean],
+        )
+        .expect("set submodule filter");
+        repo.write("sub/a.txt", "a\n");
+
+        get_git_status(repo.path_str()).expect("status");
+
+        assert!(!marker.exists(), "the submodule's clean filter ran");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn commit_diff_does_not_lazy_fetch_in_a_partial_clone() {
+        let (repo, remote) = repo_with_file_remote();
+        repo.write("b.txt", "b\n");
+        repo.commit_all("second");
+        run_git(repo.path_str(), &["push", "-q", "origin", "main"]).expect("push");
+        let head = run_git(repo.path_str(), &["rev-parse", "HEAD"]).expect("rev-parse");
+        run_git(
+            remote.to_str().unwrap(),
+            &["config", "uploadpack.allowFilter", "true"],
+        )
+        .expect("allow filter");
+        let clone = repo.path.join("partial");
+        let url = format!("file://{}", remote.display());
+        run_git(
+            repo.path_str(),
+            &[
+                "clone",
+                "-q",
+                "--no-checkout",
+                "--filter=blob:none",
+                &url,
+                clone.to_str().unwrap(),
+            ],
+        )
+        .expect("partial clone");
+        let marker = repo.path.join("uploadpack-ran");
+        let uploadpack = format!("touch {}; git-upload-pack", marker.display());
+        run_git(
+            clone.to_str().unwrap(),
+            &["config", "remote.origin.uploadpack", &uploadpack],
+        )
+        .expect("set uploadpack");
+
+        let _ = get_commit_diff(clone.to_str().unwrap(), head.trim());
+
+        assert!(
+            !marker.exists(),
+            "a background read fetched from the remote"
+        );
+
+        // A remote helper named like a protocol list entry is refused too.
+        let alias = format!("!touch {}", marker.display());
+        for (key, value) in [
+            ("remote.origin.url", "none::x"),
+            ("alias.remote-none", alias.as_str()),
+            ("protocol.none.allow", "always"),
+        ] {
+            run_git(clone.to_str().unwrap(), &["config", key, value]).expect("config");
+        }
+
+        let _ = get_commit_diff(clone.to_str().unwrap(), head.trim());
+
+        assert!(!marker.exists(), "a background read ran a remote helper");
+    }
+
+    #[test]
+    fn network_command_keys_include_dotted_remote_helper_aliases() {
+        for key in [
+            "core.sshcommand",
+            "remote.origin.uploadpack",
+            "credential.https://example.com.helper",
+            "gpg.ssh.program",
+            "alias.remote-example",
+            "alias.remote-example.v2",
+            "alias.Remote-Example.v2",
+        ] {
+            assert!(is_network_command_config_key(key), "{key}");
+        }
+        for key in ["remote.origin.url", "alias.co", "core.editor"] {
+            assert!(!is_network_command_config_key(key), "{key}");
+        }
     }
 
     #[test]
@@ -2107,6 +2852,32 @@ mod tests {
     }
 
     #[test]
+    fn workspace_file_tree_page_skips_panes_worktrees() {
+        let root = std::env::temp_dir().join(format!("panes-workspace-tree-{}", Uuid::new_v4()));
+        let worktree_dir = root.join("repo/.panes/worktrees/feat");
+        fs::create_dir_all(&worktree_dir).expect("worktree dir should exist");
+        fs::write(root.join("repo/a.txt"), "main").expect("main file should exist");
+        fs::write(worktree_dir.join("a.txt"), "copy").expect("worktree file should exist");
+
+        let cache = FileTreeCache::new();
+        let page = get_workspace_file_tree_page(root.to_string_lossy().as_ref(), 0, 100, &cache)
+            .expect("workspace file tree should load");
+        let paths = page
+            .entries
+            .into_iter()
+            .map(|entry| entry.path.replace('\\', "/"))
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"repo/a.txt".to_string()));
+        assert!(
+            !paths.iter().any(|path| path.contains(".panes")),
+            "worktree copies must stay out of the workspace tree: {paths:?}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn workspace_file_search_skips_dependency_dirs_but_keeps_gitignored_style_files() {
         let root =
             std::env::temp_dir().join(format!("panes-workspace-exclusions-{}", Uuid::new_v4()));
@@ -2289,5 +3060,31 @@ mod tests {
         assert!(cache.get("/workspace/apps/app").is_none());
         assert!(cache.get("workspace::/workspace").is_none());
         assert!(cache.get("/workspace/other").is_some());
+    }
+
+    #[test]
+    fn git_compare_flags_a_lossy_working_tree_but_not_a_lossy_base() {
+        let repo = TempRepo::init();
+        fs::write(repo.path.join("latin1.txt"), b"caf\xe9\n").expect("write latin1");
+        fs::write(repo.path.join("fixed.txt"), b"caf\xe9\n").expect("write latin1 base");
+        repo.commit_all("init");
+        fs::write(repo.path.join("latin1.txt"), b"caf\xe9 au lait\n").expect("edit latin1");
+        fs::write(repo.path.join("fixed.txt"), "caf\u{e9}\n").expect("write utf-8");
+
+        let lossy =
+            get_git_file_compare(repo.path_str(), "latin1.txt", GitCompareSourceDto::Changes)
+                .expect("compare latin1");
+        assert!(lossy.modified_is_lossy_decode);
+        assert_eq!(lossy.modified_content, "caf\u{fffd} au lait\n");
+
+        let fixed =
+            get_git_file_compare(repo.path_str(), "fixed.txt", GitCompareSourceDto::Changes)
+                .expect("compare fixed");
+        assert!(!fixed.modified_is_lossy_decode);
+        assert_eq!(fixed.base_content, "caf\u{fffd}\n");
+        assert_eq!(fixed.modified_content, "caf\u{e9}\n");
+
+        let json = serde_json::to_value(&lossy).expect("serialize compare");
+        assert_eq!(json["modifiedIsLossyDecode"], serde_json::Value::Bool(true));
     }
 }

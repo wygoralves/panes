@@ -371,9 +371,8 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
 #[cfg(target_os = "windows")]
 async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
     let probe_script = format!(
-        "$p = (Get-Command {cmd} -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \
-         if ($p) {{ Write-Output $p; & $p {flag} }}",
-        cmd = command,
+        "$p = {probe}; if ($p) {{ Write-Output $p; & $p {flag} }}",
+        probe = runtime_env::windows_application_probe_expression(command),
         flag = version_flag,
     );
 

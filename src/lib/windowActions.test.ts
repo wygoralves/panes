@@ -55,6 +55,7 @@ vi.mock("../stores/fileStore", () => ({
 
 import {
   closeCurrentWindow,
+  hasAppShortcutModifier,
   isMacDesktop,
   isLinuxDesktop,
   isWindowsDesktop,
@@ -142,6 +143,36 @@ describe("windowActions", () => {
 
       mockIsTauri.mockReturnValue(false);
       expect(isMacDesktop()).toBe(false);
+    } finally {
+      if (originalNavigator) {
+        Object.defineProperty(globalThis, "navigator", originalNavigator);
+      } else {
+        Reflect.deleteProperty(globalThis, "navigator");
+      }
+    }
+  });
+
+  it("uses Cmd for app shortcuts on macOS and leaves Ctrl+letter to text editing", () => {
+    expect(hasAppShortcutModifier({ metaKey: true, ctrlKey: false }, true)).toBe(true);
+    expect(hasAppShortcutModifier({ metaKey: false, ctrlKey: true }, true)).toBe(false);
+    expect(hasAppShortcutModifier({ metaKey: false, ctrlKey: false }, true)).toBe(false);
+
+    expect(hasAppShortcutModifier({ metaKey: false, ctrlKey: true }, false)).toBe(true);
+    expect(hasAppShortcutModifier({ metaKey: true, ctrlKey: false }, false)).toBe(true);
+    expect(hasAppShortcutModifier({ metaKey: false, ctrlKey: false }, false)).toBe(false);
+  });
+
+  it("defaults the shortcut modifier to the desktop platform", () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { platform: "MacIntel" },
+    });
+
+    try {
+      expect(hasAppShortcutModifier({ metaKey: false, ctrlKey: true })).toBe(false);
+      expect(hasAppShortcutModifier({ metaKey: true, ctrlKey: false })).toBe(true);
     } finally {
       if (originalNavigator) {
         Object.defineProperty(globalThis, "navigator", originalNavigator);

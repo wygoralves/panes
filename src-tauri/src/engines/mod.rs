@@ -21,7 +21,6 @@ use crate::{
     },
 };
 
-pub mod api_direct;
 pub mod claude_sidecar;
 pub mod codex;
 pub mod codex_event_mapper;
@@ -67,6 +66,9 @@ pub struct SandboxPolicy {
     pub personality: Option<String>,
     pub output_schema: Option<Value>,
     pub opencode_agent: Option<String>,
+    /// Whether the repo is Trusted, so the engine may load settings, hooks and
+    /// MCP servers the repo itself ships. Claude reads it; other engines ignore it.
+    pub project_settings_trusted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1169,6 +1171,31 @@ impl EngineManager {
         self.codex.uses_external_sandbox().await
     }
 
+    /// Whether the Codex instance behind `engine_id` runs in external sandbox
+    /// mode. Each instance probes its own sandbox, so a thread must ask the
+    /// instance it runs on. False for ids that are not a Codex instance.
+    pub async fn codex_uses_external_sandbox_for(&self, engine_id: &str) -> bool {
+        match self.handle(engine_id).await {
+            Some(EngineHandle::Codex(engine)) => engine.uses_external_sandbox().await,
+            _ => false,
+        }
+    }
+
+    /// Records a finished macOS sandbox preflight for a Codex instance
+    /// without running one.
+    #[cfg(test)]
+    pub(crate) async fn set_codex_sandbox_probe_result_for_test(
+        &self,
+        engine_id: &str,
+        force_external_sandbox: bool,
+    ) {
+        if let Some(EngineHandle::Codex(engine)) = self.handle(engine_id).await {
+            engine
+                .set_sandbox_probe_result_for_test(force_external_sandbox)
+                .await;
+        }
+    }
+
     pub async fn read_thread_preview(
         &self,
         thread: &ThreadDto,
@@ -1327,6 +1354,40 @@ fn map_model_info(model: ModelInfo) -> EngineModelDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn external_sandbox_check_reads_the_thread_codex_instance() {
+        use crate::commands::threads::sandbox_mode_for_write_confirmation;
+
+        let mut manager = EngineManager::new();
+        manager.codex.set_sandbox_probe_result_for_test(false).await;
+        let extra = Arc::new(CodexEngine::with_instance(
+            "codex_work",
+            "Codex Work",
+            EngineInstanceSettings::default(),
+        ));
+        extra.set_sandbox_probe_result_for_test(true).await;
+        manager.instances.get_mut().push(EngineHandle::Codex(extra));
+
+        // A read-only thread on the instance in external mode has no OS
+        // sandbox holding it read-only, so it needs the write confirmation.
+        let extra_external = manager.codex_uses_external_sandbox_for("codex_work").await;
+        assert!(extra_external);
+        assert_eq!(
+            sandbox_mode_for_write_confirmation("read-only", extra_external),
+            "workspace-write"
+        );
+
+        let default_external = manager.codex_uses_external_sandbox_for("codex").await;
+        assert!(!default_external);
+        assert_eq!(
+            sandbox_mode_for_write_confirmation("read-only", default_external),
+            "read-only"
+        );
+
+        assert!(!manager.codex_uses_external_sandbox_for("claude").await);
+        assert!(!manager.codex_uses_external_sandbox_for("codex_gone").await);
+    }
 
     #[test]
     fn claude_capabilities_expose_supported_contract() {

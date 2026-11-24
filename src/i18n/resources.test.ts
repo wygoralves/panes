@@ -71,4 +71,11 @@ describe("i18n resources", () => {
     expect(readNestedString(chatPtBr, "panel.workspaceChatTitle")).toBeTruthy();
     expect(readNestedString(chatPtBr, "panel.repoChatTitle")).toBeTruthy();
   });
+
+  it("gives filter result counts a singular form in both locales", () => {
+    expect(readNestedString(appEn, "explorer.filterCount_one")).toBe("{{count}} file");
+    expect(readNestedString(appPtBr, "explorer.filterCount_one")).toBe("{{count}} arquivo");
+    expect(readNestedString(gitEn, "files.filterCount_one")).toBe("{{count}} file");
+    expect(readNestedString(gitPtBr, "files.filterCount_one")).toBe("{{count}} arquivo");
+  });
 });

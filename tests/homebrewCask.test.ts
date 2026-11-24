@@ -76,4 +76,17 @@ describe("renderHomebrewCask", () => {
 
     expect(rendered).not.toContain("depends_on arch:");
   });
+
+  it("declares self-updates, the macOS 13 minimum, and removes the keep-awake daemon on zap", () => {
+    const template = readFileSync(new URL("../scripts/templates/homebrew-cask.rb.tpl", import.meta.url), "utf-8");
+    const tauriConfig = JSON.parse(
+      readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf-8"),
+    );
+
+    expect(tauriConfig.bundle.macOS.minimumSystemVersion).toBe("13.0");
+    expect(template).toMatch(/^\s*auto_updates true$/m);
+    expect(template).toMatch(/^\s*depends_on macos: :ventura$/m);
+    expect(template).toMatch(/^\s*zap launchctl: "com\.panes\.app\.helper\.keepawake",$/m);
+    expect(template).toContain('"~/.agent-workspace"');
+  });
 });

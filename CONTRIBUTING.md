@@ -7,7 +7,8 @@ Panes is a local-first desktop cockpit for AI-assisted coding. The project accep
 ## Before you start
 
 - Open an issue first for large features, broad UX changes, or architectural refactors.
-- Small bug fixes, docs updates, and focused improvements can go straight to a pull request.
+- Small bug fixes, docs updates, and focused improvements can go straight to a pull request if you have collaborator access; otherwise use the fork-and-issue path in [Pull request access](#pull-request-access).
+- Report bugs and request features with the issue templates. Report security problems privately as described in [SECURITY.md](./SECURITY.md), not in a public issue.
 - Keep changes scoped. Large mixed PRs are hard to review and slow down merge decisions.
 
 ## Development setup
@@ -49,7 +50,7 @@ If you are not a collaborator, the working path today is:
 2. Open an issue describing the change, linking your fork and branch (a compare URL such as `https://github.com/<you>/panes/compare/master...<you>:panes:<branch>` works well).
 3. A maintainer reviews the diff from the issue, then either pulls the branch in directly or grants access so you can open the PR yourself.
 
-This is a temporary restriction while the project has one maintainer doing review, not a rejection of outside contributions. The policy may open up to all forks later; until then, route proposed changes through an issue first.
+This is a temporary restriction while the project has one maintainer doing review, not a rejection of outside contributions. The policy may open up to all forks later; until then, non-collaborators should route proposed changes through an issue first.
 
 ### Translation contributions
 

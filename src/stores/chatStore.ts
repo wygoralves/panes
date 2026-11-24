@@ -1,6 +1,6 @@
 import { engineKind } from "../lib/engineKind";
 import { create } from "zustand";
-import { ipc, listenThreadEvents } from "../lib/ipc";
+import { ipc, listenChatTurnReleased, listenThreadEvents } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
 import { useThreadStore } from "./threadStore";
 import { useThreadReadStore } from "./threadReadStore";
@@ -108,19 +108,125 @@ const STREAM_EVENT_BATCH_WINDOW_MS = 16;
 const STREAM_EVENT_QUEUE_FLUSH_THRESHOLD = 500;
 
 /**
- * Background listeners for threads that are still streaming when the user switches away.
- * Keeps the event stream alive so events are not lost. On switch-back, the DB state
- * will include all events that arrived while the thread was in the background.
- * Cleaned up on TurnCompleted or when the thread is explicitly cancelled.
+ * Queued messages drain on `chat-turn-released`, which the backend emits only
+ * after it released the turn, ahead of the title and notification work. The stream's TurnCompleted arrives earlier, and
+ * a send at that point is refused because the turn is still registered. One
+ * listener serves every thread, visible or in the background.
  */
-const backgroundStreamListeners = new Map<string, () => void>();
+let turnFinishedQueueListener: Promise<unknown> | null = null;
 
-function cleanupBackgroundListener(threadId: string) {
-  const cleanup = backgroundStreamListeners.get(threadId);
-  if (cleanup) {
-    cleanup();
-    backgroundStreamListeners.delete(threadId);
+interface TurnRelease {
+  status: TurnCompletionStatus;
+  messageId?: string;
+}
+
+/**
+ * The open view's stream pipeline. While the view binds, a release of its
+ * thread joins the buffered stream events at its arrival position; once
+ * bound, a release first flushes the batched events it follows.
+ */
+interface OpenViewStream {
+  threadId: string;
+  holdRelease: ((release: TurnRelease) => boolean) | null;
+  flush: (() => void) | null;
+}
+let openViewStream: OpenViewStream | null = null;
+
+function ensureTurnFinishedQueueListener() {
+  if (turnFinishedQueueListener) {
+    return;
   }
+  turnFinishedQueueListener = listenChatTurnReleased((event) => {
+    const status: TurnCompletionStatus =
+      event.status === "completed"
+        ? "completed"
+        : event.status === "interrupted"
+          ? "interrupted"
+          : "failed";
+    const held =
+      openViewStream?.threadId === event.threadId &&
+      openViewStream.holdRelease?.({ status, messageId: event.messageId });
+    if (!held) {
+      releaseFinishedTurnInView(event.threadId, status, event.messageId);
+    }
+    void useChatStore.getState().drainQueue(event.threadId, status);
+  }).catch((error) => {
+    turnFinishedQueueListener = null;
+    console.warn("Failed to listen for finished chat turns:", error);
+  });
+}
+
+/**
+ * The backend released the thread's turn. A view that bound after the stream
+ * already ended, or before a stopped turn wrote its end, never saw a
+ * TurnCompleted and may still read as streaming. A streaming reply other than
+ * the released one belongs to a newer turn and keeps the view as it is.
+ */
+function releaseFinishedTurnInView(
+  threadId: string,
+  status: TurnCompletionStatus,
+  messageId: string | undefined,
+) {
+  if (openViewStream?.threadId === threadId) {
+    // Stream events of this turn still waiting in the batch come first.
+    openViewStream.flush?.();
+  }
+  const state = useChatStore.getState();
+  if (state.threadId !== threadId) {
+    return;
+  }
+  let latestIndex = state.messages.length - 1;
+  while (latestIndex >= 0 && state.messages[latestIndex].role !== "assistant") {
+    latestIndex -= 1;
+  }
+  const latest = latestIndex >= 0 ? state.messages[latestIndex] : undefined;
+  const releasedIsLatest = latest !== undefined && latest.id === messageId;
+  if (latest?.status === "streaming" && !releasedIsLatest) {
+    return;
+  }
+  const settleReply = releasedIsLatest && latest.status === "streaming";
+  if (!settleReply && !state.streaming) {
+    return;
+  }
+  let messages = state.messages;
+  if (settleReply) {
+    messages = [...state.messages];
+    messages[latestIndex] = {
+      ...latest,
+      status: status === "completed" ? "completed" : status === "interrupted" ? "interrupted" : "error",
+      blocks:
+        status === "completed" || !latest.blocks
+          ? latest.blocks
+          : settleStoppedAssistantBlocks(latest.blocks),
+    };
+  }
+  useChatStore.setState({
+    messages,
+    ...applyRuntimeStateFromEvent(state.status, state.streaming, { type: "TurnCompleted", status }),
+  });
+}
+
+/** Sequence number a backend stream event carries; absent on events emitted outside a turn. */
+function streamEventSeq(event: StreamEvent): number | null {
+  const seq = (event as { seq?: unknown }).seq;
+  return typeof seq === "number" && Number.isFinite(seq) ? seq : null;
+}
+
+/**
+ * Stream sequence the latest stored assistant reply of a loaded snapshot
+ * covers. Older replies may carry numbers from an earlier run, and a reply
+ * whose turn has not stored anything yet (sequence 0) covers nothing, so the
+ * reply before it still decides.
+ */
+function snapshotStreamSeq(messages: Message[]): number | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const seq = message.streamSeq;
+    if (message.role === "assistant" && typeof seq === "number" && seq > 0) {
+      return seq;
+    }
+  }
+  return null;
 }
 const MESSAGE_WINDOW_INITIAL_LIMIT = 80;
 const OLDER_MESSAGES_RETRY_BACKOFF_MS = 2_000;
@@ -171,7 +277,13 @@ function applyRuntimeStateFromEvent(
   }
 
   if (event.type === "ApprovalResolved") {
-    return { status: "streaming", streaming: true };
+    // Only a turn waiting on the approval resumes; a resolution that lands
+    // after the turn ended must not bring the composer back to streaming.
+    return status === "awaiting_approval" ? { status: "streaming", streaming: true } : { status, streaming };
+  }
+
+  if (event.type === "ApprovalExpired") {
+    return { status, streaming };
   }
 
   if (event.type === "Error" && !event.recoverable) {
@@ -474,6 +586,60 @@ function restoreApprovalInMessages(
   }
 
   return messages;
+}
+
+function expireApprovalsInMessages(messages: Message[], approvalIds: string[]): Message[] {
+  if (approvalIds.length === 0) {
+    return messages;
+  }
+  const expired = new Set(approvalIds);
+  let changed = false;
+  const nextMessages = messages.map((message) => {
+    const blocks = message.blocks;
+    if (!blocks?.some((block) => block.type === "approval" && block.status === "pending" && expired.has(block.approvalId))) {
+      return message;
+    }
+    changed = true;
+    return {
+      ...message,
+      blocks: blocks.map((block) =>
+        block.type === "approval" && block.status === "pending" && expired.has(block.approvalId)
+          ? { ...block, status: "expired" as const }
+          : block,
+      ),
+    };
+  });
+  return changed ? nextMessages : messages;
+}
+
+/**
+ * A stopped turn sends no completion for what it left open: approvals can no
+ * longer be answered, running actions failed, running subagents were cut off.
+ */
+function settleStoppedAssistantBlocks(blocks: ContentBlock[]): ContentBlock[] {
+  const settledAt = Date.now();
+  let changed = false;
+  const nextBlocks = blocks.map((block): ContentBlock => {
+    if (block.type === "approval" && block.status === "pending") {
+      changed = true;
+      return { ...block, status: "expired" };
+    }
+    if (block.type === "action" && (block.status === "running" || block.status === "pending")) {
+      changed = true;
+      return { ...block, status: "error" };
+    }
+    if (block.type === "subagent" && block.status === "running") {
+      changed = true;
+      return {
+        ...block,
+        status: "interrupted",
+        progress: undefined,
+        durationMs: block.startedAt ? settledAt - block.startedAt : block.durationMs,
+      };
+    }
+    return block;
+  });
+  return changed ? nextBlocks : blocks;
 }
 
 function trimActionOutputChunks(
@@ -1566,6 +1732,13 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     return resolveApprovalInMessages(messages, String(event.approval_id ?? ""));
   }
 
+  if (event.type === "ApprovalExpired") {
+    return expireApprovalsInMessages(
+      messages,
+      Array.isArray(event.approval_ids) ? event.approval_ids.map(String) : [],
+    );
+  }
+
   const assistantTarget = resolveAssistantTargetFromEvent(threadId, event);
   const { messages: ensuredMessages, assistantIndex } = ensureAssistantMessage(
     messages,
@@ -1932,16 +2105,26 @@ function applyStreamEvent(messages: Message[], event: StreamEvent, threadId: str
     }
     const settledAt = Date.now();
     const settledStatus = subagentStatusFromTurn(status);
-    assistant.blocks = (assistant.blocks ?? []).map((block) =>
-      block.type === "subagent" && block.status === "running"
-        ? {
-            ...block,
-            status: settledStatus,
-            progress: undefined,
-            durationMs: block.startedAt ? settledAt - block.startedAt : block.durationMs,
-          }
-        : block,
-    );
+    const turnCompleted = assistant.status === "completed";
+    assistant.blocks = (assistant.blocks ?? []).map((block) => {
+      if (block.type === "subagent" && block.status === "running") {
+        return {
+          ...block,
+          status: settledStatus,
+          progress: undefined,
+          durationMs: block.startedAt ? settledAt - block.startedAt : block.durationMs,
+        };
+      }
+      // A turn that did not complete sends no completion for its open actions.
+      if (
+        !turnCompleted &&
+        block.type === "action" &&
+        (block.status === "running" || block.status === "pending")
+      ) {
+        return { ...block, status: "error" as const };
+      }
+      return block;
+    });
   }
 
   assistant.hydration = "full";
@@ -1989,37 +2172,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     activeThreadBindSeq += 1;
     const bindSeq = activeThreadBindSeq;
+    const previousOpenView = openViewStream;
 
-    // Tear down the current listener. If the thread was still streaming,
-    // install a lightweight background listener that watches for TurnCompleted
-    // so the thread status updates correctly when the user switches back.
+    // Tear down the current listener. A thread left mid-turn keeps draining
+    // its queue through the turn-finished listener.
     if (currentUnlisten) {
       currentUnlisten();
     }
-    if (currentThreadId && get().streaming) {
-      cleanupBackgroundListener(currentThreadId);
-      listenThreadEvents(currentThreadId, (event) => {
-        if (event.type === "TurnCompleted") {
-          cleanupBackgroundListener(currentThreadId!);
-          void useChatStore.getState().drainQueue(currentThreadId!, event.status);
-        }
-      }).then((unsub) => {
-        // If the user already switched back to this thread, don't register
-        if (useChatStore.getState().threadId === currentThreadId) {
-          unsub();
-          return;
-        }
-        const existing = backgroundStreamListeners.get(currentThreadId!);
-        if (existing) {
-          // Another background listener was set up in the meantime
-          unsub();
-        } else {
-          backgroundStreamListeners.set(currentThreadId!, unsub);
-        }
-      });
-    }
+    ensureTurnFinishedQueueListener();
 
     if (!threadId) {
+      openViewStream = null;
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
@@ -2040,10 +2203,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
-    try {
-      // Clean up any background listener for this thread before re-subscribing
-      cleanupBackgroundListener(threadId);
+    // Subscribe before reading the snapshot and hold events until it is in
+    // place: the stored blocks trail the stream, so events emitted around the
+    // read would otherwise be lost. Each event carries a sequence number, and
+    // the snapshot records the last one it covers, so the replay below skips
+    // what the snapshot already has instead of applying it twice. Releases of
+    // this thread are held from the start of the bind, before any engine sync,
+    // so one heard at any point of it still applies once the view is in place.
+    let preBindEvents: Array<StreamEvent | { heldRelease: TurnRelease }> | null = [];
+    const viewStream: OpenViewStream = {
+      threadId,
+      holdRelease: (release) => {
+        if (bindSeq !== activeThreadBindSeq || !preBindEvents) {
+          return false;
+        }
+        preBindEvents.push({ heldRelease: release });
+        return true;
+      },
+      flush: null,
+    };
+    openViewStream = viewStream;
+    // A bind that failed leaves no view behind to hold or flush for.
+    const abandonViewStream = () => {
+      if (openViewStream === viewStream) {
+        openViewStream = null;
+      }
+    };
 
+    let releaseStream: (() => void) | null = null;
+    try {
       const threadState = useThreadStore.getState();
       let activeThread = threadState.threads.find((thread) => thread.id === threadId);
       if (
@@ -2058,18 +2246,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } catch (error) {
           console.warn(`Failed to sync Codex thread ${threadId}:`, error);
         }
-      }
-
-      const messageWindow = await ipc.getThreadMessagesWindow(
-        threadId,
-        null,
-        MESSAGE_WINDOW_INITIAL_LIMIT,
-      );
-      let messages = normalizeMessages(messageWindow.messages);
-      const olderCursor = messageWindow.nextCursor;
-      messages = applyHydrationWindow(messages);
-      if (bindSeq !== activeThreadBindSeq) {
-        return;
       }
 
       const queuedStreamEvents: StreamEvent[] = [];
@@ -2193,10 +2369,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }, STREAM_EVENT_BATCH_WINDOW_MS);
       };
 
-      const unlistenStream = await listenThreadEvents(threadId, (event) => {
-        if (bindSeq !== activeThreadBindSeq) {
-          return;
-        }
+      const handleStreamEvent = (event: StreamEvent) => {
         const pendingTurnMeta = pendingTurnMetaByThread.get(threadId);
         if (
           pendingTurnMeta &&
@@ -2227,7 +2400,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           useThreadStore.getState().markThreadReadIfActive(threadId);
           flushQueuedStreamEvents();
           emitEventRateMetric(performance.now());
-          void useChatStore.getState().drainQueue(threadId, event.status);
           return;
         }
         if (queuedStreamEvents.length >= STREAM_EVENT_QUEUE_FLUSH_THRESHOLD) {
@@ -2235,7 +2407,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         }
         scheduleStreamFlush();
+      };
+
+      const unlistenStream = await listenThreadEvents(threadId, (event) => {
+        if (bindSeq !== activeThreadBindSeq) {
+          return;
+        }
+        if (preBindEvents) {
+          preBindEvents.push(event);
+          return;
+        }
+        handleStreamEvent(event);
       });
+      const replayPreBindEvents = (coveredSeq: number | null) => {
+        const buffered = preBindEvents ?? [];
+        preBindEvents = null;
+        for (const event of buffered) {
+          if ("heldRelease" in event) {
+            // The turn was released here: what came before it applies first,
+            // what came after it belongs to the next turn.
+            flushQueuedStreamEvents();
+            releaseFinishedTurnInView(
+              threadId,
+              event.heldRelease.status,
+              event.heldRelease.messageId,
+            );
+            continue;
+          }
+          const seq = streamEventSeq(event);
+          // Usage updates write no block, so the snapshot never covers them.
+          if (
+            seq !== null &&
+            coveredSeq !== null &&
+            seq <= coveredSeq &&
+            event.type !== "UsageLimitsUpdated"
+          ) {
+            // The snapshot holds this event's blocks but not the turn state it
+            // implies, such as a TurnCompleted that ended the turn. Earlier
+            // events still queued apply first so states keep their order.
+            flushQueuedStreamEvents();
+            set((state) =>
+              state.threadId === threadId
+                ? applyRuntimeStateFromEvent(state.status, state.streaming, event)
+                : state,
+            );
+            continue;
+          }
+          handleStreamEvent(event);
+        }
+      };
+
+      // The view is in place: a later release flushes its batch first.
+      const finishBind = () => {
+        if (openViewStream === viewStream) {
+          viewStream.holdRelease = null;
+          viewStream.flush = flushQueuedStreamEvents;
+        }
+      };
 
       const unlisten = () => {
         if (streamFlushTimer !== null) {
@@ -2246,13 +2474,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
         emitEventRateMetric(performance.now());
         unlistenStream();
       };
+      releaseStream = unlisten;
 
       if (bindSeq !== activeThreadBindSeq) {
         unlisten();
         return;
       }
 
-      const threadStatus = activeThread?.status ?? "idle";
+      const messageWindow = await ipc.getThreadMessagesWindow(
+        threadId,
+        null,
+        MESSAGE_WINDOW_INITIAL_LIMIT,
+      );
+      const coveredSeq = snapshotStreamSeq(messageWindow.messages);
+      let messages = normalizeMessages(messageWindow.messages);
+      const olderCursor = messageWindow.nextCursor;
+      messages = applyHydrationWindow(messages);
+      if (bindSeq !== activeThreadBindSeq) {
+        unlisten();
+        return;
+      }
+
+      // The thread list may have heard the turn end while the window loaded.
+      const threadStatus =
+        useThreadStore.getState().threads.find((thread) => thread.id === threadId)?.status ??
+        activeThread?.status ??
+        "idle";
       const currentState = get();
       if (currentState.threadId === threadId && currentState.streaming) {
         if (currentState.unlisten) {
@@ -2266,6 +2513,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
           unlisten: currentState.unlisten ?? unlisten,
           error: undefined,
         });
+        releaseStream = null;
+        if (!currentState.unlisten) {
+          // The visible messages were kept, not replaced by the snapshot, so
+          // nothing buffered is covered by it.
+          replayPreBindEvents(null);
+          finishBind();
+        } else {
+          // The existing pipeline stays; releases held for this bind still apply.
+          const held = preBindEvents ?? [];
+          preBindEvents = null;
+          if (openViewStream === viewStream) {
+            openViewStream = previousOpenView?.threadId === threadId ? previousOpenView : null;
+          }
+          for (const entry of held) {
+            if ("heldRelease" in entry) {
+              releaseFinishedTurnInView(
+                threadId,
+                entry.heldRelease.status,
+                entry.heldRelease.messageId,
+              );
+            }
+          }
+        }
         return;
       }
 
@@ -2290,6 +2560,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         usageLimits: null,
         usageLimitsLoading: shouldRefreshUsageLimits,
       });
+      releaseStream = null;
+      replayPreBindEvents(coveredSeq);
+      finishBind();
 
       if (shouldRefreshUsageLimits) {
         const refreshRestoredUsageLimits = async () => {
@@ -2314,6 +2587,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         void refreshRestoredUsageLimits();
       }
     } catch (error) {
+      // A subscription that never reached the store would leak.
+      releaseStream?.();
+      abandonViewStream();
       if (bindSeq !== activeThreadBindSeq) {
         return;
       }
@@ -2543,21 +2819,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Stop means stop: whatever was waiting behind this turn is dropped.
       useChatQueueStore.getState().clear(threadId);
       pendingTurnMetaByThread.delete(threadId);
+      if (get().threadId !== threadId) {
+        // The view moved to another thread while Stop was in flight; the
+        // stopped one reloads with its settled blocks when reopened.
+        return;
+      }
       // Remove the trailing assistant message if it has no meaningful content
       // (e.g. only thinking blocks with no text, or completely empty)
       const messages = get().messages;
       const last = messages[messages.length - 1];
       const lastHasContent = last?.role === "assistant" && (last.blocks ?? []).some((b) => {
         if (b.type === "text") return Boolean(b.content?.trim());
-        if (b.type === "action" || b.type === "diff" || b.type === "code" || b.type === "approval") return true;
+        if (
+          b.type === "action" ||
+          b.type === "diff" ||
+          b.type === "code" ||
+          b.type === "approval" ||
+          b.type === "subagent"
+        ) {
+          return true;
+        }
         return false;
       });
-      const nextMessages = last?.role === "assistant" && !lastHasContent
+      let nextMessages = last?.role === "assistant" && !lastHasContent
         ? messages.slice(0, -1)
         : messages;
+      if (last?.role === "assistant" && lastHasContent && last.blocks) {
+        const settledBlocks = settleStoppedAssistantBlocks(last.blocks);
+        if (settledBlocks !== last.blocks) {
+          nextMessages = [...messages.slice(0, -1), { ...last, blocks: settledBlocks }];
+        }
+      }
       set({ status: "idle", streaming: false, messages: nextMessages });
     } catch (error) {
-      set({ error: String(error) });
+      if (get().threadId === threadId) {
+        set({ error: String(error) });
+      }
     }
   },
   drainQueue: async (threadId, status) => {
@@ -2585,17 +2882,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     // The thread is in the background: send without touching the visible
-    // transcript and keep listening so the rest of the queue follows. The
-    // listener goes up before the send so a fast turn cannot finish unseen.
+    // transcript. The rest of the queue follows on the turn-finished listener.
     queue.remove(threadId, nextMessage.id);
-    cleanupBackgroundListener(threadId);
-    const unsub = await listenThreadEvents(threadId, (event) => {
-      if (event.type === "TurnCompleted") {
-        cleanupBackgroundListener(threadId);
-        void useChatStore.getState().drainQueue(threadId, event.status);
-      }
-    });
-    backgroundStreamListeners.set(threadId, unsub);
+    ensureTurnFinishedQueueListener();
     try {
       await ipc.sendMessage(
         threadId,
@@ -2612,17 +2901,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         crypto.randomUUID(),
       );
     } catch (error) {
-      cleanupBackgroundListener(threadId);
       const message = String(error);
       if (!isMissingThreadError(message)) {
         useChatQueueStore.getState().restoreFront(nextMessage);
       }
       set({ error: message });
       return;
-    }
-    if (useChatStore.getState().threadId === threadId) {
-      // The thread became active meanwhile; its own listener drains the rest.
-      cleanupBackgroundListener(threadId);
     }
   },
 
@@ -2664,12 +2948,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await ipc.respondApproval(threadId, approvalId, response);
       return true;
     } catch (error) {
-      set((state) => ({
-        ...(previousApproval && state.threadId === threadId
-          ? { messages: restoreApprovalInMessages(state.messages, approvalId, previousApproval) }
-          : {}),
-        error: String(error),
-      }));
+      // The backend refuses answers once the approval's turn has ended: the
+      // card is retired instead of offered again.
+      const expired = String(error).includes("no longer pending");
+      set((state) => {
+        if (!previousApproval || state.threadId !== threadId) {
+          return { error: String(error) };
+        }
+        const restored = restoreApprovalInMessages(state.messages, approvalId, previousApproval);
+        return {
+          messages: expired ? expireApprovalsInMessages(restored, [approvalId]) : restored,
+          error: String(error),
+        };
+      });
       return false;
     }
   },

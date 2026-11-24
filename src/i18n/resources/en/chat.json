@@ -518,6 +518,12 @@
     }
   },
   "messageBlocks": {
+    "notices": {
+      "claudeSandboxUnavailable": {
+        "title": "OS sandbox unavailable",
+        "message": "Claude commands cannot run in the OS sandbox on this system, so Panes asks before each command and file change. Approved commands run with your full file and network access. On Windows, WSL2 provides a sandbox; on Linux, install bubblewrap and socat and allow unprivileged user namespaces."
+      }
+    },
     "subagent": {
       "label": "Subagent",
       "started_one": "{{names}} started working",
@@ -607,7 +613,8 @@
         "answered": "Answered",
         "denied": "Denied",
         "canceled": "Canceled",
-        "approved": "Approved"
+        "approved": "Approved",
+        "expired": "Expired"
       },
       "invalidJson": "Invalid JSON: {{error}}",
       "payloadMustBeObject": "Payload must be a JSON object.",

@@ -1,10 +1,13 @@
+mod app_termination;
 mod commands;
 mod config;
 mod db;
 mod engines;
 mod fs_ops;
 mod git;
-#[cfg(any(target_os = "linux", test))]
+// The tests also run on macOS: the integration logic is plain POSIX paths
+// and PATH lookups. Windows paths and PATHEXT lookups do not apply to it.
+#[cfg(any(target_os = "linux", all(test, unix)))]
 mod linux_appimage;
 mod linux_webkit;
 mod locale;
@@ -54,12 +57,14 @@ pub fn run() {
             if report.messages_marked_interrupted > 0
                 || report.thread_status_updates > 0
                 || report.message_counts_repaired > 0
+                || report.approvals_expired > 0
             {
                 log::info!(
-                    "runtime recovery applied: interrupted_messages={}, thread_status_updates={}, message_counts_repaired={}",
+                    "runtime recovery applied: interrupted_messages={}, thread_status_updates={}, message_counts_repaired={}, approvals_expired={}",
                     report.messages_marked_interrupted,
                     report.thread_status_updates,
-                    report.message_counts_repaired
+                    report.message_counts_repaired,
+                    report.approvals_expired
                 );
             }
         }
@@ -73,16 +78,32 @@ pub fn run() {
     if let Err(error) = keep_awake.reclaim_stale_helpers() {
         log::warn!("failed to reclaim stale keep awake helper: {error}");
     }
+    // No window exists yet, so nothing here may raise the admin password
+    // dialog; the setup hook finishes the lid-close part once the window is up.
+    #[cfg(target_os = "macos")]
+    if let Err(error) = tauri::async_runtime::block_on(
+        keep_awake.reclaim_stale_closed_display_sleep(&app_config.power, false),
+    ) {
+        log::warn!("failed to restore stale lid-close sleep setting: {error}");
+    }
     if app_config.power.keep_awake_enabled {
         if let Err(error) =
-            tauri::async_runtime::block_on(keep_awake.enable_with_config(&app_config.power))
+            tauri::async_runtime::block_on(keep_awake.enable_at_startup(&app_config.power))
         {
             log::warn!("failed to reapply keep awake on startup: {error}");
         }
     }
 
-    let _ =
+    let (default_workspace, default_workspace_created) =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
+    // Runs before the window exists, so the first get_repos already sees the row.
+    if default_workspace_created {
+        if let Err(error) =
+            commands::workspace::register_workspace_root_repo(&db, &default_workspace)
+        {
+            log::warn!("failed to register default workspace repo: {error}");
+        }
+    }
 
     let engines = EngineManager::from_config(&app_config);
     let app_state = AppState {
@@ -98,12 +119,18 @@ pub fn run() {
         file_tree_cache: Arc::new(FileTreeCache::new()),
     };
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init());
+    // A Flatpak is updated by its remote, and the self-updater would try to
+    // overwrite the read-only /app/bin/Panes. Without the plugin, the
+    // frontend's update check fails quietly and never offers an update.
+    if runtime_env::self_update_supported() {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    let app = builder
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .menu(move |handle| build_app_menu(handle, app_locale))
@@ -125,8 +152,23 @@ pub fn run() {
                 main_window_config
             };
 
+            // `tauri dev` serves the frontend from the dev server; every other
+            // build serves it from the app's own protocol.
+            let app_url = if tauri::is_dev() {
+                app.config().build.dev_url.clone()
+            } else {
+                None
+            }
+            .unwrap_or_else(|| app_protocol_url(main_window_config.use_https_scheme));
             let main_window = WebviewWindowBuilder::from_config(app.handle(), &main_window_config)?
                 .enable_clipboard_access()
+                .on_navigation(move |url| {
+                    let allowed = is_app_navigation(url, &app_url);
+                    if !allowed {
+                        log::warn!("blocked main window navigation to {url}");
+                    }
+                    allowed
+                })
                 .build()?;
             #[cfg(not(target_os = "linux"))]
             let _ = &main_window;
@@ -167,13 +209,25 @@ pub fn run() {
             }
             tauri::async_runtime::block_on(state.engines.set_resource_dir(resource_dir));
             tauri::async_runtime::spawn(run_codex_runtime_bridge(handle.clone(), state.clone()));
+            #[cfg(target_os = "macos")]
+            app_termination::install(app.handle());
+            #[cfg(target_os = "macos")]
+            {
+                let keep_awake = state.keep_awake.clone();
+                let power_config = state.config.power.clone();
+                tauri::async_runtime::spawn(async move {
+                    keep_awake
+                        .finish_startup_closed_display_sleep(&power_config)
+                        .await;
+                });
+            }
             app.on_menu_event(move |_app, event| {
                 let id = event.id().as_ref();
                 match id {
                     "toggle-sidebar" | "toggle-git-panel" | "toggle-focus-mode"
                     | "toggle-fullscreen" | "toggle-search" | "toggle-terminal"
-                    | "close-window" | "edit-undo" | "edit-redo" | "edit-cut" | "edit-copy"
-                    | "edit-paste" | "edit-select-all" => {
+                    | "close-window" | "quit" | "edit-undo" | "edit-redo" | "edit-cut"
+                    | "edit-copy" | "edit-paste" | "edit-select-all" => {
                         let _ = handle.emit("menu-action", id);
                     }
                     _ => {}
@@ -194,6 +248,7 @@ pub fn run() {
             commands::app::set_composer_legacy_models_visible,
             commands::app::get_ui_zoom_percent,
             commands::app::set_ui_zoom_percent,
+            commands::app::set_unsaved_editor_tabs,
             commands::power::get_keep_awake_state,
             commands::power::set_keep_awake_enabled,
             commands::power::get_power_settings,
@@ -261,6 +316,7 @@ pub fn run() {
             commands::git::add_git_worktree,
             commands::git::list_git_worktrees,
             commands::git::remove_git_worktree,
+            commands::git::inspect_git_worktree,
             commands::git::prune_git_worktrees,
             commands::git::init_git_repo,
             commands::git::list_git_remotes,
@@ -372,6 +428,36 @@ struct ThreadUpdatedEvent {
     workspace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     thread: Option<ThreadDto>,
+}
+
+/// The origin Tauri serves bundled frontend assets from on this platform.
+fn app_protocol_url(https: bool) -> tauri::Url {
+    let url = if cfg!(windows) || cfg!(target_os = "android") {
+        if https {
+            "https://tauri.localhost"
+        } else {
+            "http://tauri.localhost"
+        }
+    } else {
+        "tauri://localhost"
+    };
+    url.parse().expect("valid app protocol url")
+}
+
+/// Whether the main window may navigate to `url`. Only the app's own entry
+/// document is allowed, so a stray link or script can never replace the Panes
+/// UI with another page. Other paths on the app origin are refused too: the
+/// app never navigates between documents, and loading one (a relative link
+/// activated through accessibility, which skips the DOM click handler) would
+/// reload the app and drop unsaved state. Fragment changes stay allowed.
+fn is_app_navigation(url: &tauri::Url, app_url: &tauri::Url) -> bool {
+    // Custom schemes have opaque origins, so compare the parts directly.
+    let same_origin = url.scheme() == app_url.scheme()
+        && url.host_str() == app_url.host_str()
+        && url.port_or_known_default() == app_url.port_or_known_default();
+    let entry_document =
+        matches!(url.path(), "" | "/" | "/index.html") || url.path() == app_url.path();
+    url.as_str() == "about:blank" || (same_origin && entry_document)
 }
 
 async fn run_codex_runtime_bridge(app: tauri::AppHandle, state: AppState) {
@@ -563,14 +649,20 @@ async fn resolve_codex_runtime_approval(
                 .transaction()
                 .context("failed to start approval resolution transaction")?;
 
-            // Resolve the approval record.
-            tx.execute(
-                "UPDATE approvals
+            // Resolve the approval record. An approval its turn already
+            // expired stays expired: nothing reached the engine for it.
+            let resolved = tx
+                .execute(
+                    "UPDATE approvals
                  SET status = 'answered', answered_at = COALESCE(answered_at, datetime('now'))
-                 WHERE id = ?1",
-                rusqlite::params![approval_id],
-            )
-            .context("failed to resolve approval")?;
+                 WHERE id = ?1
+                   AND status IN ('pending', 'answering', 'answered')",
+                    rusqlite::params![approval_id],
+                )
+                .context("failed to resolve approval")?;
+            if resolved == 0 {
+                return Ok(None);
+            }
 
             // Update the approval block inside the message's blocks_json (best-effort).
             let raw_blocks: Option<String> = tx
@@ -658,12 +750,13 @@ async fn resolve_codex_runtime_approval(
                 None
             };
 
-            Ok(updated_thread)
+            Ok(Some(updated_thread))
         }
     })
     .await
     {
-        Ok(updated_thread) => updated_thread,
+        Ok(Some(updated_thread)) => updated_thread,
+        Ok(None) => return,
         Err(error) => {
             log::warn!("failed to reconcile resolved runtime approval {approval_id}: {error}");
             return;
@@ -903,6 +996,10 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
     {
         let strings = native_strings(locale);
 
+        // A custom item instead of the predefined quit, so Cmd+Q goes through the
+        // frontend's unsaved-changes prompt before the window closes.
+        let quit = MenuItem::with_id(handle, "quit", strings.quit, true, Some("CmdOrCtrl+Q"))?;
+
         let app_menu = SubmenuBuilder::new(handle, strings.app_menu)
             .about(Some(AboutMetadata {
                 name: Some("Panes".to_string()),
@@ -929,7 +1026,7 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
             .hide_others()
             .show_all()
             .separator()
-            .quit()
+            .item(&quit)
             .build()?;
 
         let edit_menu = SubmenuBuilder::new(handle, strings.edit_menu)
@@ -1014,4 +1111,110 @@ fn build_app_menu(handle: &tauri::AppHandle, locale: &str) -> tauri::Result<Menu
 
     #[allow(unreachable_code)]
     Menu::with_items(handle, &[])
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::is_app_navigation;
+
+    fn url(value: &str) -> tauri::Url {
+        value.parse().expect("valid url")
+    }
+
+    #[test]
+    fn allows_only_the_app_protocol_origin() {
+        let mac_linux = url("tauri://localhost");
+        assert!(is_app_navigation(&url("tauri://localhost/"), &mac_linux));
+        assert!(is_app_navigation(
+            &url("tauri://localhost/index.html"),
+            &mac_linux
+        ));
+        assert!(is_app_navigation(&url("about:blank"), &mac_linux));
+        assert!(!is_app_navigation(
+            &url("http://tauri.localhost/"),
+            &mac_linux
+        ));
+        assert!(!is_app_navigation(
+            &url("tauri://localhost:8080/"),
+            &mac_linux
+        ));
+
+        let windows = url("http://tauri.localhost");
+        assert!(is_app_navigation(
+            &url("http://tauri.localhost/index.html"),
+            &windows
+        ));
+        assert!(!is_app_navigation(
+            &url("https://tauri.localhost/"),
+            &windows
+        ));
+        assert!(!is_app_navigation(&url("tauri://localhost/"), &windows));
+        assert!(!is_app_navigation(
+            &url("http://tauri.localhost:8080/"),
+            &windows
+        ));
+    }
+
+    #[test]
+    fn allows_the_dev_server_origin_when_it_serves_the_app() {
+        let dev = url("http://localhost:1420");
+        assert!(is_app_navigation(&url("http://localhost:1420/"), &dev));
+        assert!(!is_app_navigation(&url("http://localhost:8080/"), &dev));
+        assert!(!is_app_navigation(&url("tauri://localhost/"), &dev));
+        assert!(!is_app_navigation(
+            &url("http://localhost:1420/notes"),
+            &dev
+        ));
+    }
+
+    #[test]
+    fn allows_fragments_but_not_other_documents_on_the_app_origin() {
+        for app_url in ["tauri://localhost", "http://tauri.localhost"] {
+            let app = url(app_url);
+            for allowed in [
+                app_url.to_string(),
+                format!("{app_url}/"),
+                format!("{app_url}/index.html"),
+                format!("{app_url}#user-content-fn-1"),
+                format!("{app_url}/#user-content-fn-1"),
+            ] {
+                assert!(
+                    is_app_navigation(&url(&allowed), &app),
+                    "{allowed} should be allowed"
+                );
+            }
+            for blocked in [
+                format!("{app_url}/notes"),
+                format!("{app_url}/src/main.rs:2"),
+                format!("{app_url}/x/index.html"),
+            ] {
+                assert!(
+                    !is_app_navigation(&url(&blocked), &app),
+                    "{blocked} should be blocked"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn blocks_every_other_destination() {
+        for app_url in ["tauri://localhost", "http://tauri.localhost"] {
+            let app_url = url(app_url);
+            for target in [
+                "http://evil.example/login",
+                "https://evil.example/",
+                "tauri://evil.example/",
+                "http://tauri.localhost.evil.example/",
+                "file:///etc/passwd",
+                "javascript:alert(1)",
+                "data:text/html,hi",
+                "about:srcdoc",
+            ] {
+                assert!(
+                    !is_app_navigation(&url(target), &app_url),
+                    "{target} should be blocked"
+                );
+            }
+        }
+    }
 }

@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { closeGitFlyoutIfFocusLeft, GitFlyoutContext } from "../../lib/gitFlyoutRegion";
 import { defaultWorktreePath } from "../../lib/gitWorktreePaths";
-import { readBusyWorktreeThreads } from "../../lib/threadWorktree";
+import { isWorktreeSubmoduleRefusal, readBusyWorktreeThreads } from "../../lib/threadWorktree";
 import { getActionMenuPosition } from "./actionMenuPosition";
 import { toast } from "../../stores/toastStore";
 import { useGitStore } from "../../stores/gitStore";
@@ -242,18 +242,27 @@ export function GitWorktreesView({ repo, onError }: Props) {
       setConfirmingRemove(null);
       setConfirmingRemoveWithBranch(null);
       closeMenu();
-      await removeWorktree(repo.path, wtPath, false, branch, deleteBranch);
+      const result = await removeWorktree(repo.path, wtPath, false, branch, deleteBranch);
       // Threads that were running in the worktree fall back to the main
       // checkout, so their bindings need to be re-read.
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
       if (workspaceId) void useThreadStore.getState().refreshThreads(workspaceId);
-      toast.success(t("worktrees.toasts.removed"));
+      if (result?.branchDeleteError) {
+        toast.warning(t("worktrees.toasts.removedBranchKept", { branch: branch ?? "" }));
+      } else {
+        toast.success(t("worktrees.toasts.removed"));
+      }
     } catch (e) {
       const busyThreads = readBusyWorktreeThreads(e);
       onError(
         busyThreads && busyThreads.length > 0
           ? t("worktrees.errors.threadRunning", { threads: busyThreads.join(", ") })
-          : String(e),
+          : isWorktreeSubmoduleRefusal(e)
+            ? t("app:terminal.toasts.worktreesKeptAfterChange", {
+                count: 1,
+                names: branch || abbreviatePath(wtPath, repo.path),
+              })
+            : String(e),
       );
     } finally {
       setLoadingKey(null);

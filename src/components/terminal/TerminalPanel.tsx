@@ -6,8 +6,15 @@ import { useHarnessStore } from "../../stores/harnessStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { toast } from "../../stores/toastStore";
 import { handleDragDoubleClick, handleDragMouseDown } from "../../lib/windowDrag";
-import { isLinuxDesktop, isMacDesktop } from "../../lib/windowActions";
+import {
+  hasAppShortcutModifier,
+  isLinuxDesktop,
+  isMacDesktop,
+  isWindowsDesktop,
+} from "../../lib/windowActions";
+import { readTerminalWindowsPty, resolveTerminalWindowsPty } from "../../lib/terminalWindowsPty";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
+import { WorktreeRemovalRiskDialog } from "./WorktreeRemovalRiskDialog";
 import { ToggleOptionCard } from "../shared/ToggleOptionCard";
 import { getHarnessIcon } from "../shared/HarnessLogos";
 import { copyTextToClipboard, readTextFromClipboard } from "../../lib/clipboard";
@@ -36,7 +43,7 @@ import {
   markPaneTerminalDetached,
   markWorkspaceTerminalDetached,
 } from "./terminalCacheLifecycle";
-import { Terminal, type ILink, type ILinkProvider } from "@xterm/xterm";
+import { Terminal, type ILink, type ILinkProvider, type IWindowsPty } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -62,6 +69,8 @@ import type {
   TerminalNotification,
   TerminalRendererDiagnostics,
   WorkspaceStartupWorktreeConfig,
+  WorktreeRemovalRisk,
+  WorktreeSessionInfo,
 } from "../../types";
 
 interface TerminalPanelProps {
@@ -312,6 +321,19 @@ const pendingOutput = new Map<
 >();
 const cachedBackendRendererDiagnostics = new Map<string, BackendRendererDiagnosticsEntry>();
 const backendDiagnosticsRefreshTimers = new Map<string, number>();
+
+// Tells xterm the PTY is ConPTY, so it expects ConPTY's resize repaints and
+// only reflows itself on builds where ConPTY reflows too.
+let terminalWindowsPty: IWindowsPty | undefined;
+if (isWindowsDesktop()) {
+  terminalWindowsPty = resolveTerminalWindowsPty(undefined);
+  void readTerminalWindowsPty().then((windowsPty) => {
+    terminalWindowsPty = windowsPty;
+    for (const session of cachedTerminals.values()) {
+      session.terminal.options.windowsPty = windowsPty;
+    }
+  });
+}
 
 function terminalCacheKey(workspaceId: string, sessionId: string): string {
   return `${workspaceId}::${sessionId}`;
@@ -2190,6 +2212,9 @@ function createCachedTerminal(
     theme: getXtermThemeColors(getCurrentThemeMode()),
   };
   terminalOptions.allowNonHttpProtocols = true;
+  if (terminalWindowsPty) {
+    terminalOptions.windowsPty = terminalWindowsPty;
+  }
   const terminal = new Terminal(terminalOptions);
 
   const fitAddon = new FitAddon();
@@ -2286,7 +2311,7 @@ function createCachedTerminal(
       return false;
     }
     // Block broadcast shortcut from reaching the shell
-    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") return false;
+    if (hasAppShortcutModifier(event) && event.shiftKey && event.key.toLowerCase() === "i") return false;
     if (event.metaKey && !event.ctrlKey && event.key === "Backspace") {
       broadcastWrite("\x15");
       return false;
@@ -2296,8 +2321,8 @@ function createCachedTerminal(
       return false;
     }
     const k = event.key.toLowerCase();
-    if (event.metaKey && (k === "d" || k === "t")) return false;
-    if (event.ctrlKey && k === "t") return false;
+    if (event.metaKey && k === "d") return false;
+    if (hasAppShortcutModifier(event) && k === "t") return false;
     // Cmd+Arrow (macOS) / Home/End (Linux/Windows) → line navigation
     const isMac = isMacDesktop();
     if (isMac && event.metaKey) {
@@ -3034,9 +3059,14 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
   const createMultiSessionGroup = useTerminalStore((state) => state.createMultiSessionGroup);
   const getGroupWorktrees = useTerminalStore((state) => state.getGroupWorktrees);
   const removeGroupWorktrees = useTerminalStore((state) => state.removeGroupWorktrees);
+  const inspectWorktreesForRemoval = useTerminalStore((state) => state.inspectWorktreesForRemoval);
   const repos = useWorkspaceStore((state) => state.repos);
 
   const [worktreeCloseGroupId, setWorktreeCloseGroupId] = useState<string | null>(null);
+  const [pendingWorktreeRemoval, setPendingWorktreeRemoval] = useState<{
+    worktrees: WorktreeSessionInfo[];
+    risks: WorktreeRemovalRisk[];
+  } | null>(null);
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   // Only one tab can be renamed at a time, so a single ref is safe despite being inside .map()
@@ -3408,15 +3438,53 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
       }
 
       if (worktrees.length > 0) {
-        try {
-          await removeGroupWorktrees(workspaceId, worktrees);
-        } catch (error) {
-          toast.error(String(error));
+        // The sessions are closed, so nothing writes to the worktrees anymore.
+        // Any holding uncommitted files or unmerged commits need a second,
+        // explicit confirmation before they are forced out.
+        const risks = await inspectWorktreesForRemoval(worktrees);
+        if (risks.length > 0) {
+          setPendingWorktreeRemoval({ worktrees, risks });
+        } else {
+          try {
+            await removeGroupWorktrees(workspaceId, worktrees);
+          } catch (error) {
+            toast.error(String(error));
+          }
         }
       }
     }
     setWorktreeCloseGroupId(null);
-  }, [worktreeCloseGroupId, groups, getGroupWorktrees, removeGroupWorktrees, closeSession, t, workspaceId]);
+  }, [
+    worktreeCloseGroupId,
+    groups,
+    getGroupWorktrees,
+    inspectWorktreesForRemoval,
+    removeGroupWorktrees,
+    closeSession,
+    t,
+    workspaceId,
+  ]);
+
+  const finishPendingWorktreeRemoval = useCallback(
+    async (forceRisky: boolean) => {
+      if (!pendingWorktreeRemoval) return;
+      const { worktrees, risks } = pendingWorktreeRemoval;
+      setPendingWorktreeRemoval(null);
+      const riskyPaths = risks.map((risk) => risk.worktreePath);
+      const toRemove = forceRisky
+        ? worktrees
+        : worktrees.filter((worktree) => !riskyPaths.includes(worktree.worktreePath));
+      if (toRemove.length === 0) return;
+      try {
+        await removeGroupWorktrees(workspaceId, toRemove, {
+          forceWorktrees: forceRisky ? risks : [],
+        });
+      } catch (error) {
+        toast.error(String(error));
+      }
+    },
+    [pendingWorktreeRemoval, removeGroupWorktrees, workspaceId],
+  );
 
   const handleWorktreeCloseCancel = useCallback(async () => {
     if (!worktreeCloseGroupId) return;
@@ -4498,6 +4566,12 @@ export function TerminalPanel({ workspaceId, embedded = false }: TerminalPanelPr
         onConfirm={handleWorktreeCloseConfirm}
         onCancel={handleWorktreeCloseCancel}
         onDismiss={dismissWorktreeCloseDialog}
+      />
+
+      <WorktreeRemovalRiskDialog
+        risks={pendingWorktreeRemoval?.risks ?? null}
+        onForceRemove={() => void finishPendingWorktreeRemoval(true)}
+        onKeep={() => void finishPendingWorktreeRemoval(false)}
       />
     </div>
   );

@@ -144,6 +144,18 @@ function assertPermissionProfileShape(schemaRoot, file) {
   }
 }
 
+function assertSchemaMethods(schemaRoot, file, expectedMethods) {
+  const schema = loadJson(requireRootFile(schemaRoot, file));
+  const methods = new Set(
+    (schema.oneOf ?? [])
+      .flatMap((variant) => variant.properties?.method?.enum ?? [])
+      .filter((method) => typeof method === "string"),
+  );
+  for (const method of expectedMethods) {
+    assert(methods.has(method), `${file} is missing method ${method}`);
+  }
+}
+
 function assertRootRequestMethods(schemaRoot, expectedMethods) {
   const schema = loadJson(requireRootFile(schemaRoot, "ServerRequest.json"));
   const requestMethods = new Set(
@@ -177,6 +189,8 @@ try {
     "../PermissionsRequestApprovalParams.json",
     "../PermissionsRequestApprovalResponse.json",
     "../ServerRequest.json",
+    "../ServerNotification.json",
+    "../ClientRequest.json",
     "ThreadTurnsListParams.json",
     "ThreadTurnsListResponse.json",
     "ThreadStartParams.json",
@@ -185,7 +199,9 @@ try {
     "TurnStartParams.json",
     "TurnSteerParams.json",
     "ReviewStartParams.json",
-    "ThreadRollbackParams.json",
+    "ThreadRevertParams.json",
+    "ThreadRevertResponse.json",
+    "CommandExecParams.json",
     "ThreadCompactStartParams.json",
     "FeedbackUploadParams.json",
     "ThreadInjectItemsParams.json",
@@ -213,7 +229,22 @@ try {
     }
   }
 
-  assertProperties(schemaRoot, "ThreadTurnsListParams.json", ["threadId", "cursor", "limit"]);
+  assertProperties(schemaRoot, "ThreadTurnsListParams.json", [
+    "threadId",
+    "cursor",
+    "limit",
+    "sortDirection",
+    "itemsView",
+  ]);
+  // Rollback reverts to just before the oldest dropped turn.
+  assertProperties(schemaRoot, "ThreadRevertParams.json", ["threadId", "beforeTurnId"]);
+  // The startup sandbox probe runs a fixed command under the thread's policy.
+  assertProperties(schemaRoot, "CommandExecParams.json", [
+    "command",
+    "cwd",
+    "timeoutMs",
+    "sandboxPolicy",
+  ]);
   for (const file of [
     "ThreadStartParams.json",
     "ThreadResumeParams.json",
@@ -230,6 +261,18 @@ try {
     assertGranularApprovalPolicy(schemaRoot, file);
   }
 
+  // The schema files keep the guardian name; the wire methods do not.
+  assertSchemaMethods(schemaRoot, "ServerNotification.json", [
+    "item/autoApprovalReview/started",
+    "item/autoApprovalReview/completed",
+  ]);
+
+  assertSchemaMethods(schemaRoot, "ClientRequest.json", [
+    "thread/turns/list",
+    "thread/revert",
+    "command/exec",
+  ]);
+
   assertRootRequestMethods(schemaRoot, [
     "account/chatgptAuthTokens/refresh",
     "item/permissions/requestApproval",
@@ -241,6 +284,8 @@ try {
   assertSourceContains("src-tauri/src/engines/codex.rs", [
     "THREAD_TURNS_LIST_METHODS",
     "thread/turns/list",
+    "thread/revert",
+    "command/exec",
     "codex_wire_approval_policy",
     '"approvalsReviewer"',
     "account/chatgptAuthTokens/refresh",
@@ -257,8 +302,8 @@ try {
     '"warning"',
     '"guardianwarning"',
     '"modelverification"',
-    '"itemguardianapprovalreviewstarted"',
-    '"itemguardianapprovalreviewcompleted"',
+    '"itemautoapprovalreviewstarted"',
+    '"itemautoapprovalreviewcompleted"',
     '"itemfilechangepatchupdated"',
     '"commandexecoutputdelta"',
     '"threadrealtimetranscriptdelta"',

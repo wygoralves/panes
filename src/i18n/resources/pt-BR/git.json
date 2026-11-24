@@ -101,7 +101,8 @@
   },
   "files": {
     "filterPlaceholder": "Filtrar arquivos...",
-    "filterCount": "{{count}} arquivos",
+    "filterCount_one": "{{count}} arquivo",
+    "filterCount_other": "{{count}} arquivos",
     "filterCountTitle": "Só pastas expandidas entram na busca",
     "loading": "Carregando arquivos...",
     "emptyFiltered": "Nenhum arquivo corresponde ao filtro",
@@ -132,7 +133,8 @@
     "toasts": {
       "created": "Worktree criada: {{branchName}}",
       "pruned": "Worktrees obsoletas removidas",
-      "removed": "Worktree removida"
+      "removed": "Worktree removida",
+      "removedBranchKept": "Worktree removida, mas o git manteve a branch {{branch}} (normalmente porque ela tem commits não mesclados)"
     },
     "errors": {
       "threadRunning": "Esta worktree ainda está executando um chat ({{threads}}). Pare o turno antes de removê-la."

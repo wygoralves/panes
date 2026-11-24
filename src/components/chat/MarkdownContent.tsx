@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import DOMPurify from "dompurify";
 import { recordPerfMetric } from "../../lib/perfTelemetry";
 import {
   classifyLinkTarget,
@@ -33,6 +34,29 @@ const markdownWorkerCallbacks = new Map<
     reject: (reason?: unknown) => void;
   }
 >();
+
+// Admits web, mail, phone and file links, fragments, relative paths and the
+// local file references the linkifier emits (`src/a.ts:12`, `README.md:4`,
+// `Makefile:12`, `C:\repo\a.ts`, `\\server\share`). Any other scheme, and
+// protocol-relative `//host` links, are dropped. A bare `name:line[:col]` can
+// only evaluate a number even if a browser reads `name` as a scheme.
+export const MARKDOWN_ALLOWED_URI_RE =
+  /^(?!\/[\\/]|\\\/)(?:(?:https?|mailto|tel|file):|[a-z]:[\\/]|[^a-z]|[a-z][a-z0-9+.-]*(?:[^a-z0-9+.:-]|$)|[a-z0-9+-]*\.[a-z0-9+.-]*:\d|[a-z][a-z0-9+.-]*:\d+(?::\d+)?$)/i;
+
+// The markdown parser already encodes raw HTML. This is the last barrier
+// before the HTML reaches the DOM, so a parser bug cannot run script.
+function sanitizeMarkdownHtml(html: string): string {
+  if (!DOMPurify.isSupported) {
+    // With no DOM at all (server rendering in tests) nothing can execute the
+    // markup. A DOM that DOMPurify cannot use gets no markup at all.
+    return typeof document === "undefined" ? html : "";
+  }
+  return DOMPurify.sanitize(html, {
+    ALLOWED_URI_REGEXP: MARKDOWN_ALLOWED_URI_RE,
+    FORBID_TAGS: ["style", "form", "iframe", "object", "embed"],
+    FORBID_ATTR: ["style"],
+  });
+}
 
 function computeCacheKey(content: string): string {
   let hash = 2166136261;
@@ -178,7 +202,7 @@ export function shouldRenderMarkdownWorkerPlaceholder({
   );
 }
 
-function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
+export function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
   if (event.defaultPrevented || event.button !== 0) {
     return;
   }
@@ -205,6 +229,11 @@ function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
 
   const targetKind = classifyLinkTarget(rawHref);
   if (targetKind === "other") {
+    // In-page fragments (footnotes) keep their default scroll. Anything else
+    // would navigate the app window away from Panes.
+    if (!rawHref.startsWith("#")) {
+      event.preventDefault();
+    }
     return;
   }
 
@@ -216,6 +245,19 @@ function handleMarkdownLinkClick(event: ReactMouseEvent<HTMLDivElement>): void {
     shiftKey: event.shiftKey,
     sourceLeafId: getWorkspacePaneLeafIdFromEventTarget(event.currentTarget),
   });
+}
+
+// A middle click on a link would open it in a new webview window.
+export function handleMarkdownLinkAuxClick(event: ReactMouseEvent<HTMLDivElement>): void {
+  const target = event.target;
+  const element = target instanceof Element
+    ? target
+    : target instanceof Node
+      ? target.parentElement
+      : null;
+  if (element?.closest("a")) {
+    event.preventDefault();
+  }
 }
 
 export default function MarkdownContent({
@@ -248,7 +290,7 @@ export default function MarkdownContent({
     if (showWorkerPlaceholder) {
       return null;
     }
-    return renderMarkdownToHtml(content);
+    return sanitizeMarkdownHtml(renderMarkdownToHtml(content));
   }, [cachedHtml, content, showWorkerPlaceholder]);
 
   useEffect(() => {
@@ -285,10 +327,11 @@ export default function MarkdownContent({
     parseStartedAtRef.current = performance.now();
 
     parseMarkdownInWorker(content)
-      .then((html) => {
+      .then((rawHtml) => {
         if (disposed) {
           return;
         }
+        const html = sanitizeMarkdownHtml(rawHtml);
         writeCachedMarkdownHtml(cacheKey, html);
         setWorkerHtml(html);
         recordPerfMetric("chat.markdown.worker.ms", performance.now() - parseStartedAtRef.current, {
@@ -355,6 +398,7 @@ export default function MarkdownContent({
       className={wrapperClassName}
       style={style}
       onClickCapture={handleMarkdownLinkClick}
+      onAuxClick={handleMarkdownLinkAuxClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

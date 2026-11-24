@@ -56,7 +56,11 @@ function resolveStartupWorkspaceId(
   }
 
   if (!savedId) {
-    return null;
+    // First run: with a single usable workspace there is nothing to choose, so activate it.
+    const candidates = workspaces.filter(
+      (workspace) => !isTransientLinuxAppImageRoot(workspace.rootPath),
+    );
+    return candidates.length === 1 ? candidates[0].id : null;
   }
 
   return (

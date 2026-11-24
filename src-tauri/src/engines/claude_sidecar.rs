@@ -246,12 +246,19 @@ enum SidecarEvent {
         #[serde(rename = "bundledClaudeCodeVersion")]
         bundled_claude_code_version: Option<String>,
     },
+    /// Raised locally when the sidecar's stdout closes. It never comes off the
+    /// wire: the transport keeps its own sender alive, so the broadcast channel
+    /// never reports Closed and waiters need this to learn the process is gone.
+    #[serde(skip)]
+    Terminated {
+        reason: String,
+    },
 }
 
 impl SidecarEvent {
     fn request_id(&self) -> Option<&str> {
         match self {
-            SidecarEvent::Ready => None,
+            SidecarEvent::Ready | SidecarEvent::Terminated { .. } => None,
             SidecarEvent::SessionInit { id, .. }
             | SidecarEvent::TurnStarted { id, .. }
             | SidecarEvent::TextDelta { id, .. }
@@ -341,6 +348,59 @@ struct ClaudeRuntimeInfo {
 
 // ── Transport ─────────────────────────────────────────────────────────
 
+/// Parses the sidecar's stdout into events until the stream ends, then raises
+/// `Terminated` so every turn waiting on the channel learns the process died.
+fn spawn_stdout_reader<R>(stdout: R, tx: broadcast::Sender<SidecarEvent>)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        let reason = loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => match serde_json::from_str::<SidecarEvent>(&line) {
+                    Ok(event) => {
+                        let _ = tx.send(trim_sidecar_event_for_buffer(event));
+                    }
+                    Err(e) => {
+                        // The line can carry prompts, tool inputs and file
+                        // contents, and serde's message can quote them, so
+                        // only the line's shape and the error class are logged.
+                        log::warn!(
+                            "claude sidecar: failed to parse event type={} len={}: {:?} error at column {}",
+                            sidecar_line_event_type(&line),
+                            line.len(),
+                            e.classify(),
+                            e.column()
+                        );
+                    }
+                },
+                Ok(None) => {
+                    log::info!("claude sidecar stdout EOF");
+                    break "the sidecar process exited".to_string();
+                }
+                Err(e) => {
+                    log::warn!("claude sidecar stdout read error: {e}");
+                    break format!("reading the sidecar output failed: {e}");
+                }
+            }
+        };
+        let _ = tx.send(SidecarEvent::Terminated { reason });
+    });
+}
+
+fn sidecar_line_event_type(line: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 struct ClaudeTransport {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
@@ -367,12 +427,16 @@ impl ClaudeTransport {
         let mut command = Command::new(&node);
         process_utils::configure_tokio_command(&mut command);
         runtime_env::apply_missing_login_shell_env(&mut command).await;
-        if let Some(augmented_path) = executable_augmented_path(&node) {
+        if let Some(augmented_path) = executable_augmented_path(&node).await {
             command.env("PATH", augmented_path);
         }
         if let Some(module_specifier) = sdk_module_specifier {
             command.env("CLAUDE_AGENT_SDK_MODULE", module_specifier);
         }
+        // The sidecar reads this variable directly. Drop an inherited one, which
+        // the resolver may have rejected (such as an npm shim), before the
+        // provider env and the resolved executable below set it on purpose.
+        command.env_remove("PANES_CLAUDE_CODE_EXECUTABLE");
         for (key, value) in instance.process_env("claude") {
             command.env(key, value);
         }
@@ -421,34 +485,7 @@ impl ClaudeTransport {
         let (event_tx, _) = broadcast::channel(SIDECAR_EVENT_BUFFER_CAPACITY);
 
         // Stdout reader: parse JSON lines → broadcast SidecarEvents
-        {
-            let tx = event_tx.clone();
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(stdout).lines();
-                loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => match serde_json::from_str::<SidecarEvent>(&line) {
-                            Ok(event) => {
-                                let _ = tx.send(trim_sidecar_event_for_buffer(event));
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "claude sidecar: failed to parse event: {e} — line: {line}"
-                                );
-                            }
-                        },
-                        Ok(None) => {
-                            log::info!("claude sidecar stdout EOF");
-                            break;
-                        }
-                        Err(e) => {
-                            log::warn!("claude sidecar stdout read error: {e}");
-                            break;
-                        }
-                    }
-                }
-            });
-        }
+        spawn_stdout_reader(stdout, event_tx.clone());
 
         // Stderr reader: log only
         {
@@ -684,6 +721,10 @@ struct ClaudeState {
     resource_dir: Option<PathBuf>,
     runtime_model_cache: Option<Vec<ModelInfo>>,
     runtime_info: Option<ClaudeRuntimeInfo>,
+    /// Approvals the sidecar still waits on, mapped to the query that asked
+    /// and the transport that query runs on. The sidecar ignores an answer
+    /// for any other id, so Panes must not report one as delivered.
+    pending_approvals: HashMap<String, (String, Arc<ClaudeTransport>)>,
 }
 
 pub struct ClaudeSidecarEngine {
@@ -831,10 +872,11 @@ impl ClaudeSidecarEngine {
                     Ok(SidecarEvent::Error { message, .. }) => {
                         anyhow::bail!("claude sidecar startup error: {message}");
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("claude sidecar process terminated during startup");
                     }
+                    Ok(_) => continue,
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
@@ -942,11 +984,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed while steering the turn");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -1033,11 +1076,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed while reading usage limits");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -1082,11 +1126,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed during model discovery");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -1133,11 +1178,12 @@ impl ClaudeSidecarEngine {
                     {
                         anyhow::bail!(message);
                     }
-                    Ok(_) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Ok(SidecarEvent::Terminated { .. })
+                    | Err(broadcast::error::RecvError::Closed) => {
                         anyhow::bail!("Claude sidecar closed while reading runtime information");
                     }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 }
             }
         })
@@ -1159,9 +1205,12 @@ impl ClaudeSidecarEngine {
         let instance = self.instance_settings();
         let api_key_set = std::env::var("ANTHROPIC_API_KEY").is_ok()
             || instance.env.contains_key("ANTHROPIC_API_KEY");
-        let system_claude = resolve_claude_executable_for_instance(&instance);
+        let claude_resolution = resolve_claude_runtime_for_instance(&instance);
+        let system_claude = claude_resolution.executable;
         let system_claude_version = match system_claude.as_deref() {
-            Some(executable) => probe_claude_version(executable).await,
+            Some(executable) => {
+                probe_claude_version(executable, node_resolution.executable.as_deref()).await
+            }
             None => None,
         };
         let runtime_info = if node_available && sidecar_exists {
@@ -1207,6 +1256,13 @@ impl ClaudeSidecarEngine {
             checks.push("Agent SDK sidecar script found".to_string());
         } else {
             warnings.push("Agent SDK sidecar script not found".to_string());
+        }
+
+        if let Some(shim) = claude_resolution.dropped_shim.as_ref() {
+            warnings.push(format!(
+                "Claude Code at `{}` is a script shim the Agent SDK cannot launch, so the bundled runtime is used instead",
+                shim.display()
+            ));
         }
 
         if let Some(claude_path) = system_claude.as_ref() {
@@ -1374,6 +1430,7 @@ fn resolve_node_candidates(
 async fn probe_node_executable(path: PathBuf) -> NodeExecutableCandidate {
     let mut command = Command::new(&path);
     process_utils::configure_tokio_command(&mut command);
+    command.kill_on_drop(true);
     let probe = timeout(
         NODE_RUNTIME_PROBE_TIMEOUT,
         command.arg("-e").arg(NODE_RUNTIME_PROBE_SCRIPT).output(),
@@ -1520,13 +1577,14 @@ fn trim_sidecar_event_for_buffer(mut event: SidecarEvent) -> SidecarEvent {
     event
 }
 
-fn executable_augmented_path(executable: &Path) -> Option<OsString> {
-    runtime_env::augmented_path_with_prepend(
+async fn executable_augmented_path(executable: &Path) -> Option<OsString> {
+    runtime_env::engine_path_with_prepend(
         executable
             .parent()
             .into_iter()
             .map(|value| value.to_path_buf()),
     )
+    .await
 }
 
 fn paths_match(left: &Path, right: &Path) -> bool {
@@ -1541,9 +1599,92 @@ fn paths_match(left: &Path, right: &Path) -> bool {
 }
 
 fn resolve_claude_executable_for_instance(instance: &EngineInstanceSettings) -> Option<PathBuf> {
-    instance
+    resolve_claude_runtime_for_instance(instance).executable
+}
+
+/// The Claude Code executable the Agent SDK will spawn, if any.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ClaudeExecutableResolution {
+    executable: Option<PathBuf>,
+    /// A Windows npm shim that was found but had nothing spawnable next to
+    /// it, so the bundled runtime is used instead.
+    dropped_shim: Option<PathBuf>,
+}
+
+fn resolve_claude_runtime_for_instance(
+    instance: &EngineInstanceSettings,
+) -> ClaudeExecutableResolution {
+    match instance
         .executable_override()
         .or_else(resolve_system_claude_executable)
+    {
+        Some(found) => spawnable_claude_executable(found, cfg!(target_os = "windows")),
+        None => ClaudeExecutableResolution::default(),
+    }
+}
+
+/// The SDK spawns the executable without a shell, and Node refuses to spawn
+/// a .cmd or .bat that way (EINVAL since CVE-2024-27980); a .ps1 cannot be
+/// spawned at all. On Windows, swap an npm shim for the program behind it, or
+/// drop it so the bundled runtime is used.
+fn spawnable_claude_executable(path: PathBuf, is_windows: bool) -> ClaudeExecutableResolution {
+    if !is_windows || !is_windows_cli_shim(&path) {
+        return ClaudeExecutableResolution {
+            executable: Some(path),
+            dropped_shim: None,
+        };
+    }
+
+    match unwrap_windows_cli_shim(&path) {
+        Some(target) => {
+            log::info!(
+                "claude: using {} behind the npm shim {}",
+                target.display(),
+                path.display()
+            );
+            ClaudeExecutableResolution {
+                executable: Some(target),
+                dropped_shim: None,
+            }
+        }
+        None => {
+            log::warn!(
+                "claude: {} is a shim the Agent SDK cannot spawn and no claude.exe or cli.js sits next to it; using the bundled runtime",
+                path.display()
+            );
+            ClaudeExecutableResolution {
+                executable: None,
+                dropped_shim: Some(path),
+            }
+        }
+    }
+}
+
+fn is_windows_cli_shim(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["cmd", "bat", "ps1"]
+                .iter()
+                .any(|shim| extension.eq_ignore_ascii_case(shim))
+        })
+}
+
+fn unwrap_windows_cli_shim(shim: &Path) -> Option<PathBuf> {
+    let shim_dir = shim.parent()?;
+    let package_dir = shim_dir
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code");
+    [
+        // npm layout since 2.1: the package bin is a native executable.
+        package_dir.join("bin").join("claude.exe"),
+        // npm layout up to 2.0: the SDK runs .js entries with node.
+        package_dir.join("cli.js"),
+        shim_dir.join("claude.exe"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
 }
 
 fn resolve_system_claude_executable() -> Option<PathBuf> {
@@ -1569,8 +1710,18 @@ fn resolve_system_claude_executable() -> Option<PathBuf> {
     which::which_in("claude", Some(search_path), cwd).ok()
 }
 
-async fn probe_claude_version(executable: &Path) -> Option<String> {
-    let mut command = Command::new(executable);
+async fn probe_claude_version(executable: &Path, node: Option<&Path>) -> Option<String> {
+    let is_js_entry = executable
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("js"));
+    let mut command = if is_js_entry {
+        // Probe a cli.js the way the SDK runs it: through node.
+        let mut command = Command::new(node?);
+        command.arg(executable);
+        command
+    } else {
+        Command::new(executable)
+    };
     process_utils::configure_tokio_command(&mut command);
     let output = timeout(Duration::from_secs(5), command.arg("--version").output())
         .await
@@ -1874,9 +2025,9 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
         for powershell in runtime_env::windows_login_probe_shells() {
             let mut cmd = Command::new(&powershell);
             cmd.args([
-                "-NoLogo",
-                "-Command",
-                "(Get-Command node -ErrorAction SilentlyContinue | Select-Object -First 1).Source",
+                "-NoLogo".to_string(),
+                "-Command".to_string(),
+                runtime_env::windows_application_probe_expression("node"),
             ]);
             process_utils::configure_tokio_command(&mut cmd);
 
@@ -2085,6 +2236,7 @@ impl Engine for ClaudeSidecarEngine {
             "sandboxMode": thread_config.sandbox.sandbox_mode.clone(),
             "reasoningEffort": thread_config.sandbox.reasoning_effort.clone(),
             "planMode": plan_mode,
+            "projectSettingsTrusted": thread_config.sandbox.project_settings_trusted,
         });
 
         if let Some(ref session_id) = thread_config.agent_session_id {
@@ -2109,21 +2261,14 @@ impl Engine for ClaudeSidecarEngine {
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => {
-                    let cancel_id = Uuid::new_v4().to_string();
-                    let cancel_cmd = serde_json::json!({
-                        "id": cancel_id.clone(),
-                        "method": "cancel",
-                        "params": { "requestId": request_id.clone() },
-                    });
-                    let _ = transport.send_command(&cancel_cmd).await;
-                    // The sidecar answers only once the cancelled query has
-                    // stopped. Releasing the thread before that would let the
-                    // next turn overlap the query being torn down.
-                    if !wait_for_cancel_ack(&mut rx, &request_id, &cancel_id).await {
-                        log::warn!(
-                            "claude sidecar did not acknowledge the cancel for request {request_id}"
-                        );
-                    }
+                    // The sidecar denies the query's open approvals as it
+                    // cancels, so an answer from now on is refused.
+                    self.state
+                        .lock()
+                        .await
+                        .pending_approvals
+                        .retain(|_, (owner, _)| owner != &request_id);
+                    cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                     let mut state = self.state.lock().await;
                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
                         if config.active_request_id.as_deref() == Some(request_id.as_str()) {
@@ -2336,6 +2481,14 @@ impl Engine for ClaudeSidecarEngine {
                                     details,
                                     ..
                                 } => {
+                                    state_ref
+                                        .lock()
+                                        .await
+                                        .pending_approvals
+                                        .insert(
+                                            approval_id.clone(),
+                                            (request_id.clone(), Arc::clone(&transport)),
+                                        );
                                     event_tx
                                         .send(EngineEvent::ApprovalRequested {
                                             approval_id,
@@ -2493,6 +2646,41 @@ impl Engine for ClaudeSidecarEngine {
                                         break;
                                     }
                                 }
+                                SidecarEvent::Terminated { reason } => {
+                                    event_tx
+                                        .send(EngineEvent::Error {
+                                            message: format!(
+                                                "Claude sidecar process terminated unexpectedly: {reason}"
+                                            ),
+                                            recoverable: false,
+                                        })
+                                        .await
+                                        .ok();
+                                    event_tx
+                                        .send(EngineEvent::TurnCompleted {
+                                            token_usage: None,
+                                            status: TurnCompletionStatus::Failed,
+                                        })
+                                        .await
+                                        .ok();
+                                    let mut state = state_ref.lock().await;
+                                    if let Some(config) =
+                                        state.threads.get_mut(&engine_thread_id_owned)
+                                    {
+                                        config.active_request_id = None;
+                                    }
+                                    // Another caller may already have replaced
+                                    // the dead transport; keep that one.
+                                    if state
+                                        .transport
+                                        .as_ref()
+                                        .map(|current| Arc::ptr_eq(current, &transport))
+                                        .unwrap_or(false)
+                                    {
+                                        state.transport = None;
+                                    }
+                                    break;
+                                }
                                 SidecarEvent::Ready
                                 | SidecarEvent::Models { .. }
                                 | SidecarEvent::Version { .. }
@@ -2502,6 +2690,17 @@ impl Engine for ClaudeSidecarEngine {
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             log::warn!("claude sidecar: event receiver lagged by {n} messages");
+                            // The turn fails here, so the sidecar query must
+                            // stop too, or it keeps running tools unseen and
+                            // overlaps the next turn on the same session.
+                            // The sidecar denies the query's open approvals as
+                            // it cancels, so an answer from now on is refused.
+                            state_ref
+                                .lock()
+                                .await
+                                .pending_approvals
+                                .retain(|_, (owner, _)| owner != &request_id);
+                            cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                             let message = format!(
                                 "Claude sidecar event stream skipped {n} messages under load."
                             );
@@ -2566,6 +2765,9 @@ impl Engine for ClaudeSidecarEngine {
         }
 
         let mut state = self.state.lock().await;
+        state
+            .pending_approvals
+            .retain(|_, (owner, _)| owner != &request_id);
         if let Some(config) = state.threads.get_mut(engine_thread_id) {
             config.active_request_id = None;
         }
@@ -2614,17 +2816,24 @@ impl Engine for ClaudeSidecarEngine {
     ) -> Result<(), anyhow::Error> {
         let normalized_response = normalize_approval_response_for_engine("claude", response)
             .map_err(anyhow::Error::msg)?;
-        let state = self.state.lock().await;
-        if let Some(ref transport) = state.transport {
-            let approval_cmd = serde_json::json!({
-                "method": "approval_response",
-                "params": {
-                    "approvalId": approval_id,
-                    "response": normalized_response,
-                },
-            });
-            transport.send_command(&approval_cmd).await?;
-        }
+        let mut state = self.state.lock().await;
+        // The sidecar silently drops an answer for an approval it no longer
+        // holds; refusing it here keeps the caller from recording it.
+        let Some((_, transport)) = state.pending_approvals.get(approval_id) else {
+            anyhow::bail!(crate::db::actions::APPROVAL_NOT_PENDING_ERROR);
+        };
+        // A settings change can replace the engine's transport while this
+        // query keeps running on the one that asked, so answer through that.
+        let transport = Arc::clone(transport);
+        let approval_cmd = serde_json::json!({
+            "method": "approval_response",
+            "params": {
+                "approvalId": approval_id,
+                "response": normalized_response,
+            },
+        });
+        transport.send_command(&approval_cmd).await?;
+        state.pending_approvals.remove(approval_id);
         Ok(())
     }
 
@@ -2673,6 +2882,27 @@ fn normalize_claude_sandbox_policy(mut sandbox: SandboxPolicy) -> SandboxPolicy 
     sandbox
 }
 
+/// Asks the sidecar to stop a query and waits for it to confirm.
+async fn cancel_sidecar_request(
+    transport: &ClaudeTransport,
+    rx: &mut broadcast::Receiver<SidecarEvent>,
+    request_id: &str,
+) {
+    let cancel_id = Uuid::new_v4().to_string();
+    let cancel_cmd = serde_json::json!({
+        "id": cancel_id.clone(),
+        "method": "cancel",
+        "params": { "requestId": request_id },
+    });
+    let _ = transport.send_command(&cancel_cmd).await;
+    // The sidecar answers only once the cancelled query has stopped.
+    // Releasing the thread before that would let the next turn overlap the
+    // query being torn down.
+    if !wait_for_cancel_ack(rx, request_id, &cancel_id).await {
+        log::warn!("claude sidecar did not acknowledge the cancel for request {request_id}");
+    }
+}
+
 /// Waits for the sidecar to confirm that a cancelled query stopped. Returns
 /// false when the acknowledgement never arrives so the caller can carry on
 /// instead of hanging.
@@ -2698,9 +2928,10 @@ async fn wait_for_cancel_ack(
                     }
                     return true;
                 }
+                Ok(SidecarEvent::Terminated { .. })
+                | Err(broadcast::error::RecvError::Closed) => return false,
                 Ok(_) => continue,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => return false,
             }
         }
     })
@@ -2712,6 +2943,75 @@ async fn wait_for_cancel_ack(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_shim_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("panes-claude-shim-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir should exist");
+        dir
+    }
+
+    fn touch(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("path has a parent"))
+            .expect("parent should exist");
+        std::fs::write(path, "").expect("file should exist");
+    }
+
+    #[test]
+    fn windows_npm_shim_unwraps_to_the_packaged_claude_exe() {
+        let dir = temp_shim_dir();
+        let shim = dir.join("claude.cmd");
+        touch(&shim);
+        let exe = dir.join("node_modules/@anthropic-ai/claude-code/bin/claude.exe");
+        touch(&exe);
+        touch(&dir.join("node_modules/@anthropic-ai/claude-code/cli.js"));
+
+        let resolution = spawnable_claude_executable(shim, true);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(resolution.executable, Some(exe));
+        assert_eq!(resolution.dropped_shim, None);
+    }
+
+    #[test]
+    fn windows_npm_shim_unwraps_to_cli_js_for_older_packages() {
+        let dir = temp_shim_dir();
+        let shim = dir.join("claude.CMD");
+        touch(&shim);
+        let cli = dir.join("node_modules/@anthropic-ai/claude-code/cli.js");
+        touch(&cli);
+
+        let resolution = spawnable_claude_executable(shim, true);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(resolution.executable, Some(cli));
+    }
+
+    #[test]
+    fn windows_bare_shim_is_dropped_for_the_bundled_runtime() {
+        let dir = temp_shim_dir();
+        let shim = dir.join("claude.ps1");
+        touch(&shim);
+
+        let resolution = spawnable_claude_executable(shim.clone(), true);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(resolution.executable, None);
+        assert_eq!(resolution.dropped_shim, Some(shim));
+    }
+
+    #[test]
+    fn non_shim_and_non_windows_paths_pass_through() {
+        let exe = PathBuf::from(r"C:\Users\me\.local\bin\claude.exe");
+        assert_eq!(
+            spawnable_claude_executable(exe.clone(), true).executable,
+            Some(exe)
+        );
+        let shim = PathBuf::from("/usr/local/bin/claude.cmd");
+        assert_eq!(
+            spawnable_claude_executable(shim.clone(), false).executable,
+            Some(shim)
+        );
+    }
 
     fn sandbox_policy(sandbox_mode: &str, allow_network: bool) -> SandboxPolicy {
         SandboxPolicy {
@@ -2726,7 +3026,424 @@ mod tests {
             personality: None,
             output_schema: None,
             opencode_agent: None,
+            project_settings_trusted: false,
         }
+    }
+
+    /// A transport whose child is `cat`, so every command the engine writes
+    /// comes back on the returned stdout for the test to read. Events reach
+    /// the engine only when the test sends them on the transport's channel.
+    #[cfg(unix)]
+    fn echo_transport() -> (
+        Arc<ClaudeTransport>,
+        tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    ) {
+        let mut child = Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("cat should spawn");
+        let stdin = child.stdin.take().expect("cat stdin");
+        let stdout = child.stdout.take().expect("cat stdout");
+        let (event_tx, _) = broadcast::channel(SIDECAR_EVENT_BUFFER_CAPACITY);
+        (
+            Arc::new(ClaudeTransport {
+                child: Mutex::new(child),
+                stdin: Mutex::new(stdin),
+                event_tx,
+            }),
+            BufReader::new(stdout).lines(),
+        )
+    }
+
+    #[cfg(unix)]
+    async fn engine_with_transport(transport: &Arc<ClaudeTransport>) -> ClaudeSidecarEngine {
+        let engine = ClaudeSidecarEngine::default();
+        {
+            let mut state = engine.state.lock().await;
+            state.transport = Some(Arc::clone(transport));
+            state.threads.insert(
+                "thread-1".to_string(),
+                ThreadConfig {
+                    scope: ThreadScope::Repo {
+                        repo_path: "/repo".to_string(),
+                    },
+                    model_id: "default".to_string(),
+                    sandbox: sandbox_policy("workspace-write", false),
+                    agent_session_id: None,
+                    active_request_id: None,
+                },
+            );
+        }
+        engine
+    }
+
+    #[cfg(unix)]
+    fn turn_input() -> TurnInput {
+        TurnInput {
+            message: "hello".to_string(),
+            attachments: Vec::new(),
+            plan_mode: false,
+            input_items: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    async fn next_command(
+        lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    ) -> serde_json::Value {
+        let line = timeout(Duration::from_secs(5), lines.next_line())
+            .await
+            .expect("timed out waiting for a sidecar command")
+            .expect("read command")
+            .expect("command line");
+        serde_json::from_str(&line).expect("command json")
+    }
+
+    #[tokio::test]
+    async fn stdout_eof_raises_terminated() {
+        let (tx, mut rx) = broadcast::channel(8);
+        spawn_stdout_reader(&b"{\"type\":\"ready\"}\n"[..], tx);
+
+        let first = timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("ready event")
+            .expect("channel open");
+        assert!(matches!(first, SidecarEvent::Ready));
+        let second = timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("terminated event")
+            .expect("channel open");
+        assert!(matches!(second, SidecarEvent::Terminated { .. }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sidecar_exit_mid_turn_fails_the_turn() {
+        let (transport, mut commands) = echo_transport();
+        let engine = engine_with_transport(&transport).await;
+        let (event_tx, mut events) = mpsc::channel(16);
+
+        let turn = tokio::spawn(async move {
+            engine
+                .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                .await
+                .expect("send_message");
+            engine
+        });
+        let query = next_command(&mut commands).await;
+        assert_eq!(query["method"], "query");
+
+        transport
+            .event_tx
+            .send(SidecarEvent::Terminated {
+                reason: "the sidecar process exited".to_string(),
+            })
+            .expect("a turn is subscribed");
+
+        let engine = timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends once the sidecar is gone")
+            .expect("turn task");
+        let mut received = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            received.push(event);
+        }
+        assert!(matches!(
+            received.first(),
+            Some(EngineEvent::Error {
+                recoverable: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            received.last(),
+            Some(EngineEvent::TurnCompleted {
+                status: TurnCompletionStatus::Failed,
+                ..
+            })
+        ));
+        assert!(engine.state.lock().await.transport.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn event_lag_cancels_the_sidecar_query() {
+        let (transport, mut commands) = echo_transport();
+        let engine = engine_with_transport(&transport).await;
+        // A one-slot channel that nobody drains holds the turn loop on its
+        // first forwarded delta while the broadcast buffer overflows.
+        let (event_tx, mut events) = mpsc::channel(1);
+
+        let turn = tokio::spawn(async move {
+            engine
+                .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                .await
+                .expect("send_message");
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+
+        for _ in 0..(SIDECAR_EVENT_BUFFER_CAPACITY + 8) {
+            let _ = transport.event_tx.send(SidecarEvent::TextDelta {
+                id: Some(request_id.clone()),
+                content: "x".to_string(),
+            });
+        }
+        let drain = tokio::spawn(async move {
+            let mut received = Vec::new();
+            while let Some(event) = events.recv().await {
+                received.push(event);
+            }
+            received
+        });
+
+        let cancel = next_command(&mut commands).await;
+        assert_eq!(cancel["method"], "cancel");
+        assert_eq!(cancel["params"]["requestId"], request_id.as_str());
+        transport
+            .event_tx
+            .send(SidecarEvent::CancelResult {
+                id: cancel["id"].as_str().map(str::to_string),
+                request_id: Some(request_id.clone()),
+                closed: false,
+            })
+            .expect("the turn is still subscribed");
+
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends after the cancel is acknowledged")
+            .expect("turn task");
+        let received = drain.await.expect("drain task");
+        assert!(matches!(
+            received.last(),
+            Some(EngineEvent::TurnCompleted {
+                status: TurnCompletionStatus::Failed,
+                ..
+            })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn approvals_answered_during_a_lag_cancel_are_refused() {
+        let (transport, mut commands) = echo_transport();
+        let engine = Arc::new(engine_with_transport(&transport).await);
+        let (event_tx, mut events) = mpsc::channel(1);
+
+        let turn = tokio::spawn({
+            let engine = Arc::clone(&engine);
+            async move {
+                engine
+                    .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                    .await
+                    .expect("send_message");
+            }
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+        let accept = || serde_json::json!({ "decision": "accept" });
+
+        for approval_id in ["approval-live", "approval-late"] {
+            transport
+                .event_tx
+                .send(SidecarEvent::ApprovalRequested {
+                    id: Some(request_id.clone()),
+                    approval_id: approval_id.to_string(),
+                    action_type: "command".to_string(),
+                    summary: "run a command".to_string(),
+                    details: None,
+                })
+                .expect("the turn is subscribed");
+            let forwarded = timeout(Duration::from_secs(5), events.recv())
+                .await
+                .expect("approval forwarded")
+                .expect("channel open");
+            assert!(matches!(forwarded, EngineEvent::ApprovalRequested { .. }));
+        }
+
+        // An approval of a running query still reaches the sidecar.
+        engine
+            .respond_to_approval("approval-live", accept(), None)
+            .await
+            .expect("a pending approval is delivered");
+        let answer = next_command(&mut commands).await;
+        assert_eq!(answer["method"], "approval_response");
+        assert_eq!(answer["params"]["approvalId"], "approval-live");
+
+        for _ in 0..(SIDECAR_EVENT_BUFFER_CAPACITY + 8) {
+            let _ = transport.event_tx.send(SidecarEvent::TextDelta {
+                id: Some(request_id.clone()),
+                content: "x".to_string(),
+            });
+        }
+        let drain = tokio::spawn(async move { while events.recv().await.is_some() {} });
+
+        let cancel = next_command(&mut commands).await;
+        assert_eq!(cancel["method"], "cancel");
+        // The sidecar drops the query's open approvals as it cancels, so an
+        // answer written now would be ignored there yet recorded as given.
+        let late = engine
+            .respond_to_approval("approval-late", accept(), None)
+            .await
+            .expect_err("an approval of a cancelled query is not delivered");
+        assert_eq!(
+            late.to_string(),
+            crate::db::actions::APPROVAL_NOT_PENDING_ERROR
+        );
+
+        transport
+            .event_tx
+            .send(SidecarEvent::CancelResult {
+                id: cancel["id"].as_str().map(str::to_string),
+                request_id: Some(request_id.clone()),
+                closed: false,
+            })
+            .expect("the turn is still subscribed");
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends after the cancel is acknowledged")
+            .expect("turn task");
+        drain.await.expect("drain task");
+        assert!(engine.state.lock().await.pending_approvals.is_empty());
+    }
+
+    #[cfg(unix)]
+    async fn request_approval(
+        transport: &ClaudeTransport,
+        events: &mut mpsc::Receiver<EngineEvent>,
+        request_id: &str,
+        approval_id: &str,
+    ) {
+        transport
+            .event_tx
+            .send(SidecarEvent::ApprovalRequested {
+                id: Some(request_id.to_string()),
+                approval_id: approval_id.to_string(),
+                action_type: "command".to_string(),
+                summary: "run a command".to_string(),
+                details: None,
+            })
+            .expect("the turn is subscribed");
+        let forwarded = timeout(Duration::from_secs(5), events.recv())
+            .await
+            .expect("approval forwarded")
+            .expect("channel open");
+        assert!(matches!(forwarded, EngineEvent::ApprovalRequested { .. }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn approvals_reach_the_query_transport_after_a_settings_change() {
+        let (transport, mut commands) = echo_transport();
+        let engine = Arc::new(engine_with_transport(&transport).await);
+        let (event_tx, mut events) = mpsc::channel(4);
+
+        let turn = tokio::spawn({
+            let engine = Arc::clone(&engine);
+            async move {
+                engine
+                    .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                    .await
+                    .expect("send_message");
+            }
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+        request_approval(&transport, &mut events, &request_id, "approval-1").await;
+
+        // New provider settings drop the engine's transport, but the running
+        // query keeps its own and still waits on this approval.
+        engine
+            .update_instance_settings(EngineInstanceSettings {
+                launch_args: vec!["--changed".to_string()],
+                ..Default::default()
+            })
+            .await;
+        assert!(engine.state.lock().await.transport.is_none());
+
+        engine
+            .respond_to_approval(
+                "approval-1",
+                serde_json::json!({ "decision": "accept" }),
+                None,
+            )
+            .await
+            .expect("the answer is delivered");
+        let answer = next_command(&mut commands).await;
+        assert_eq!(answer["method"], "approval_response");
+        assert_eq!(answer["params"]["approvalId"], "approval-1");
+
+        transport
+            .event_tx
+            .send(SidecarEvent::TurnCompleted {
+                id: Some(request_id),
+                status: "completed".to_string(),
+                session_id: None,
+                token_usage: None,
+                stop_reason: None,
+            })
+            .expect("the turn is subscribed");
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends")
+            .expect("turn task");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn approvals_answered_during_a_user_cancel_are_refused() {
+        let (transport, mut commands) = echo_transport();
+        let engine = Arc::new(engine_with_transport(&transport).await);
+        let (event_tx, mut events) = mpsc::channel(4);
+        let cancellation = CancellationToken::new();
+
+        let turn = tokio::spawn({
+            let engine = Arc::clone(&engine);
+            let cancellation = cancellation.clone();
+            async move {
+                engine
+                    .send_message("thread-1", turn_input(), event_tx, cancellation)
+                    .await
+                    .expect("send_message");
+            }
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+        request_approval(&transport, &mut events, &request_id, "approval-1").await;
+
+        cancellation.cancel();
+        let cancel = next_command(&mut commands).await;
+        assert_eq!(cancel["method"], "cancel");
+        // The sidecar denies the query's open approvals as it cancels, so an
+        // answer written while the engine waits for the acknowledgement would
+        // be ignored there yet recorded as given.
+        let late = engine
+            .respond_to_approval(
+                "approval-1",
+                serde_json::json!({ "decision": "accept" }),
+                None,
+            )
+            .await
+            .expect_err("an approval of a cancelled query is not delivered");
+        assert_eq!(
+            late.to_string(),
+            crate::db::actions::APPROVAL_NOT_PENDING_ERROR
+        );
+
+        transport
+            .event_tx
+            .send(SidecarEvent::CancelResult {
+                id: cancel["id"].as_str().map(str::to_string),
+                request_id: Some(request_id),
+                closed: false,
+            })
+            .expect("the turn is still subscribed");
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends after the cancel is acknowledged")
+            .expect("turn task");
     }
 
     #[test]
@@ -3141,6 +3858,46 @@ mod tests {
         );
         assert!(models[0].is_default);
         assert!(!models[1].is_default);
+    }
+
+    #[test]
+    fn maps_the_claude_five_point_five_lineup() {
+        let alias = |value: &str, display_name: &str, resolved_model: &str| SidecarModelInfo {
+            value: value.to_string(),
+            display_name: display_name.to_string(),
+            description: String::new(),
+            supports_effort: true,
+            supported_effort_levels: vec!["low".to_string(), "high".to_string()],
+            resolved_model: Some(resolved_model.to_string()),
+        };
+        // The shape Claude Code 2.1.330 reports from supportedModels().
+        let models = map_claude_models(vec![
+            alias("default", "Default (recommended)", "claude-opus-5-5"),
+            alias("opus", "Opus 5.5", "claude-opus-5-5"),
+            alias("fable", "Fable 5.2", "claude-fable-5-2"),
+            alias("sonnet", "Sonnet 5.5", "claude-sonnet-5-5"),
+            alias("haiku", "Haiku 5.5", "claude-haiku-5-5"),
+            alias("claude-fable-5-1", "Fable 5.1", "claude-fable-5-1"),
+        ]);
+
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| (model.id.as_str(), model.display_name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("opus", "Opus 5.5"),
+                ("fable", "Fable 5.2"),
+                ("sonnet", "Sonnet 5.5"),
+                ("haiku", "Haiku 5.5"),
+                ("claude-fable-5-1", "Fable 5.1"),
+            ]
+        );
+        assert!(models[0].is_default);
+        assert!(models[1..].iter().all(|model| !model.is_default));
+        assert!(models
+            .iter()
+            .all(|model| model.default_reasoning_effort == "high"));
     }
 
     #[test]

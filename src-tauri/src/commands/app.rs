@@ -125,6 +125,12 @@ fn preview_notification_sound_via_notification(
     notification.show().map_err(err_to_string)
 }
 
+/// Lets a macOS quit that bypasses the window (Dock, logout) hold for the unsaved-tabs prompt.
+#[tauri::command]
+pub fn set_unsaved_editor_tabs(has_unsaved: bool) {
+    crate::app_termination::set_has_unsaved_editor_tabs(has_unsaved);
+}
+
 #[tauri::command]
 pub async fn get_app_locale() -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
@@ -321,9 +327,12 @@ pub async fn set_terminal_accelerated_rendering(
     let _guard = config_write_lock.lock_owned().await;
 
     tokio::task::spawn_blocking(move || -> Result<bool, String> {
-        let mut config = AppConfig::load_or_create().map_err(err_to_string)?;
-        config.general.terminal_accelerated_rendering = if enabled { None } else { Some(false) };
-        config.save().map_err(err_to_string)?;
+        AppConfig::mutate(|config| {
+            config.general.terminal_accelerated_rendering =
+                if enabled { None } else { Some(false) };
+            Ok(())
+        })
+        .map_err(err_to_string)?;
         Ok(enabled)
     })
     .await
@@ -415,9 +424,11 @@ pub async fn set_chat_notifications_enabled(
     let _guard = config_write_lock.lock_owned().await;
 
     tokio::task::spawn_blocking(move || -> Result<bool, String> {
-        let mut config = AppConfig::load_or_create().map_err(err_to_string)?;
-        config.general.chat_notifications = if enabled { Some(true) } else { None };
-        config.save().map_err(err_to_string)?;
+        AppConfig::mutate(|config| {
+            config.general.chat_notifications = if enabled { Some(true) } else { None };
+            Ok(())
+        })
+        .map_err(err_to_string)?;
         Ok(enabled)
     })
     .await
@@ -433,9 +444,11 @@ pub async fn set_terminal_notifications_enabled(
     let _guard = config_write_lock.lock_owned().await;
 
     tokio::task::spawn_blocking(move || -> Result<bool, String> {
-        let mut config = AppConfig::load_or_create().map_err(err_to_string)?;
-        config.general.terminal_notifications = if enabled { Some(true) } else { None };
-        config.save().map_err(err_to_string)?;
+        AppConfig::mutate(|config| {
+            config.general.terminal_notifications = if enabled { Some(true) } else { None };
+            Ok(())
+        })
+        .map_err(err_to_string)?;
         Ok(enabled)
     })
     .await

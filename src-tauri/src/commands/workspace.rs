@@ -39,30 +39,64 @@ pub async fn open_workspace(
     let scan_depth = normalize_scan_depth(scan_depth);
     run_db(state.db.clone(), move |db| {
         let workspace = db::workspaces::upsert_workspace(db, &path, scan_depth)?;
-        let repos =
-            multi_repo::scan_git_repositories(&workspace.root_path, workspace.scan_depth as usize)?;
-        let repo_paths = repos
-            .iter()
-            .map(|repo| repo.path.clone())
-            .collect::<Vec<_>>();
-        db::repos::reconcile_workspace_repos(db, &workspace.id, &repo_paths)?;
-        let selection_configured =
-            db::workspaces::is_git_repo_selection_configured(db, &workspace.id)?;
-
-        for repo in repos {
-            let _ = db::repos::upsert_repo(
-                db,
-                &workspace.id,
-                &repo.name,
-                &repo.path,
-                &repo.default_branch,
-                !selection_configured,
-            );
-        }
-
+        scan_workspace_repos(db, &workspace)?;
         Ok(workspace)
     })
     .await
+}
+
+/// Scans the workspace root for git repositories and stores them as its repo rows.
+fn scan_workspace_repos(db: &crate::db::Database, workspace: &WorkspaceDto) -> anyhow::Result<()> {
+    let repos =
+        multi_repo::scan_git_repositories(&workspace.root_path, workspace.scan_depth as usize)?;
+    let repo_paths = repos
+        .iter()
+        .map(|repo| repo.path.clone())
+        .collect::<Vec<_>>();
+    db::repos::reconcile_workspace_repos(db, &workspace.id, &repo_paths)?;
+    let selection_configured = db::workspaces::is_git_repo_selection_configured(db, &workspace.id)?;
+
+    for repo in repos {
+        let _ = db::repos::upsert_repo(
+            db,
+            &workspace.id,
+            &repo.name,
+            &repo.path,
+            &repo.default_branch,
+            !selection_configured,
+        );
+    }
+
+    Ok(())
+}
+
+/// Registers the workspace root as a repo when the root is itself a git
+/// repository root. No other directory is read, so a default workspace in the
+/// home folder never walks Documents, Desktop or Downloads.
+pub(crate) fn register_workspace_root_repo(
+    db: &crate::db::Database,
+    workspace: &WorkspaceDto,
+) -> anyhow::Result<()> {
+    if !std::path::Path::new(&workspace.root_path)
+        .join(".git")
+        .exists()
+    {
+        return Ok(());
+    }
+    // Depth 0 only opens the root itself and never lists a directory.
+    let repos = multi_repo::scan_git_repositories(&workspace.root_path, 0)?;
+    let selection_configured = db::workspaces::is_git_repo_selection_configured(db, &workspace.id)?;
+    for repo in repos {
+        db::repos::upsert_repo(
+            db,
+            &workspace.id,
+            &repo.name,
+            &repo.path,
+            &repo.default_branch,
+            !selection_configured,
+        )?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -380,4 +414,51 @@ fn load_workspace(db: &crate::db::Database, workspace_id: &str) -> anyhow::Resul
 
 fn normalize_scan_depth(value: Option<i64>) -> Option<i64> {
     value.map(|depth| depth.clamp(MIN_SCAN_DEPTH, MAX_SCAN_DEPTH))
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::*;
+
+    fn fresh_workspace(
+        root: &std::path::Path,
+        base: &std::path::Path,
+    ) -> (crate::db::Database, WorkspaceDto) {
+        std::fs::create_dir_all(root).expect("create workspace root");
+        let db = crate::db::Database::open(base.join("workspaces.db")).expect("open db");
+        let workspace = db::workspaces::upsert_workspace(&db, &root.to_string_lossy(), None)
+            .expect("workspace");
+        (db, workspace)
+    }
+
+    #[test]
+    fn registering_a_default_workspace_that_is_a_repo_root_stores_its_repo() {
+        let base = std::env::temp_dir().join(format!("panes-default-root-{}", Uuid::new_v4()));
+        let root = base.join("project");
+        let (db, workspace) = fresh_workspace(&root, &base);
+        git2::Repository::init(&root).expect("init repo");
+
+        register_workspace_root_repo(&db, &workspace).expect("register root repo");
+
+        let repos = db::repos::get_repos(&db, &workspace.id).expect("repos");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].name, "project");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn registering_a_default_workspace_that_only_contains_repos_stores_none() {
+        let base = std::env::temp_dir().join(format!("panes-default-plain-{}", Uuid::new_v4()));
+        let root = base.join("home");
+        let (db, workspace) = fresh_workspace(&root, &base);
+        git2::Repository::init(root.join("Documents").join("nested")).expect("init nested repo");
+
+        register_workspace_root_repo(&db, &workspace).expect("register root repo");
+
+        let repos = db::repos::get_repos(&db, &workspace.id).expect("repos");
+        assert!(repos.is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

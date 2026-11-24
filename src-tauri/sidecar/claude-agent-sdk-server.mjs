@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Bridges the Claude Agent SDK to a stdio-based JSON-line protocol for Panes.
 
-import { readFile } from "node:fs/promises";
+import { access, open, readFile, realpath, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { ChildProcess, execFile } from "node:child_process";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -120,6 +121,10 @@ const MAX_ATTACHMENTS_PER_TURN = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS = 40_000;
 const TOOL_OUTPUT_CHUNK_SIZE = 8_192;
+// Every CLI tool that runs a shell command. The CLI allows the ones it
+// classifies as read-only before it consults canUseTool, unless an ask rule
+// names the tool.
+const SHELL_TOOL_NAMES = ["Bash", "PowerShell", "Monitor"];
 const TASK_TOOL_NAMES = new Set([
   "TaskCreate",
   "TaskUpdate",
@@ -517,6 +522,13 @@ function resolvePermissionMode(approvalPolicy, allowNetwork) {
     default:
       return allowNetwork ? "trusted" : "standard";
   }
+}
+
+// "trusted" leans on the sandbox to confine commands. Without it, commands
+// run with the user's full access, so they wait for approval instead.
+function effectivePermissionMode(approvalPolicy, allowNetwork, sandboxAvailable) {
+  const permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
+  return !sandboxAvailable && permissionMode === "trusted" ? "standard" : permissionMode;
 }
 
 function requiresApproval(permissionMode, toolName, allowedTools) {
@@ -1405,9 +1417,11 @@ function buildPermissionHandler({
   networkEnabled = allowNetwork,
   approvalPolicy,
   allowedTools = [],
+  // False when the thread expects the OS sandbox but it cannot run here.
+  sandboxAvailable = true,
 }) {
   const normalizedRoots = writableRoots.map((root) => path.resolve(root));
-  const permissionMode = resolvePermissionMode(approvalPolicy, allowNetwork);
+  const permissionMode = effectivePermissionMode(approvalPolicy, allowNetwork, sandboxAvailable);
   const allowedToolNames = new Set(allowedTools);
 
   return async (toolName, input, options) => {
@@ -2027,7 +2041,22 @@ function allowWriteRootsForSandbox(sandboxMode, writableRoots) {
   return writableRoots;
 }
 
-function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
+function denyWriteRootsForSandbox(cwd, sandboxMode, writableRoots) {
+  if (sandboxMode !== "read-only") {
+    return [];
+  }
+
+  // The sandbox lets commands write the working directory by default, and
+  // allowWrite only adds paths, so read-only has to deny the roots outright.
+  return [...new Set([path.resolve(cwd), ...writableRoots])];
+}
+
+function buildSandboxOptions(
+  sandboxMode,
+  writableRoots,
+  allowNetwork,
+  { cwd, permissionMode, sandboxAvailable },
+) {
   if (sandboxMode === "danger-full-access") {
     // Full access runs the CLI without the OS sandbox: unrestricted
     // filesystem writes, and network follows the thread's allowNetwork flag
@@ -2035,13 +2064,23 @@ function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
     return { enabled: false };
   }
 
+  // Auto-allowed commands skip canUseTool, so only the preset that runs
+  // without asking may use it. The others send every command to approval.
+  const autoAllow = permissionMode === "trusted";
   return {
     enabled: true,
-    failIfUnavailable: false,
-    autoAllowBashIfSandboxed: true,
+    // Where Panes found a working sandbox, every preset relies on it (auto-allow
+    // for trusted, denyWrite for read-only), so a sandbox that then fails to
+    // start fails the query. Where it found none, Panes already warned and asks
+    // before each command.
+    failIfUnavailable: sandboxAvailable,
+    autoAllowBashIfSandboxed: autoAllow,
     allowUnsandboxedCommands: false,
     filesystem: {
       allowWrite: allowWriteRootsForSandbox(sandboxMode, writableRoots),
+      ...(sandboxMode === "read-only"
+        ? { denyWrite: denyWriteRootsForSandbox(cwd, sandboxMode, writableRoots) }
+        : {}),
     },
     ...(allowNetwork
       ? {}
@@ -2053,6 +2092,140 @@ function buildSandboxOptions(sandboxMode, writableRoots, allowNetwork) {
           },
         }),
   };
+}
+
+// Test hook that can only make Panes stricter: it reports the OS sandbox as
+// unavailable so the fallback runs on any host.
+const forcedSandboxUnavailableReason =
+  process.env.PANES_CLAUDE_SANDBOX_UNAVAILABLE?.trim() || null;
+const SANDBOX_PROBE_TIMEOUT_MS = 5_000;
+let sandboxAvailabilityPromise = null;
+
+async function isExecutableOnPath(binary) {
+  const directories = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const directory of directories) {
+    try {
+      await access(path.join(directory, binary), fsConstants.X_OK);
+      return true;
+    } catch {
+      // Not in this directory.
+    }
+  }
+  return false;
+}
+
+async function probeSandboxAvailability() {
+  if (forcedSandboxUnavailableReason) {
+    return { available: false, reason: forcedSandboxUnavailableReason };
+  }
+  if (process.platform === "darwin") {
+    return { available: true };
+  }
+  if (process.platform === "win32") {
+    return { available: false, reason: "windows" };
+  }
+  if (process.platform !== "linux") {
+    return { available: false, reason: "unsupported_platform" };
+  }
+  for (const binary of ["bwrap", "socat"]) {
+    if (!(await isExecutableOnPath(binary))) {
+      return { available: false, reason: `missing_${binary}` };
+    }
+  }
+  // bubblewrap can be installed and still fail to start, for example when
+  // AppArmor blocks unprivileged user namespaces on Ubuntu, so start one.
+  try {
+    await execFileAsync("bwrap", ["--unshare-net", "--ro-bind", "/", "/", "true"], {
+      timeout: SANDBOX_PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return { available: false, reason: "bwrap_failed" };
+  }
+  return { available: true };
+}
+
+// The Claude Code CLI runs commands unsandboxed when the OS sandbox cannot
+// start and failIfUnavailable is false, so Panes checks for it itself.
+function detectSandboxAvailability() {
+  sandboxAvailabilityPromise ??= probeSandboxAvailability().catch(() => ({
+    available: false,
+    reason: "probe_failed",
+  }));
+  return sandboxAvailabilityPromise;
+}
+
+function sandboxUnavailableHint(reason) {
+  switch (reason) {
+    case "windows":
+      return "Native Windows has no OS sandbox for Claude commands; WSL2 provides one.";
+    case "missing_bwrap":
+    case "missing_socat":
+      return "Install bubblewrap and socat to sandbox Claude commands on Linux.";
+    case "bwrap_failed":
+      return "bubblewrap could not start a sandbox; on Ubuntu, allow unprivileged user namespaces in AppArmor.";
+    default:
+      return "This system cannot run the OS sandbox for Claude commands.";
+  }
+}
+
+const PROJECT_INSTRUCTION_FILES = ["CLAUDE.md", path.join(".claude", "CLAUDE.md")];
+const MAX_PROJECT_INSTRUCTION_CHARS = 40_000;
+
+// Opens without following a final link and without waiting on a FIFO.
+const PROJECT_INSTRUCTION_OPEN_FLAGS =
+  fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
+
+// Reads the start of one instruction file. Only a regular file whose real path
+// stays inside the project counts, so a repo cannot link its instructions to
+// files elsewhere on disk, and a FIFO or huge file cannot stall the turn.
+async function readProjectInstructionFile(projectRoot, filePath) {
+  let handle;
+  try {
+    const resolved = await realpath(filePath);
+    if (!resolved.startsWith(projectRoot + path.sep)) {
+      return null;
+    }
+    handle = await open(resolved, PROJECT_INSTRUCTION_OPEN_FLAGS);
+    const opened = await handle.stat();
+    // A checkout can swap a link into the path between the check and the
+    // open, so the path must still resolve to itself and to the opened file.
+    const current = (await realpath(resolved)) === resolved ? await stat(resolved) : null;
+    if (!opened.isFile() || current?.dev !== opened.dev || current?.ino !== opened.ino) {
+      return null;
+    }
+    // UTF-8 needs at most 4 bytes per character.
+    const buffer = Buffer.alloc(MAX_PROJECT_INSTRUCTION_CHARS * 4);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.toString("utf8", 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await handle?.close();
+  }
+}
+
+// Repos that are not Trusted load no project settings, and the SDK only reads
+// CLAUDE.md through the project source. The instructions are plain text, so
+// Panes reads them itself and appends them to the system prompt.
+async function readProjectInstructions(cwd) {
+  let projectRoot;
+  try {
+    projectRoot = await realpath(cwd);
+  } catch {
+    return null;
+  }
+  const sections = [];
+  for (const relativePath of PROJECT_INSTRUCTION_FILES) {
+    const filePath = path.join(cwd, relativePath);
+    const content = await readProjectInstructionFile(projectRoot, filePath);
+    const trimmed = content?.trim().slice(0, MAX_PROJECT_INSTRUCTION_CHARS);
+    if (trimmed) {
+      sections.push(
+        `Contents of ${filePath} (project instructions, checked into the codebase):\n\n${trimmed}`,
+      );
+    }
+  }
+  return sections.length > 0 ? sections.join("\n\n") : null;
 }
 
 function applyClaudeRuntime(options) {
@@ -2129,6 +2302,7 @@ async function handleQuery(req) {
     writableRoots = [],
     sandboxMode,
     reasoningEffort,
+    projectSettingsTrusted,
   } = params;
 
   const sessionKey = sessionId || resume || null;
@@ -2143,6 +2317,21 @@ async function handleQuery(req) {
     const normalizedSandboxMode = normalizeSandboxMode(sandboxMode);
     const normalizedWritableRoots = normalizeWritableRoots(sessionCwd, writableRoots);
     const networkEnabled = effectiveAllowNetwork(normalizedSandboxMode, allowNetwork);
+    const sandboxAvailability =
+      normalizedSandboxMode === "danger-full-access"
+        ? { available: true }
+        : await detectSandboxAvailability();
+    const permissionMode = effectivePermissionMode(
+      approvalPolicy,
+      Boolean(allowNetwork),
+      sandboxAvailability.available,
+    );
+    // Only a Trusted repo may run its own settings: hooks, env, apiKeyHelper
+    // and .mcp.json servers all execute outside the sandbox and approvals.
+    const projectTrusted = projectSettingsTrusted === true;
+    const projectInstructions = projectTrusted
+      ? null
+      : await readProjectInstructions(sessionCwd);
 
     // Task tools belong to the default tool set only. A caller that supplied an
     // explicit allowlist gets exactly that list, so Panes never widens a thread
@@ -2174,6 +2363,17 @@ async function handleQuery(req) {
       });
     }
 
+    if (!sandboxAvailability.available) {
+      emit({
+        id,
+        type: "notice",
+        kind: "claude_sandbox_unavailable",
+        level: "warning",
+        title: "OS sandbox unavailable",
+        message: `${sandboxUnavailableHint(sandboxAvailability.reason)} Panes asks before each command and file change, and approved commands run with your full file and network access.`,
+      });
+    }
+
     const options = applyClaudeRuntime({
       cwd: sessionCwd,
       additionalDirectories: additionalDirectoriesForSandbox(
@@ -2200,18 +2400,26 @@ async function handleQuery(req) {
         networkEnabled,
         approvalPolicy,
         allowedTools: toolList,
+        sandboxAvailable: sandboxAvailability.available,
       }),
-      // settingSources is intentionally omitted so user, project and local
-      // settings all load, matching the Claude Code CLI default.
+      // A Trusted repo loads user, project and local settings, matching the
+      // Claude Code CLI default. Any other repo loads only the user's own
+      // settings, and strictMcpConfig keeps its .mcp.json servers out.
+      ...(projectTrusted ? {} : { settingSources: ["user"], strictMcpConfig: true }),
       sandbox: buildSandboxOptions(
         normalizedSandboxMode,
         normalizedWritableRoots,
         networkEnabled,
+        { cwd: sessionCwd, permissionMode, sandboxAvailable: sandboxAvailability.available },
       ),
       settings: {
         permissions: {
           defaultMode: planMode ? "plan" : "default",
           disableBypassPermissionsMode: "disable",
+          // The CLI allows commands it classifies as read-only before it
+          // consults canUseTool. Ask rules are checked first, so every shell
+          // command outside the trusted preset reaches Panes' approval.
+          ...(permissionMode === "trusted" ? {} : { ask: [...SHELL_TOOL_NAMES] }),
         },
       },
       includePartialMessages: true,
@@ -2430,10 +2638,11 @@ async function handleQuery(req) {
     // Without a systemPrompt option the SDK runs with an empty system prompt.
     // Use the Claude Code preset so results match the Claude Code app, and
     // append any caller-supplied instructions on top of it.
+    const systemPromptAppend = [systemPrompt, projectInstructions].filter(Boolean).join("\n\n");
     options.systemPrompt = {
       type: "preset",
       preset: "claude_code",
-      ...(systemPrompt ? { append: systemPrompt } : {}),
+      ...(systemPromptAppend ? { append: systemPromptAppend } : {}),
     };
     if (resume) options.resume = resume;
     if (sessionId) options.sessionId = sessionId;

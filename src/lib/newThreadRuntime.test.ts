@@ -173,12 +173,13 @@ describe("resolveNewThreadRuntime", () => {
     });
   });
 
-  it("falls back to codex gpt-5.4 high when no other preference exists", () => {
+  it("falls back to codex gpt-6.2-sol high when no other preference exists", () => {
     expect(
       resolveNewThreadRuntime({
         engines,
         onboardingSelection: null,
       }),
     ).toEqual(NEW_THREAD_FALLBACK_RUNTIME);
+    expect(NEW_THREAD_FALLBACK_RUNTIME.modelId).toBe("gpt-6.2-sol");
   });
 });

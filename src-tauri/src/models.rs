@@ -168,6 +168,10 @@ pub struct MessageDto {
     pub status: MessageStatusDto,
     pub token_usage: Option<TokenUsageDto>,
     pub created_at: String,
+    /// Sequence number of the last stream event folded into `blocks`. A
+    /// client that subscribes mid-turn drops buffered events at or below it.
+    #[serde(default)]
+    pub stream_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -753,6 +757,11 @@ pub struct GitFileCompareDto {
     pub has_staged_changes: bool,
     pub has_unstaged_changes: bool,
     pub is_binary: bool,
+    /// The working-tree side was not valid UTF-8 and `modified_content` was
+    /// decoded lossily, so saving that text back would corrupt the file. A
+    /// lossy base side is display only and does not set this.
+    #[serde(default)]
+    pub modified_is_lossy_decode: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_editable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -842,6 +851,22 @@ pub struct GitWorktreeDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitWorktreeRemovalDto {
+    /// Set when the worktree was removed but git kept its branch.
+    pub branch_delete_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktreeInspectionDto {
+    pub changed_count: usize,
+    pub untracked_count: usize,
+    pub unmerged_commit_count: usize,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileTreeEntryDto {
     pub path: String,
     pub is_dir: bool,
@@ -864,6 +889,7 @@ pub struct ReadFileResultDto {
     pub content: String,
     pub size_bytes: u64,
     pub is_binary: bool,
+    pub is_lossy_decode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1065,6 +1091,9 @@ pub struct HarnessInfo {
     pub version: Option<String>,
     pub path: Option<String>,
     pub can_auto_install: bool,
+    /// Install command line for the host OS, or None when the harness has to
+    /// be installed by hand there.
+    pub install_command_display: Option<String>,
     pub website: String,
     pub native: bool,
 }

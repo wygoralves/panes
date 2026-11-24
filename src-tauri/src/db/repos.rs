@@ -217,6 +217,24 @@ pub fn set_workspace_active_repos(
     Ok(())
 }
 
+/// Every repo row the workspace scans currently find, across workspaces.
+pub fn list_discovered_repos(db: &Database) -> anyhow::Result<Vec<RepoDto>> {
+    let conn = db.connect()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
+             FROM repos
+             WHERE is_discovered = 1",
+        )
+        .context("failed to prepare discovered repo query")?;
+    let rows = stmt
+        .query_map([], map_repo_row)
+        .context("failed to query discovered repos")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode discovered repo rows")?;
+    Ok(rows)
+}
+
 pub fn find_deepest_repo_containing_path(
     db: &Database,
     path: &str,
@@ -240,19 +258,7 @@ pub fn find_deepest_repo_containing_path(
             .context("failed to decode containing repo rows")?;
         rows
     } else {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
-                 FROM repos
-                 WHERE is_discovered = 1",
-            )
-            .context("failed to prepare containing repo query")?;
-        let rows = stmt
-            .query_map([], map_repo_row)
-            .context("failed to query containing repos")?
-            .collect::<Result<Vec<_>, _>>()
-            .context("failed to decode containing repo rows")?;
-        rows
+        list_discovered_repos(db)?
     };
 
     let mut best_match: Option<RepoDto> = None;
@@ -271,6 +277,33 @@ pub fn find_deepest_repo_containing_path(
     }
 
     Ok(best_match)
+}
+
+/// Whether a discovered repo in any workspace that strictly encloses `path`
+/// is not Trusted. The Claude CLI reads `.mcp.json` from the working directory
+/// and every directory above it, so such a repo's servers would run under the
+/// trust of the repo nested inside it.
+pub fn untrusted_repo_encloses_path(db: &Database, path: &str) -> anyhow::Result<bool> {
+    let conn = db.connect()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
+             FROM repos
+             WHERE is_discovered = 1",
+        )
+        .context("failed to prepare enclosing repo query")?;
+    let repos = stmt
+        .query_map([], map_repo_row)
+        .context("failed to query enclosing repos")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode enclosing repo rows")?;
+    let normalized_path = path_utils::normalize_windows_path_string(path);
+
+    Ok(repos.iter().any(|repo| {
+        !matches!(repo.trust_level, TrustLevelDto::Trusted)
+            && path_utils::is_path_within_root(&normalized_path, &repo.path)
+            && !path_utils::is_path_within_root(&repo.path, &normalized_path)
+    }))
 }
 
 pub fn find_repo_by_id(db: &Database, repo_id: &str) -> anyhow::Result<Option<RepoDto>> {
@@ -546,5 +579,109 @@ mod tests {
         .expect("nested workspace repo should resolve");
         assert_eq!(resolved_nested.id, nested_repo.id);
         assert_eq!(resolved_nested.trust_level, TrustLevelDto::Restricted);
+    }
+
+    #[test]
+    fn flags_untrusted_repos_that_enclose_a_path_across_workspaces() {
+        let db = test_db();
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        let inner_path = root.join("sub/inner");
+        fs::create_dir_all(&inner_path).expect("failed to create inner repo path");
+
+        let outer_workspace =
+            workspaces::upsert_workspace(&db, root.to_string_lossy().as_ref(), Some(3))
+                .expect("failed to create outer workspace");
+        let inner_workspace =
+            workspaces::upsert_workspace(&db, inner_path.to_string_lossy().as_ref(), Some(3))
+                .expect("failed to create inner workspace");
+        let outer_repo = upsert_repo(
+            &db,
+            &outer_workspace.id,
+            "outer",
+            root.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert outer repo");
+        let inner_repo = upsert_repo(
+            &db,
+            &inner_workspace.id,
+            "inner",
+            inner_path.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert inner repo");
+        set_repo_trust_level(&db, &inner_repo.id, TrustLevelDto::Trusted)
+            .expect("failed to trust inner repo");
+        let inner = inner_path.to_string_lossy().to_string();
+
+        set_repo_trust_level(&db, &outer_repo.id, TrustLevelDto::Standard)
+            .expect("failed to set outer trust");
+        assert!(untrusted_repo_encloses_path(&db, &inner).expect("lookup failed"));
+        // A repo never encloses itself, so the outer repo's own trust governs it.
+        assert!(
+            !untrusted_repo_encloses_path(&db, root.to_string_lossy().as_ref())
+                .expect("lookup failed")
+        );
+
+        set_repo_trust_level(&db, &outer_repo.id, TrustLevelDto::Trusted)
+            .expect("failed to trust outer repo");
+        assert!(!untrusted_repo_encloses_path(&db, &inner).expect("lookup failed"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn flags_an_untrusted_repo_stored_with_a_trailing_separator() {
+        let db = test_db();
+        let root = std::env::temp_dir().join(format!("panes-workspace-{}", Uuid::new_v4()));
+        let inner_path = root.join("inner");
+        fs::create_dir_all(&inner_path).expect("failed to create inner repo path");
+        // A drive root such as D:\ always ends in a separator; a stored path
+        // can too. Either way it must still enclose the repos below it.
+        let outer_with_separator =
+            format!("{}{}", root.to_string_lossy(), std::path::MAIN_SEPARATOR);
+
+        let outer_workspace = workspaces::upsert_workspace(&db, &outer_with_separator, Some(3))
+            .expect("failed to create outer workspace");
+        let inner_workspace =
+            workspaces::upsert_workspace(&db, inner_path.to_string_lossy().as_ref(), Some(3))
+                .expect("failed to create inner workspace");
+        let outer_repo = upsert_repo(
+            &db,
+            &outer_workspace.id,
+            "outer",
+            &outer_with_separator,
+            "main",
+            true,
+        )
+        .expect("failed to insert outer repo");
+        let inner_repo = upsert_repo(
+            &db,
+            &inner_workspace.id,
+            "inner",
+            inner_path.to_string_lossy().as_ref(),
+            "main",
+            true,
+        )
+        .expect("failed to insert inner repo");
+        set_repo_trust_level(&db, &outer_repo.id, TrustLevelDto::Standard)
+            .expect("failed to set outer trust");
+        set_repo_trust_level(&db, &inner_repo.id, TrustLevelDto::Trusted)
+            .expect("failed to trust inner repo");
+
+        assert!(
+            untrusted_repo_encloses_path(&db, inner_path.to_string_lossy().as_ref())
+                .expect("lookup failed")
+        );
+        // The same directory written without the separator is the repo itself,
+        // not a repo inside it.
+        assert!(
+            !untrusted_repo_encloses_path(&db, root.to_string_lossy().as_ref())
+                .expect("lookup failed")
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

@@ -479,7 +479,8 @@ export function SettingsPage() {
     try {
       const savedLocale = await ipc.setAppLocale(locale);
       await i18n.changeLanguage(savedLocale);
-      toast.info(t("common:language.changed"));
+      // `t` still belongs to the render that used the previous language.
+      toast.info(i18n.getFixedT(savedLocale)("common:language.changed"));
     } catch {
       toast.error(t("app:sidebar.languageFailed"));
     }

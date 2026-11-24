@@ -7,6 +7,9 @@ cask "panes" do
   desc "Local-first cockpit for AI-assisted coding"
   homepage "https://github.com/wygoralves/panes"
 
+  auto_updates true
+  depends_on macos: :ventura
+
   app "Panes.app"
 
   postflight do
@@ -15,7 +18,8 @@ cask "panes" do
       args: ["-dr", "com.apple.quarantine", "#{appdir}/Panes.app"]
   end
 
-  zap trash: [
-    "~/.agent-workspace",
-  ]
+  zap launchctl: "com.panes.app.helper.keepawake",
+      trash:     [
+        "~/.agent-workspace",
+      ]
 end

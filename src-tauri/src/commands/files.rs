@@ -70,6 +70,7 @@ pub async fn write_file(
     file_path: String,
     content: String,
     workspace_id: Option<String>,
+    expected_content: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.clone();
     let cache = state.file_tree_cache.clone();
@@ -98,7 +99,13 @@ pub async fn write_file(
                 );
             }
         }
-        fs_ops::write_file(&repo_path, &file_path, &content).map_err(err_to_string)?;
+        fs_ops::write_file(
+            &repo_path,
+            &file_path,
+            &content,
+            expected_content.as_deref(),
+        )
+        .map_err(err_to_string)?;
         cache.invalidate_containing_path(target_for_repo_lookup.to_string_lossy().as_ref());
         Ok(())
     })
@@ -272,6 +279,14 @@ struct RevealCommandPlan {
     display_target: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OpenAction {
+    Spawn(RevealCommandPlan),
+    /// Windows: hand the path to ShellExecuteExW instead of `cmd /C start`,
+    /// which would run `&`, `^` and `%VAR%` in a file name as shell syntax.
+    ShellExecute(PathBuf),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 enum RevealPlatform {
@@ -294,7 +309,11 @@ fn reveal_path_impl(path: PathBuf) -> anyhow::Result<()> {
     };
 
     let mut command = Command::new(&plan.program);
-    command.args(&plan.args);
+    if platform == RevealPlatform::Windows {
+        push_prequoted_windows_args(&mut command, &plan.args);
+    } else {
+        command.args(&plan.args);
+    }
     spawn_path_command(command, &plan.display_target, "reveal")
 }
 
@@ -306,13 +325,67 @@ fn open_path_with_default_app_impl(path: PathBuf) -> anyhow::Result<()> {
     let platform = reveal_platform();
     let (xdg_open, gio) = resolve_linux_openers(platform);
 
-    let Some(plan) = build_open_command_plan(&path, platform, xdg_open, gio)? else {
-        return Ok(());
-    };
+    match build_open_command_plan(&path, platform, xdg_open, gio)? {
+        None => Ok(()),
+        Some(OpenAction::Spawn(plan)) => {
+            let mut command = Command::new(&plan.program);
+            command.args(&plan.args);
+            spawn_path_command(command, &plan.display_target, "open")
+        }
+        Some(OpenAction::ShellExecute(target)) => shell_execute_open(&target),
+    }
+}
 
-    let mut command = Command::new(&plan.program);
-    command.args(&plan.args);
-    spawn_path_command(command, &plan.display_target, "open")
+/// Explorer splits `/select,` targets on commas unless the path is quoted,
+/// and std only quotes arguments that contain spaces, so the Windows reveal
+/// plan carries its own quotes and is passed through verbatim.
+#[cfg(target_os = "windows")]
+fn push_prequoted_windows_args(command: &mut Command, args: &[OsString]) {
+    use std::os::windows::process::CommandExt;
+
+    for arg in args {
+        command.raw_arg(arg);
+    }
+    crate::process_utils::configure_std_command(command);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn push_prequoted_windows_args(command: &mut Command, args: &[OsString]) {
+    command.args(args);
+}
+
+/// Opens the path through ShellExecuteExW, the same association lookup
+/// `start` uses, without a command interpreter parsing the file name.
+#[cfg(target_os = "windows")]
+fn shell_execute_open(path: &Path) -> anyhow::Result<()> {
+    open::that_detached(path)
+        .map_err(|error| anyhow::anyhow!("failed to open {}: {error}", path.display()))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn shell_execute_open(path: &Path) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "failed to open {}: ShellExecute is only available on Windows",
+        path.display()
+    )
+}
+
+/// Rewrites `/` separators as `\`. The frontend joins paths with `/`, which
+/// Explorer does not accept as a `/select,` target.
+fn windows_native_path(path: &Path) -> PathBuf {
+    match path.to_str() {
+        Some(rendered) if rendered.contains('/') => PathBuf::from(rendered.replace('/', "\\")),
+        _ => path.to_path_buf(),
+    }
+}
+
+fn quoted_windows_arg(prefix: &str, path: &Path) -> OsString {
+    // Windows file names cannot contain `"`, so wrapping in quotes is enough.
+    let mut arg = OsString::from(prefix);
+    arg.push("\"");
+    arg.push(path.as_os_str());
+    arg.push("\"");
+    arg
 }
 
 fn reveal_platform() -> RevealPlatform {
@@ -370,12 +443,11 @@ fn build_reveal_command_plan(
             }))
         }
         RevealPlatform::Windows => {
+            let native_path = windows_native_path(path);
             let args = if path.is_file() {
-                let mut select_arg = OsString::from("/select,");
-                select_arg.push(path.as_os_str());
-                vec![select_arg]
+                vec![quoted_windows_arg("/select,", &native_path)]
             } else {
-                vec![path_arg]
+                vec![quoted_windows_arg("", &native_path)]
             };
 
             Ok(Some(RevealCommandPlan {
@@ -423,40 +495,31 @@ fn build_open_command_plan(
     platform: RevealPlatform,
     xdg_open: Option<PathBuf>,
     gio: Option<PathBuf>,
-) -> anyhow::Result<Option<RevealCommandPlan>> {
+) -> anyhow::Result<Option<OpenAction>> {
     let path_arg = path.as_os_str().to_os_string();
 
     match platform {
-        RevealPlatform::Macos => Ok(Some(RevealCommandPlan {
+        RevealPlatform::Macos => Ok(Some(OpenAction::Spawn(RevealCommandPlan {
             program: OsString::from("open"),
             args: vec![path_arg],
             display_target: path.to_path_buf(),
-        })),
-        RevealPlatform::Windows => Ok(Some(RevealCommandPlan {
-            program: OsString::from("cmd"),
-            args: vec![
-                OsString::from("/C"),
-                OsString::from("start"),
-                OsString::from(""),
-                path_arg,
-            ],
-            display_target: path.to_path_buf(),
-        })),
+        }))),
+        RevealPlatform::Windows => Ok(Some(OpenAction::ShellExecute(windows_native_path(path)))),
         RevealPlatform::Linux => {
             if let Some(program) = xdg_open {
-                return Ok(Some(RevealCommandPlan {
+                return Ok(Some(OpenAction::Spawn(RevealCommandPlan {
                     program: program.into_os_string(),
                     args: vec![path.as_os_str().to_os_string()],
                     display_target: path.to_path_buf(),
-                }));
+                })));
             }
 
             if let Some(program) = gio {
-                return Ok(Some(RevealCommandPlan {
+                return Ok(Some(OpenAction::Spawn(RevealCommandPlan {
                     program: program.into_os_string(),
                     args: vec![OsString::from("open"), path.as_os_str().to_os_string()],
                     display_target: path.to_path_buf(),
-                }));
+                })));
             }
 
             anyhow::bail!(
@@ -551,7 +614,12 @@ fn resolve_editor_file_reference_impl(
         } else {
             root.join(&parsed.path)
         };
-        let Ok(resolved) = candidate.canonicalize() else {
+        // Roots come from path_utils::canonicalize_path, which strips the
+        // Windows \\?\ prefix; strip it from the candidate too so starts_with
+        // compares like with like, while std still resolves symlinks.
+        let Ok(resolved) =
+            std::fs::canonicalize(&candidate).map(path_utils::normalize_windows_path)
+        else {
             continue;
         };
         if !resolved.is_file() || !resolved.starts_with(&root) {
@@ -672,11 +740,14 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::{
-        build_open_command_plan, build_reveal_command_plan, resolve_target_path_for_repo_lookup,
-        RevealPlatform,
+        build_open_command_plan, build_reveal_command_plan, resolve_editor_file_reference_impl,
+        resolve_target_path_for_repo_lookup, windows_native_path, OpenAction, RevealPlatform,
     };
     use uuid::Uuid;
 
@@ -705,7 +776,7 @@ mod tests {
             assert_eq!(plan.args.len(), 1);
             assert_eq!(
                 plan.args[0].to_string_lossy(),
-                format!("/select,{}", file.display())
+                format!("/select,\"{}\"", windows_native_path(&file).display())
             );
             assert_eq!(plan.display_target, file);
         });
@@ -719,7 +790,13 @@ mod tests {
                 .expect("plan should exist");
 
             assert_eq!(plan.program.to_string_lossy(), "explorer");
-            assert_eq!(plan.args, vec![dir.as_os_str().to_os_string()]);
+            assert_eq!(
+                plan.args,
+                vec![std::ffi::OsString::from(format!(
+                    "\"{}\"",
+                    windows_native_path(&dir).display()
+                ))]
+            );
             assert_eq!(plan.display_target, dir);
         });
     }
@@ -803,6 +880,9 @@ mod tests {
                 .expect("plan should build")
                 .expect("plan should exist");
 
+            let OpenAction::Spawn(plan) = plan else {
+                panic!("macOS should spawn open");
+            };
             assert_eq!(plan.program.to_string_lossy(), "open");
             assert_eq!(plan.args, vec![file.as_os_str().to_os_string()]);
             assert_eq!(plan.display_target, file);
@@ -810,24 +890,36 @@ mod tests {
     }
 
     #[test]
-    fn windows_files_use_cmd_start_for_default_app() {
-        with_temp_path(|_dir, file| {
-            let plan = build_open_command_plan(&file, RevealPlatform::Windows, None, None)
-                .expect("plan should build")
-                .expect("plan should exist");
+    fn windows_default_app_uses_shell_execute_without_cmd() {
+        let root = std::env::temp_dir().join(format!("panes-open-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("temp dir should exist");
+        let file = root.join("a&calc^%PATH%.txt");
+        fs::write(&file, "hello").expect("temp file should exist");
 
-            assert_eq!(plan.program.to_string_lossy(), "cmd");
-            assert_eq!(
-                plan.args,
-                vec![
-                    std::ffi::OsString::from("/C"),
-                    std::ffi::OsString::from("start"),
-                    std::ffi::OsString::from(""),
-                    file.as_os_str().to_os_string(),
-                ]
-            );
-            assert_eq!(plan.display_target, file);
-        });
+        let action = build_open_command_plan(&file, RevealPlatform::Windows, None, None)
+            .expect("plan should build")
+            .expect("plan should exist");
+        let _ = fs::remove_dir_all(&root);
+
+        match action {
+            OpenAction::ShellExecute(target) => {
+                assert_eq!(target, windows_native_path(&file));
+                assert!(target.to_string_lossy().ends_with("a&calc^%PATH%.txt"));
+            }
+            OpenAction::Spawn(plan) => panic!("expected ShellExecute, got {plan:?}"),
+        }
+    }
+
+    #[test]
+    fn windows_native_path_uses_backslashes() {
+        assert_eq!(
+            windows_native_path(Path::new("C:/dev/repo/src/a.ts")),
+            PathBuf::from(r"C:\dev\repo\src\a.ts")
+        );
+        assert_eq!(
+            windows_native_path(Path::new(r"C:\dev\repo/src\a,b.ts")),
+            PathBuf::from(r"C:\dev\repo\src\a,b.ts")
+        );
     }
 
     #[test]
@@ -841,11 +933,72 @@ mod tests {
             )
             .expect("plan should build")
             .expect("plan should exist");
+            let OpenAction::Spawn(plan) = plan else {
+                panic!("Linux should spawn xdg-open");
+            };
 
             assert_eq!(plan.program.to_string_lossy(), "/usr/bin/xdg-open");
             assert_eq!(plan.args, vec![file.as_os_str().to_os_string()]);
             assert_eq!(plan.display_target, file);
         });
+    }
+
+    #[test]
+    fn editor_file_reference_resolves_inside_a_canonicalized_root() {
+        let root = std::env::temp_dir().join(format!("panes-editor-ref-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).expect("temp dir should exist");
+        fs::write(root.join("src").join("lib.rs"), "fn main() {}").expect("file should exist");
+        fs::write(root.join("outside.txt"), "x").expect("file should exist");
+        let repo_root = root.join("repo");
+        fs::create_dir_all(&repo_root).expect("repo dir should exist");
+        fs::create_dir_all(repo_root.join("src")).expect("repo src should exist");
+        fs::write(repo_root.join("src").join("lib.rs"), "fn main() {}")
+            .expect("repo file should exist");
+        let repo_root_str = repo_root.to_string_lossy().to_string();
+        let repos = vec![crate::models::RepoDto {
+            id: "repo".to_string(),
+            workspace_id: "ws".to_string(),
+            name: "repo".to_string(),
+            path: repo_root_str.clone(),
+            default_branch: "main".to_string(),
+            is_active: true,
+            trust_level: crate::models::TrustLevelDto::Standard,
+        }];
+
+        let relative =
+            resolve_editor_file_reference_impl(&repo_root_str, &repos, "src/lib.rs:12", None, None)
+                .expect("resolution should not fail")
+                .expect("relative reference should resolve");
+        let absolute_reference = crate::path_utils::canonicalize_path(&repo_root)
+            .expect("repo root should resolve")
+            .join("src")
+            .join("lib.rs");
+        let absolute = resolve_editor_file_reference_impl(
+            &repo_root_str,
+            &repos,
+            absolute_reference.to_string_lossy().as_ref(),
+            None,
+            None,
+        )
+        .expect("resolution should not fail");
+        let outside = resolve_editor_file_reference_impl(
+            &repo_root_str,
+            &repos,
+            "../outside.txt",
+            None,
+            None,
+        )
+        .expect("resolution should not fail");
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(
+            Path::new(&relative.file_path),
+            Path::new("src").join("lib.rs")
+        );
+        assert_eq!(relative.line, Some(12));
+        assert!(!relative.repo_path.starts_with(r"\\?\"));
+        assert!(absolute.is_some());
+        assert!(outside.is_none());
     }
 
     #[test]

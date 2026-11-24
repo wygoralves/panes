@@ -17,6 +17,8 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 }
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+// Node CLIs can take several seconds to print a version on a cold start, so the bound is generous.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------
 // Harness definitions
@@ -33,8 +35,16 @@ struct HarnessDef {
     /// Raw shell script for install (used for curl-pipe installers).
     /// Takes precedence over `install_command` when set.
     install_script: Option<&'static str>,
+    /// PowerShell expression from the tool's official Windows instructions.
+    /// Windows terminals start in cmd.exe, where the Unix curl-pipe scripts
+    /// fail or install into WSL, so Windows uses this instead.
+    install_script_windows: Option<&'static str>,
     website: &'static str,
     native: bool,
+    /// Oldest Node.js major release the npm package supports (its
+    /// `engines.node`). The npm install is offered only on a Node.js that
+    /// meets it.
+    min_node_major: Option<u32>,
 }
 
 const HARNESSES: &[HarnessDef] = &[
@@ -47,8 +57,10 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@openai/codex"],
         install_script: None,
+        install_script_windows: None,
         website: "https://github.com/openai/codex",
         native: true,
+        min_node_major: None,
     },
     HarnessDef {
         id: "claude-code",
@@ -59,8 +71,10 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@anthropic-ai/claude-code"],
         install_script: Some("curl -fsSL https://claude.ai/install.sh | bash"),
-        website: "https://docs.anthropic.com/en/docs/claude-code",
+        install_script_windows: Some("irm https://claude.ai/install.ps1 | iex"),
+        website: "https://code.claude.com/docs/en/overview",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "gemini-cli",
@@ -71,8 +85,10 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@google/gemini-cli"],
         install_script: None,
+        install_script_windows: None,
         website: "https://github.com/google-gemini/gemini-cli",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "antigravity",
@@ -83,8 +99,10 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
+        install_script_windows: Some("irm https://antigravity.google/cli/install.ps1 | iex"),
         website: "https://antigravity.google",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "kiro",
@@ -95,8 +113,10 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://cli.kiro.dev/install | bash"),
+        install_script_windows: Some("irm https://cli.kiro.dev/install.ps1 | iex"),
         website: "https://kiro.dev",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "opencode",
@@ -107,8 +127,10 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "opencode-ai"],
         install_script: None,
+        install_script_windows: None,
         website: "https://opencode.ai",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "kilo-code",
@@ -119,8 +141,10 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@kilocode/cli"],
         install_script: None,
-        website: "https://kilocode.ai",
+        install_script_windows: None,
+        website: "https://kilo.ai",
         native: false,
+        min_node_major: None,
     },
     HarnessDef {
         id: "factory-droid",
@@ -131,8 +155,82 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://app.factory.ai/cli | sh"),
-        website: "https://factory.ai",
+        install_script_windows: Some("irm https://app.factory.ai/cli/windows | iex"),
+        website: "https://factory.com",
         native: false,
+        min_node_major: None,
+    },
+    HarnessDef {
+        id: "cursor-cli",
+        name: "Cursor CLI",
+        description: "Cursor's coding agent in the terminal",
+        // The installer links both `agent` and `cursor-agent`; the longer name
+        // avoids matching an unrelated `agent` binary on PATH.
+        command: "cursor-agent",
+        version_flag: "--version",
+        install_command: None,
+        install_args: &[],
+        install_script: Some("curl https://cursor.com/install -fsS | bash"),
+        install_script_windows: None,
+        website: "https://cursor.com/cli",
+        native: false,
+        min_node_major: None,
+    },
+    HarnessDef {
+        id: "copilot-cli",
+        name: "GitHub Copilot CLI",
+        description: "GitHub's coding agent in the terminal",
+        command: "copilot",
+        version_flag: "--version",
+        install_command: Some("npm"),
+        install_args: &["install", "-g", "@github/copilot"],
+        install_script: None,
+        install_script_windows: None,
+        website: "https://github.com/github/copilot-cli",
+        native: false,
+        min_node_major: None,
+    },
+    HarnessDef {
+        id: "amp",
+        name: "Amp",
+        description: "Agentic coding tool by Amp",
+        command: "amp",
+        version_flag: "--version",
+        install_command: None,
+        install_args: &[],
+        install_script: Some("curl -fsSL https://ampcode.com/install.sh | bash"),
+        install_script_windows: None,
+        website: "https://ampcode.com",
+        native: false,
+        min_node_major: None,
+    },
+    HarnessDef {
+        id: "qwen-code",
+        name: "Qwen Code",
+        description: "Open-source coding agent for Qwen models",
+        command: "qwen",
+        version_flag: "--version",
+        install_command: Some("npm"),
+        install_args: &["install", "-g", "@qwen-code/qwen-code"],
+        install_script: None,
+        install_script_windows: None,
+        website: "https://github.com/QwenLM/qwen-code",
+        native: false,
+        min_node_major: Some(22),
+    },
+    HarnessDef {
+        id: "crush",
+        name: "Crush",
+        description: "Terminal coding agent by Charm",
+        command: "crush",
+        version_flag: "--version",
+        install_command: Some("npm"),
+        install_args: &["install", "-g", "@charmland/crush"],
+        install_script: None,
+        install_script_windows: None,
+        website: "https://github.com/charmbracelet/crush",
+        native: false,
+        min_node_major: None,
     },
 ];
 
@@ -142,15 +240,26 @@ const HARNESSES: &[HarnessDef] = &[
 
 #[tauri::command]
 pub async fn check_harnesses() -> Result<HarnessReport, String> {
-    let mut harnesses = Vec::new();
+    // Probes run concurrently so one slow CLI costs one timeout, not one per harness.
+    let node_probe = async {
+        if HARNESSES.iter().any(|def| def.min_node_major.is_some()) {
+            detect_node_major().await
+        } else {
+            None
+        }
+    };
+    let npm_probe = async {
+        runtime_env::resolve_executable("npm").is_some()
+            || detect_via_login_shell("npm", "--version").await.is_some()
+    };
+    let harness_probes = futures::future::join_all(HARNESSES.iter().map(locate_harness));
+    let (node_major, npm_available, located) = tokio::join!(node_probe, npm_probe, harness_probes);
 
-    for def in HARNESSES {
-        let status = detect_harness(def).await;
-        harnesses.push(status);
-    }
-
-    let npm_available = runtime_env::resolve_executable("npm").is_some()
-        || detect_via_login_shell("npm", "--version").await.is_some();
+    let harnesses = HARNESSES
+        .iter()
+        .zip(located)
+        .map(|(def, located)| harness_info(def, located, node_major))
+        .collect();
 
     let mise_preferred =
         runtime_env::is_flatpak() && runtime_env::resolve_executable("mise").is_some();
@@ -179,6 +288,27 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
         .iter()
         .find(|h| h.id == harness_id)
         .ok_or_else(|| format!("unknown harness: {harness_id}"))?;
+
+    if let Some(min_major) = def.min_node_major {
+        if !node_meets_minimum(Some(min_major), detect_node_major().await) {
+            return Err(format!(
+                "{} needs Node.js {min_major} or later. Update Node.js and try again, \
+                 or install it manually from {}",
+                def.name, def.website
+            ));
+        }
+    }
+
+    // On Windows, run the official PowerShell installer directly (no cmd.exe),
+    // the same command the Harnesses panel shows and types into a terminal.
+    #[cfg(target_os = "windows")]
+    if let Some(expression) = def.install_script_windows {
+        let args: Vec<String> = windows_powershell_install_args(expression)
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect();
+        return run_harness_install(&app, &harness_id, &windows_powershell_program(), &args).await;
+    }
 
     // Prefer install_script (curl-pipe installers) over install_command (npm).
     // On Windows, curl-pipe installers are not supported — fall through to
@@ -342,60 +472,123 @@ pub async fn set_harness_launch_args(
 // Detection
 // ---------------------------------------------------------------------------
 
-async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
+async fn locate_harness(def: &HarnessDef) -> Option<(String, String)> {
     if let Some(path) = runtime_env::resolve_executable(def.command) {
-        if let Some(version) = get_command_version(&path, &[def.version_flag]).await {
-            return HarnessInfo {
-                id: def.id.to_string(),
-                name: def.name.to_string(),
-                description: def.description.to_string(),
-                command: def.command.to_string(),
-                found: true,
-                version: Some(version),
-                path: Some(path.display().to_string()),
-                can_auto_install: harness_can_auto_install(def),
-                website: def.website.to_string(),
-                native: def.native,
-            };
+        if let Some(version) = get_command_version(&path, &[def.version_flag])
+            .await
+            .filter(|version| version_belongs_to_harness(def, version))
+        {
+            return Some((path.display().to_string(), version));
         }
     }
 
-    if let Some((path, version)) = detect_via_login_shell(def.command, def.version_flag).await {
-        return HarnessInfo {
-            id: def.id.to_string(),
-            name: def.name.to_string(),
-            description: def.description.to_string(),
-            command: def.command.to_string(),
-            found: true,
-            version: Some(version),
-            path: Some(path),
-            can_auto_install: harness_can_auto_install(def),
-            website: def.website.to_string(),
-            native: def.native,
-        };
-    }
+    detect_via_login_shell(def.command, def.version_flag)
+        .await
+        .filter(|(_, version)| version_belongs_to_harness(def, version))
+}
 
+fn harness_info(
+    def: &HarnessDef,
+    located: Option<(String, String)>,
+    node_major: Option<u32>,
+) -> HarnessInfo {
+    let (path, version) = located.unzip();
     HarnessInfo {
         id: def.id.to_string(),
         name: def.name.to_string(),
         description: def.description.to_string(),
         command: def.command.to_string(),
-        found: false,
-        version: None,
-        path: None,
-        can_auto_install: harness_can_auto_install(def),
+        found: version.is_some(),
+        version,
+        path,
+        can_auto_install: harness_can_auto_install(def, node_major),
+        install_command_display: install_command_display(def),
         website: def.website.to_string(),
         native: def.native,
     }
 }
 
-fn harness_can_auto_install(def: &HarnessDef) -> bool {
-    #[cfg(target_os = "windows")]
-    if def.install_script.is_some() {
-        return def.install_command.is_some();
+/// AWS Copilot also installs a `copilot` binary. Its `--version` prints
+/// `copilot version v1.x`, while GitHub Copilot CLI prints a bare version.
+fn version_belongs_to_harness(def: &HarnessDef, version: &str) -> bool {
+    !(def.id == "copilot-cli" && version.starts_with("copilot version"))
+}
+
+fn harness_can_auto_install(def: &HarnessDef, node_major: Option<u32>) -> bool {
+    if !node_meets_minimum(def.min_node_major, node_major) {
+        return false;
+    }
+
+    harness_can_auto_install_on(def, cfg!(target_os = "windows"))
+}
+
+fn harness_can_auto_install_on(def: &HarnessDef, is_windows: bool) -> bool {
+    if is_windows {
+        return def.install_script_windows.is_some() || def.install_command.is_some();
     }
 
     def.install_command.is_some() || def.install_script.is_some()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn windows_powershell_install_args(expression: &str) -> [&str; 5] {
+    [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        expression,
+    ]
+}
+
+/// Windows PowerShell from System32. The install command is typed into a
+/// terminal that starts in the workspace, where cmd.exe would run a
+/// powershell.exe, .bat or .cmd from that folder before the system one.
+fn windows_powershell_program() -> String {
+    std::env::var_os("SystemRoot")
+        .map(|root| {
+            Path::new(&root)
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe")
+        })
+        .filter(|path| path.is_file())
+        .map(|path| path.display().to_string())
+        // Typed unquoted, so it works the same in cmd.exe and PowerShell.
+        .filter(|path| !path.contains(char::is_whitespace))
+        .unwrap_or_else(|| "powershell".to_string())
+}
+
+/// The install command line for this OS, matching what install_harness runs.
+/// Shown in the Harnesses panel and typed into a terminal by "Install".
+fn install_command_display(def: &HarnessDef) -> Option<String> {
+    let windows_powershell = cfg!(target_os = "windows").then(windows_powershell_program);
+    install_command_display_on(def, windows_powershell.as_deref())
+}
+
+/// `windows_powershell` is the PowerShell program on Windows, None elsewhere.
+fn install_command_display_on(
+    def: &HarnessDef,
+    windows_powershell: Option<&str>,
+) -> Option<String> {
+    let package_manager_command = || {
+        def.install_command
+            .map(|program| format!("{program} {}", def.install_args.join(" ")))
+    };
+
+    if let Some(powershell) = windows_powershell {
+        if let Some(expression) = def.install_script_windows {
+            return Some(format!(
+                "{powershell} -NoProfile -ExecutionPolicy Bypass -Command \"{expression}\""
+            ));
+        }
+        return package_manager_command();
+    }
+
+    def.install_script
+        .map(str::to_string)
+        .or_else(package_manager_command)
 }
 
 // ---------------------------------------------------------------------------
@@ -622,10 +815,50 @@ async fn run_harness_install_script(
 // Utility helpers (same patterns as setup.rs)
 // ---------------------------------------------------------------------------
 
+/// A Node.js that cannot be found or read does not meet a minimum.
+fn node_meets_minimum(min_major: Option<u32>, node_major: Option<u32>) -> bool {
+    match min_major {
+        None => true,
+        Some(min_major) => node_major.is_some_and(|major| major >= min_major),
+    }
+}
+
+/// Parses the major release from `node --version` output such as `v22.11.0`.
+fn parse_node_major(version: &str) -> Option<u32> {
+    version
+        .trim()
+        .trim_start_matches('v')
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
+async fn detect_node_major() -> Option<u32> {
+    let version = match runtime_env::resolve_executable("node") {
+        Some(path) => get_command_version(&path, &["--version"]).await,
+        None => None,
+    };
+    let version = match version {
+        Some(version) => Some(version),
+        None => detect_via_login_shell("node", "--version")
+            .await
+            .map(|(_, version)| version),
+    };
+    version.as_deref().and_then(parse_node_major)
+}
+
 async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new(path);
     process_utils::configure_tokio_command(&mut command);
-    let output = command.args(args).output().await.ok()?;
+    command.kill_on_drop(true);
+    let output = match timeout(VERSION_PROBE_TIMEOUT, command.args(args).output()).await {
+        Ok(result) => result.ok()?,
+        Err(_) => {
+            log::warn!("timed out probing `{}` for its version", path.display());
+            return None;
+        }
+    };
     if !output.status.success() {
         return None;
     }
@@ -645,6 +878,7 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
             LOGIN_SHELL_PROBE_TIMEOUT,
             Command::new(&shell)
                 .args(runtime_env::login_probe_shell_args(&shell, &probe_cmd))
+                .kill_on_drop(true)
                 .output(),
         )
         .await
@@ -673,9 +907,8 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
 #[cfg(target_os = "windows")]
 async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
     let probe_script = format!(
-        "$p = (Get-Command {cmd} -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \
-         if ($p) {{ Write-Output $p; & $p {flag} }}",
-        cmd = command,
+        "$p = {probe}; if ($p) {{ Write-Output $p; & $p {flag} }}",
+        probe = runtime_env::windows_application_probe_expression(command),
         flag = version_flag,
     );
 
@@ -727,6 +960,93 @@ async fn resolve_mise_path() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn harness(id: &str) -> &'static HarnessDef {
+        HARNESSES.iter().find(|def| def.id == id).unwrap()
+    }
+
+    #[test]
+    fn parses_the_node_major_release() {
+        assert_eq!(parse_node_major("v22.11.0"), Some(22));
+        assert_eq!(parse_node_major("v20.19.5\n"), Some(20));
+        assert_eq!(parse_node_major("not a version"), None);
+    }
+
+    #[test]
+    fn qwen_code_offers_npm_install_only_on_node_22_or_later() {
+        let qwen = harness("qwen-code");
+        assert!(!harness_can_auto_install(qwen, Some(20)));
+        assert!(!harness_can_auto_install(qwen, None));
+        assert!(harness_can_auto_install(qwen, Some(22)));
+        assert!(harness_can_auto_install(qwen, Some(24)));
+    }
+
+    #[test]
+    fn harnesses_without_a_node_minimum_ignore_the_node_version() {
+        // @github/copilot declares no engines; its npm loader starts a native binary.
+        let copilot = harness("copilot-cli");
+        assert!(harness_can_auto_install(copilot, Some(18)));
+        assert!(harness_can_auto_install(copilot, None));
+    }
+
+    #[test]
+    fn aws_copilot_is_not_detected_as_github_copilot() {
+        let copilot = HARNESSES
+            .iter()
+            .find(|def| def.id == "copilot-cli")
+            .unwrap();
+        assert!(!version_belongs_to_harness(
+            copilot,
+            "copilot version v1.34.1"
+        ));
+        assert!(version_belongs_to_harness(copilot, "1.0.114"));
+    }
+
+    #[test]
+    fn windows_install_commands_never_pipe_into_a_unix_shell() {
+        for id in ["claude-code", "kiro", "antigravity", "factory-droid"] {
+            let def = HARNESSES
+                .iter()
+                .find(|def| def.id == id)
+                .expect("harness exists");
+            let command = install_command_display_on(
+                def,
+                Some(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            )
+            .expect("windows command");
+
+            assert!(harness_can_auto_install_on(def, true), "{id}");
+            assert!(
+                command.starts_with(
+                    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile"
+                ),
+                "{id}: {command}"
+            );
+            assert!(
+                !command.contains("| bash") && !command.contains("| sh"),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_command_display_keeps_unix_scripts_and_npm_commands() {
+        let claude = HARNESSES
+            .iter()
+            .find(|def| def.id == "claude-code")
+            .unwrap();
+        assert_eq!(
+            install_command_display_on(claude, None).as_deref(),
+            Some("curl -fsSL https://claude.ai/install.sh | bash")
+        );
+        let codex = HARNESSES.iter().find(|def| def.id == "codex").unwrap();
+        for windows_powershell in [None, Some("powershell")] {
+            assert_eq!(
+                install_command_display_on(codex, windows_powershell).as_deref(),
+                Some("npm install -g @openai/codex")
+            );
+        }
+    }
 
     #[test]
     fn npm_package_from_install_args_matches_every_harness_definition() {
@@ -796,5 +1116,36 @@ mod tests {
                 "accepted unsafe args: {args}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    fn fake_executable(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_probe_gives_up_on_a_cli_that_never_answers() {
+        let dir = std::env::temp_dir().join(format!("panes-harness-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let hanging = fake_executable(&dir, "hanging-cli", "exec sleep 600");
+        let healthy = fake_executable(&dir, "healthy-cli", "echo 1.2.3");
+
+        let started = std::time::Instant::now();
+        let version = get_command_version(&hanging, &["--version"]).await;
+        let elapsed = started.elapsed();
+        let healthy_version = get_command_version(&healthy, &["--version"]).await;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(version, None);
+        assert!(
+            elapsed < VERSION_PROBE_TIMEOUT + Duration::from_secs(2),
+            "probe took {elapsed:?}"
+        );
+        assert_eq!(healthy_version.as_deref(), Some("1.2.3"));
     }
 }

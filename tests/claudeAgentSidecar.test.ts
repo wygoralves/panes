@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -20,6 +23,29 @@ const sidecarScriptPath = path.join(
 const mockSdkModulePath = pathToFileURL(
   path.join(repoRoot, "tests", "fixtures", "claude-agent-sdk-mock.mjs"),
 ).href;
+
+// The sidecar probes the host for a working OS sandbox (bubblewrap and socat
+// on Linux), and its approval flow depends on the answer. Tests pin that answer
+// so they mean the same thing on every host: by default the sandbox works, and
+// a test that covers the fallback sets PANES_CLAUDE_SANDBOX_UNAVAILABLE. On
+// Linux, stub bwrap and socat that exit 0 come first on PATH, so the probe
+// finds them and its bwrap start check passes; macOS needs no tools.
+const sandboxToolsDir = mkdtempSync(path.join(tmpdir(), "panes-sandbox-tools-"));
+for (const tool of ["bwrap", "socat"]) {
+  const toolPath = path.join(sandboxToolsDir, tool);
+  writeFileSync(toolPath, "#!/bin/sh\nexit 0\n");
+  chmodSync(toolPath, 0o755);
+}
+const sandboxAvailableEnv: Record<string, string> = {
+  PANES_CLAUDE_SANDBOX_UNAVAILABLE: "",
+  ...(process.platform === "linux"
+    ? { PATH: `${sandboxToolsDir}${path.delimiter}${process.env.PATH ?? ""}` }
+    : {}),
+};
+
+afterAll(() => {
+  rmSync(sandboxToolsDir, { recursive: true, force: true });
+});
 
 class SidecarHarness {
   readonly child: ChildProcessWithoutNullStreams;
@@ -41,6 +67,7 @@ class SidecarHarness {
         CLAUDE_AGENT_SDK_MODULE: mockSdkModulePath,
         CLAUDE_AGENT_SDK_MOCK_SCENARIO: JSON.stringify(scenario),
         PANES_DISABLE_CLAUDE_USAGE_FETCH: "1",
+        ...sandboxAvailableEnv,
         ...env,
       },
       stdio: ["pipe", "pipe", "pipe"],
@@ -318,6 +345,85 @@ describe("claude-agent-sdk-server sidecar", () => {
     );
   });
 
+  it("asks before writes inside the roots and still denies outside them without the OS sandbox", async () => {
+    const outsidePath = path.join(path.dirname(repoRoot), "outside.txt");
+    const harness = await spawnHarness(
+      {
+        steps: [
+          {
+            type: "permission",
+            toolName: "Write",
+            input: { file_path: path.join(repoRoot, "inside.txt") },
+            toolUseID: "write-inside-no-sandbox",
+          },
+          {
+            type: "permission",
+            toolName: "Write",
+            input: { file_path: outsidePath },
+            toolUseID: "write-outside-no-sandbox",
+          },
+        ],
+        emitObservationResult: true,
+        sessionId: "session-workspace-write-no-sandbox",
+      },
+      { PANES_CLAUDE_SANDBOX_UNAVAILABLE: "missing_bwrap" },
+    );
+
+    harness.send({
+      id: "query-workspace-write-no-sandbox",
+      method: "query",
+      params: {
+        prompt: "attempt writes",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sandboxMode: "workspace-write",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    const notice = await harness.waitFor(
+      (event) =>
+        event.id === "query-workspace-write-no-sandbox" && event.type === "notice",
+    );
+    expect(notice).toMatchObject({
+      kind: "claude_sandbox_unavailable",
+      level: "warning",
+      message: expect.stringContaining("Install bubblewrap and socat"),
+    });
+
+    const approval = await harness.waitFor(
+      (event) =>
+        event.id === "query-workspace-write-no-sandbox" &&
+        event.type === "approval_requested",
+    );
+    expect(approval.details).toEqual({ file_path: path.join(repoRoot, "inside.txt") });
+    harness.send({
+      method: "approval_response",
+      params: { approvalId: approval.approvalId, response: { decision: "accept" } },
+    });
+    await harness.waitFor(
+      (event) =>
+        event.id === "query-workspace-write-no-sandbox" && event.type === "turn_completed",
+    );
+
+    // Only the write inside the roots reached the user; the fence denied the
+    // other one before asking.
+    expect(
+      harness.events.filter(
+        (event) =>
+          event.id === "query-workspace-write-no-sandbox" &&
+          event.type === "approval_requested",
+      ),
+    ).toHaveLength(1);
+    const observations = parseObservationResults(harness, "query-workspace-write-no-sandbox");
+    expect(observations).toHaveLength(2);
+    expect(observations[0]?.result.behavior).toBe("allow");
+    expect(observations[1]?.result.behavior).toBe("deny");
+    expect(observations[1]?.result.message).toBe(
+      "This file path is outside the approved writable roots for the thread.",
+    );
+  });
+
   it("defaults workspace-write roots to cwd when writableRoots are omitted", async () => {
     const harness = await spawnHarness({
       steps: [
@@ -365,6 +471,7 @@ describe("claude-agent-sdk-server sidecar", () => {
       params: {
         prompt: "inspect options",
         cwd: repoRoot,
+        projectSettingsTrusted: true,
       },
     });
 
@@ -382,6 +489,7 @@ describe("claude-agent-sdk-server sidecar", () => {
     expect(observations[0]?.result.allowedTools).toBeUndefined();
     expect(observations[0]?.result.tools).toBeUndefined();
     expect(observations[0]?.result.settingSources).toBeUndefined();
+    expect(observations[0]?.result.strictMcpConfig).toBeUndefined();
     expect(observations[0]?.result.systemPrompt).toEqual({
       type: "preset",
       preset: "claude_code",
@@ -391,8 +499,236 @@ describe("claude-agent-sdk-server sidecar", () => {
       permissions: {
         defaultMode: "default",
         disableBypassPermissionsMode: "disable",
+        ask: ["Bash", "PowerShell", "Monitor"],
       },
     });
+  });
+
+  it("loads only user settings and no project MCP servers for repos that are not trusted", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "panes-untrusted-"));
+    try {
+      await mkdir(path.join(projectDir, ".claude"));
+      await writeFile(path.join(projectDir, "CLAUDE.md"), "Run pnpm test before committing.");
+      await writeFile(path.join(projectDir, ".claude", "CLAUDE.md"), "Prefer small diffs.");
+      const harness = await spawnHarness({
+        steps: [],
+        emitObservationResult: true,
+        emitQueryOptions: true,
+        sessionId: "session-untrusted",
+      });
+
+      harness.send({
+        id: "query-untrusted",
+        method: "query",
+        params: { prompt: "inspect options", cwd: projectDir },
+      });
+
+      await harness.waitFor(
+        (event) => event.id === "query-untrusted" && event.type === "turn_completed",
+      );
+
+      const observations = parseObservationResults(harness, "query-untrusted");
+      expect(observations[0]?.result.settingSources).toEqual(["user"]);
+      expect(observations[0]?.result.strictMcpConfig).toBe(true);
+      const systemPrompt = observations[0]?.result.systemPrompt as Record<string, unknown>;
+      expect(systemPrompt.preset).toBe("claude_code");
+      expect(systemPrompt.append).toContain("Run pnpm test before committing.");
+      expect(systemPrompt.append).toContain("Prefer small diffs.");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores project instructions that link outside the project", async () => {
+    const projectDir = await mkdtemp(path.join(tmpdir(), "panes-untrusted-link-"));
+    const outsideDir = await mkdtemp(path.join(tmpdir(), "panes-outside-"));
+    try {
+      await writeFile(path.join(outsideDir, "secret.txt"), "outside-the-project");
+      await symlink(path.join(outsideDir, "secret.txt"), path.join(projectDir, "CLAUDE.md"));
+      await symlink(outsideDir, path.join(projectDir, ".claude"));
+      await writeFile(path.join(outsideDir, "CLAUDE.md"), "outside-through-a-linked-dir");
+      const harness = await spawnHarness({
+        steps: [],
+        emitObservationResult: true,
+        emitQueryOptions: true,
+        sessionId: "session-untrusted-link",
+      });
+
+      harness.send({
+        id: "query-untrusted-link",
+        method: "query",
+        params: { prompt: "inspect options", cwd: projectDir },
+      });
+      await harness.waitFor(
+        (event) => event.id === "query-untrusted-link" && event.type === "turn_completed",
+      );
+
+      const observations = parseObservationResults(harness, "query-untrusted-link");
+      expect(observations[0]?.result.systemPrompt).toEqual({
+        type: "preset",
+        preset: "claude_code",
+      });
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-allows sandboxed commands only for the trusted permission mode", async () => {
+    const cases = [
+      { approvalPolicy: "restricted", sandboxMode: "read-only", autoAllow: false },
+      { approvalPolicy: "standard", sandboxMode: "workspace-write", autoAllow: false },
+      { approvalPolicy: "trusted", sandboxMode: "workspace-write", autoAllow: true },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const harness = await spawnHarness({
+        steps: [],
+        emitObservationResult: true,
+        emitQueryOptions: true,
+        sessionId: `session-auto-allow-${index}`,
+      });
+      const queryId = `query-auto-allow-${index}`;
+      harness.send({
+        id: queryId,
+        method: "query",
+        params: {
+          prompt: "inspect sandbox",
+          cwd: repoRoot,
+          approvalPolicy: testCase.approvalPolicy,
+          sandboxMode: testCase.sandboxMode,
+          writableRoots: [repoRoot],
+        },
+      });
+      await harness.waitFor(
+        (event) => event.id === queryId && event.type === "turn_completed",
+      );
+
+      const sandbox = parseObservationResults(harness, queryId)[0]?.result.sandbox as Record<
+        string,
+        unknown
+      >;
+      expect(
+        harness.events.some(
+          (event) =>
+            event.id === queryId &&
+            event.type === "notice" &&
+            event.kind === "claude_sandbox_unavailable",
+        ),
+      ).toBe(false);
+      const autoAllow = testCase.autoAllow;
+      expect(sandbox.autoAllowBashIfSandboxed).toBe(autoAllow);
+      // The CLI allows read-only commands before canUseTool unless an ask
+      // rule matches, so every preset that asks names each shell tool.
+      const settings = parseObservationResults(harness, queryId)[0]?.result.settings as {
+        permissions: Record<string, unknown>;
+      };
+      expect(settings.permissions.ask).toEqual(
+        autoAllow ? undefined : ["Bash", "PowerShell", "Monitor"],
+      );
+      expect(sandbox.failIfUnavailable).toBe(true);
+      const filesystem = sandbox.filesystem as Record<string, unknown>;
+      if (testCase.sandboxMode === "read-only") {
+        expect(filesystem.allowWrite).toEqual([]);
+        expect(filesystem.denyWrite).toEqual([repoRoot]);
+      } else {
+        expect(filesystem.allowWrite).toEqual([repoRoot]);
+        expect(filesystem.denyWrite).toBeUndefined();
+      }
+      await harness.close();
+    }
+  });
+
+  it("asks before commands and warns when the OS sandbox is unavailable", async () => {
+    const harness = await spawnHarness(
+      {
+        steps: [
+          {
+            type: "permission",
+            toolName: "Read",
+            input: { file_path: path.join(repoRoot, "package.json") },
+            toolUseID: "read-no-sandbox",
+          },
+          {
+            type: "permission",
+            toolName: "Bash",
+            input: { command: "touch probe.txt" },
+            toolUseID: "bash-no-sandbox",
+          },
+        ],
+        emitObservationResult: true,
+        emitQueryOptions: true,
+        sessionId: "session-no-sandbox",
+      },
+      { PANES_CLAUDE_SANDBOX_UNAVAILABLE: "windows" },
+    );
+
+    harness.send({
+      id: "query-no-sandbox",
+      method: "query",
+      params: {
+        prompt: "run a command",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sandboxMode: "workspace-write",
+        writableRoots: [repoRoot],
+      },
+    });
+
+    const notice = await harness.waitFor(
+      (event) => event.id === "query-no-sandbox" && event.type === "notice",
+    );
+    expect(notice.kind).toBe("claude_sandbox_unavailable");
+    expect(notice.level).toBe("warning");
+
+    const approval = await harness.waitFor(
+      (event) => event.id === "query-no-sandbox" && event.type === "approval_requested",
+    );
+    harness.send({
+      method: "approval_response",
+      params: { approvalId: approval.approvalId, response: { decision: "decline" } },
+    });
+    await harness.waitFor(
+      (event) => event.id === "query-no-sandbox" && event.type === "turn_completed",
+    );
+
+    const observations = parseObservationResults(harness, "query-no-sandbox");
+    const sandbox = observations[0]?.result.sandbox as Record<string, unknown>;
+    expect(sandbox.autoAllowBashIfSandboxed).toBe(false);
+    expect(sandbox.failIfUnavailable).toBe(false);
+    const settings = observations[0]?.result.settings as { permissions: Record<string, unknown> };
+    expect(settings.permissions.ask).toEqual(["Bash", "PowerShell", "Monitor"]);
+    expect(observations[1]?.result.behavior).toBe("allow");
+    expect(observations[2]?.result.behavior).toBe("deny");
+  });
+
+  it("skips the sandbox notice under full access", async () => {
+    const harness = await spawnHarness(
+      { steps: [], emitObservationResult: true, sessionId: "session-full-no-sandbox" },
+      { PANES_CLAUDE_SANDBOX_UNAVAILABLE: "windows" },
+    );
+
+    harness.send({
+      id: "query-full-no-sandbox",
+      method: "query",
+      params: {
+        prompt: "run",
+        cwd: repoRoot,
+        approvalPolicy: "trusted",
+        sandboxMode: "danger-full-access",
+      },
+    });
+    await harness.waitFor(
+      (event) => event.id === "query-full-no-sandbox" && event.type === "turn_completed",
+    );
+
+    expect(
+      harness.events.some(
+        (event) =>
+          event.id === "query-full-no-sandbox" &&
+          event.type === "notice" &&
+          event.kind === "claude_sandbox_unavailable",
+      ),
+    ).toBe(false);
   });
 
   it("skips a task update for an id it never saw created", async () => {

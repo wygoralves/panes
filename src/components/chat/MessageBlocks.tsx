@@ -87,6 +87,7 @@ import {
 } from "../../lib/parseDiff";
 import { getMessageBlockKey } from "./messageBlockKeys";
 import { isVisibleMessageBlock } from "./messageBlockVisibility";
+import { noticeCopy } from "./noticeCopy";
 import { groupSubagentBlocks, subagentDisplayName, subagentTone } from "../../lib/subagentBlocks";
 import {
   VirtualizedDiffBody,
@@ -591,14 +592,16 @@ function ThinkingBlockView({ block, isStreaming }: { block: ThinkingBlock; isStr
 }
 
 function NoticeBlockView({ block }: { block: NoticeBlock }) {
+  const { t } = useTranslation("chat");
+  const { title, message } = noticeCopy(t, block);
   return (
     <div className="msg-notice">
       <span className="msg-block-tile msg-block-tile--info">
         <Info size={11} />
       </span>
       <div className="msg-notice-content">
-        <div className="msg-notice-title">{block.title}</div>
-        <div className="msg-notice-message">{block.message}</div>
+        <div className="msg-notice-title">{title}</div>
+        <div className="msg-notice-message">{message}</div>
       </div>
     </div>
   );
@@ -1486,7 +1489,9 @@ function ToolInputApprovalCard({
         label={
           isPending
             ? t("messageBlocks.approval.pendingQuestions", { count: questions.length })
-            : t("messageBlocks.approval.answeredQuestions", { count: questions.length })
+            : block.status === "expired"
+              ? t("messageBlocks.approval.decision.expired")
+              : t("messageBlocks.approval.answeredQuestions", { count: questions.length })
         }
       />
       {hasAnswers && expanded && (
@@ -1668,6 +1673,11 @@ function ApprovalCard({
               <span className={decisionStatusClass}>
                 <DecisionIcon size={11} />
                 {decisionLabel}
+              </span>
+            ) : block.status === "expired" ? (
+              <span className="msg-block-status">
+                <XCircle size={11} />
+                {t("messageBlocks.approval.decision.expired")}
               </span>
             ) : null}
           </>

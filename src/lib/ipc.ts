@@ -32,6 +32,8 @@ import type {
   GitStash,
   GitRemote,
   GitWorktree,
+  GitWorktreeInspection,
+  GitWorktreeRemoval,
   EngineHealth,
   EngineInfo,
   FileTreeEntry,
@@ -88,6 +90,8 @@ export const ipc = {
   setComposerLegacyModelsVisible: (visible: boolean) =>
     invoke<boolean>("set_composer_legacy_models_visible", { visible }),
   getUiZoomPercent: () => invoke<number>("get_ui_zoom_percent"),
+  setUnsavedEditorTabs: (hasUnsaved: boolean) =>
+    invoke<void>("set_unsaved_editor_tabs", { hasUnsaved }),
   setUiZoomPercent: (zoomPercent: number) =>
     invoke<number>("set_ui_zoom_percent", { zoomPercent }),
   getKeepAwakeState: () => invoke<KeepAwakeState>("get_keep_awake_state"),
@@ -552,8 +556,21 @@ export const ipc = {
       preferredRepoPath: preferredRepoPath ?? null,
       currentCwd: currentCwd ?? null,
     }),
-  writeFile: (repoPath: string, filePath: string, content: string, workspaceId?: string | null) =>
-    invoke<void>("write_file", { repoPath, filePath, content, workspaceId: workspaceId ?? null }),
+  /** With `expectedContent`, the backend writes only if the file still holds exactly that text. */
+  writeFile: (
+    repoPath: string,
+    filePath: string,
+    content: string,
+    workspaceId?: string | null,
+    expectedContent?: string | null,
+  ) =>
+    invoke<void>("write_file", {
+      repoPath,
+      filePath,
+      content,
+      workspaceId: workspaceId ?? null,
+      expectedContent: expectedContent ?? null,
+    }),
   watchGitRepo: (repoPath: string) => invoke<void>("watch_git_repo", { repoPath }),
   addGitWorktree: (repoPath: string, worktreePath: string, branchName: string, baseRef?: string | null) =>
     invoke<GitWorktree>("add_git_worktree", { repoPath, worktreePath, branchName, baseRef: baseRef ?? null }),
@@ -565,13 +582,21 @@ export const ipc = {
     force: boolean,
     branchName?: string | null,
     deleteBranch?: boolean,
+    forceBranchDelete?: boolean,
   ) =>
-    invoke<void>("remove_git_worktree", {
+    invoke<GitWorktreeRemoval>("remove_git_worktree", {
       repoPath,
       worktreePath,
       force,
       branchName: branchName ?? null,
       deleteBranch: deleteBranch ?? false,
+      forceBranchDelete: forceBranchDelete ?? false,
+    }),
+  inspectGitWorktree: (repoPath: string, worktreePath: string, branchName?: string | null) =>
+    invoke<GitWorktreeInspection>("inspect_git_worktree", {
+      repoPath,
+      worktreePath,
+      branchName: branchName ?? null,
     }),
   pruneGitWorktrees: (repoPath: string) =>
     invoke<void>("prune_git_worktrees", { repoPath }),
@@ -705,11 +730,21 @@ export interface ThreadUpdatedEvent {
 
 export interface ChatTurnFinishedEvent {
   threadId: string;
+  /** The assistant message the turn wrote. */
+  messageId?: string;
   workspaceId: string;
   engineId: ChatEngineId;
   threadTitle: string;
   status: "completed" | "interrupted" | "error";
   preview?: string | null;
+}
+
+/** The backend released a finished turn's thread; title and notification come later. */
+export interface ChatTurnReleasedEvent {
+  threadId: string;
+  /** The assistant message the turn wrote. */
+  messageId?: string;
+  status: "completed" | "interrupted" | "error";
 }
 
 export async function listenThreadUpdated(
@@ -722,6 +757,12 @@ export async function listenChatTurnFinished(
   onEvent: (event: ChatTurnFinishedEvent) => void
 ): Promise<UnlistenFn> {
   return listen<ChatTurnFinishedEvent>("chat-turn-finished", ({ payload }) => onEvent(payload));
+}
+
+export async function listenChatTurnReleased(
+  onEvent: (event: ChatTurnReleasedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<ChatTurnReleasedEvent>("chat-turn-released", ({ payload }) => onEvent(payload));
 }
 
 export interface ChatApprovalRequestedEvent {

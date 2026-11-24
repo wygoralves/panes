@@ -395,9 +395,20 @@
     "gitWorktreesDescription": "Each agent gets its own branch",
     "launchCount": "Launch {{count}}",
     "closeAgentGroupTitle": "Close agent group",
-    "closeAgentGroupMessage": "This group has git worktrees. Remove the worktree directories and branches, or keep them for later?",
+    "closeAgentGroupMessage": "This group has git worktrees. Remove the worktree directories and branches, or keep them for later? Before anything is deleted, Panes checks for uncommitted files and unmerged commits and asks again if it finds any.",
     "removeWorktrees": "Remove worktrees",
     "keepWorktrees": "Keep worktrees",
+    "unsavedWorktreesTitle": "Worktrees have unsaved work",
+    "unsavedWorktreesMessage": "Removing these worktrees permanently deletes: {{details}}. Force remove them, or keep them and remove only the rest?",
+    "unsavedWorktreeEntry": "{{name}} ({{summary}})",
+    "unsavedChangedFiles_one": "{{count}} changed file",
+    "unsavedChangedFiles_other": "{{count}} changed files",
+    "unsavedUntrackedFiles_one": "{{count}} untracked file",
+    "unsavedUntrackedFiles_other": "{{count}} untracked files",
+    "unsavedUnmergedCommits_one": "{{count}} unmerged commit",
+    "unsavedUnmergedCommits_other": "{{count}} unmerged commits",
+    "forceRemoveWorktrees": "Force remove",
+    "keepUnsavedWorktrees": "Keep these",
     "toasts": {
       "noSessionForDiagnostics": "No terminal session available for diagnostics",
       "diagnosticsCopied": "Renderer diagnostics copied",
@@ -409,7 +420,11 @@
       "failedToCloseSessionsKept_other": "Failed to close {{count}} terminal sessions; worktrees were kept",
       "failedToCloseSessions_one": "Failed to close {{count}} terminal session",
       "failedToCloseSessions_other": "Failed to close {{count}} terminal sessions",
-      "someWorktreesNotRemoved": "Some worktrees could not be removed: {{message}}"
+      "someWorktreesNotRemoved": "Some worktrees could not be removed: {{message}}",
+      "worktreeBranchesKept_one": "Worktree removed, but git kept its branch {{branches}} (usually because it has unmerged commits)",
+      "worktreeBranchesKept_other": "Worktrees removed, but git kept {{count}} branches (usually because they have unmerged commits): {{branches}}",
+      "worktreesKeptAfterChange_one": "Kept worktree {{names}}: it may hold work you did not confirm losing",
+      "worktreesKeptAfterChange_other": "Kept {{count}} worktrees that may hold work you did not confirm losing: {{names}}"
     }
   },
   "harnesses": {
@@ -447,7 +462,12 @@
       "kiro": "AWS's coding CLI focused on structured, agent-style development workflows",
       "opencode": "Open-source coding assistant for chat, edits, and terminal workflows",
       "kilo-code": "Lightweight coding assistant CLI for everyday code and repo tasks",
-      "factory-droid": "Factory's autonomous coding agent for larger implementation tasks"
+      "factory-droid": "Factory's autonomous coding agent for larger implementation tasks",
+      "cursor-cli": "Cursor's coding agent CLI for working on a repo from the terminal",
+      "copilot-cli": "GitHub's Copilot coding agent CLI for working on a repo from the terminal",
+      "amp": "Amp's coding agent CLI for working on a repo from the terminal",
+      "qwen-code": "Open-source coding agent CLI built for Qwen models",
+      "crush": "Charm's open-source coding agent for the terminal"
     }
   },
   "editor": {
@@ -465,6 +485,20 @@
     "unsavedChangesMessage": "\"{{name}}\" has unsaved changes. Discard them?",
     "discard": "Discard",
     "cancel": "Cancel",
+    "nonUtf8ReadOnly": "This file is not valid UTF-8, so it opened read-only to keep its encoding intact.",
+    "mixedLineEndingsReadOnly": "This file mixes line endings, so it opened read-only to keep every line as it is on disk.",
+    "diskConflict": {
+      "message": "{{name}} changed on disk while you were editing it.",
+      "reload": "Reload from disk",
+      "keepMine": "Keep mine"
+    },
+    "unsavedOnExit": {
+      "title": "Unsaved changes",
+      "message": "These files have unsaved changes: {{names}}.",
+      "saveAll": "Save all",
+      "discard": "Discard",
+      "cancel": "Cancel"
+    },
     "gitDiff": {
       "unavailable": "Git compare is unavailable for this tab.",
       "sourceChanges": "Changes",
@@ -493,7 +527,8 @@
       }
     },
     "toasts": {
-      "modifiedExternally": "{{name}} was modified externally. Save again to overwrite.",
+      "modifiedExternally": "{{name}} changed on disk. Choose which version to keep.",
+      "reloadFailed": "Failed to reload {{name}}: {{error}}",
       "saved": "Saved {{name}}",
       "saveFailed": "Failed to save: {{error}}",
       "openExternalFailed": "Failed to open file in the default app"
@@ -506,7 +541,8 @@
     "refresh": "Refresh explorer",
     "refreshing": "Refreshing explorer...",
     "filterPlaceholder": "Filter files...",
-    "filterCount": "{{count}} files",
+    "filterCount_one": "{{count}} file",
+    "filterCount_other": "{{count}} files",
     "filterCountTitle": "Only expanded folders are searched",
     "loading": "Loading files...",
     "emptyFiltered": "No files match filter",

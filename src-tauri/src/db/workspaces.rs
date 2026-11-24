@@ -95,7 +95,8 @@ pub fn list_archived_workspaces(db: &Database) -> anyhow::Result<Vec<WorkspaceDt
     Ok(out)
 }
 
-pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
+/// Returns the default workspace and whether this call inserted its row.
+pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<(WorkspaceDto, bool)> {
     let current_exe_dir = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -110,12 +111,12 @@ pub fn ensure_default_workspace(db: &Database) -> anyhow::Result<WorkspaceDto> {
             windows_dir.as_deref(),
         )
     }) {
-        return Ok(first);
+        return Ok((first, false));
     }
 
     let root = preferred_default_workspace_root();
     let root = root.to_string_lossy().to_string();
-    upsert_workspace(db, &root, None)
+    Ok((upsert_workspace(db, &root, None)?, true))
 }
 
 fn preferred_default_workspace_root() -> std::path::PathBuf {

@@ -62,7 +62,7 @@ O Panes não é uma IDE completa, mas inclui um editor multiaba embutido para re
 - Terminal PTY nativo com xterm.js + WebGL
 - Grupos de terminal, split panes, resize arrastável e broadcast mode
 - Replay/resume de sessão e diagnósticos de renderer
-- Fluxos de detecção, instalação e abertura de harnesses para Codex CLI, Claude Code, Gemini CLI, Kiro, OpenCode, Kilo Code e Factory Droid
+- Fluxos de detecção, instalação e abertura de harnesses para Codex CLI, Claude Code, Antigravity CLI, Gemini CLI (apenas licenças Enterprise e Cloud), Kiro, OpenCode, Kilo Code, Factory Droid, Cursor CLI, GitHub Copilot CLI, Amp, Qwen Code e Crush
 - Multi-launch que pode abrir uma sessão por harness, opcionalmente com uma git worktree por sessão
 
 ### Editor e UX Desktop
@@ -78,12 +78,23 @@ O Panes não é uma IDE completa, mas inclui um editor multiaba embutido para re
 
 ### Pré-requisitos
 
+Para usar um release pré-compilado:
+
+| Requisito | Versão |
+|---|---|
+| Codex CLI | Obrigatório para a chat engine do Codex; o setup pode instalá-lo via npm |
+| Node.js | 20.5+, obrigatório para a chat engine do Claude; o setup também verifica o Node.js antes de habilitar a chat engine do Codex |
+| Autenticação do Claude | Obrigatória para a chat engine do Claude, por exemplo um login do Claude Code ou `ANTHROPIC_API_KEY` |
+| OpenCode CLI | `opencode` no seu `PATH`, obrigatório para a chat engine do OpenCode |
+| Git | Recomendado, para o painel de git |
+
+Para compilar a partir do código-fonte, você também precisa de:
+
 | Requisito | Versão |
 |---|---|
 | Rust toolchain | stable |
 | Node.js | 20+ |
 | pnpm | 9+ |
-| Codex CLI | Obrigatório para a chat engine do Codex; o setup pode instalá-lo via npm |
 | Pré-requisitos do Tauri v2 | [Ver docs do Tauri](https://v2.tauri.app/start/prerequisites/) |
 
 ### Instalar no macOS
@@ -102,7 +113,30 @@ Quem mantém o release pode ver a configuração do tap e da automação em [doc
 
 Baixe o instalador `*-setup.exe` mais recente em [GitHub Releases](https://github.com/wygoralves/panes/releases/latest) e execute-o. As próximas versões passam a chegar pelo updater embutido do Tauri.
 
+O instalador para Windows ainda não tem assinatura de código, então o Microsoft Defender SmartScreen pode mostrar um aviso de "aplicativo não reconhecido" na primeira execução. Escolha **Mais informações** e depois **Executar assim mesmo** para continuar.
+
 Neste release para Windows, o escopo validado cobre instalador, updater, inicialização do app e compatibilidade do runtime empacotado. Isso ainda não garante validação completa de ponta a ponta do Codex e do Claude dentro do fluxo de chat do app, então ainda pode haver arestas nessa parte.
+
+### Instalar no Linux
+
+Baixe o `.AppImage` ou o `.deb` mais recente em [GitHub Releases](https://github.com/wygoralves/panes/releases/latest).
+
+Para AppImage:
+
+```bash
+chmod +x Panes*.AppImage
+./Panes*.AppImage
+```
+
+Para sistemas da família Debian:
+
+```bash
+sudo apt install ./Panes*_amd64.deb
+```
+
+Os dois caminhos de instalação por download direto no Linux recebem as próximas versões pelo updater embutido do app. As atualizações do AppImage substituem o bundle do app diretamente. As atualizações do `.deb` reinstalam o pacote Debian assinado e podem pedir privilégios de administrador durante a instalação.
+
+O Panes ainda não publica um repositório APT, então o caminho de instalação suportado em sistemas da família Debian é o download direto do `.deb` acima.
 
 ### Instalar e Rodar a partir do código-fonte
 

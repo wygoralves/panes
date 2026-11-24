@@ -54,6 +54,7 @@ struct ClosedDisplayDiagnostics {
 pub struct KeepAwakeManager {
     spawner: Arc<dyn KeepAwakeSpawner>,
     process_ops: Arc<dyn KeepAwakeProcessOps>,
+    closed_display_ops: Arc<dyn ClosedDisplaySleepOps>,
     state_dir: PathBuf,
     current_process: ProcessIdentity,
     runtime: Arc<Mutex<KeepAwakeRuntime>>,
@@ -71,8 +72,8 @@ struct KeepAwakeRuntime {
     active_profile: Option<PowerProfile>,
     on_ac_power: Option<bool>,
     battery_percent: Option<u8>,
-    /// True when the privileged helper has been told to set SleepDisabled=true.
-    /// Cleared on disable or when the helper sends allowSleep.
+    /// True when this process owns SleepDisabled=true (set by the helper or
+    /// pmset, or adopted from a crashed run). Cleared on disable.
     closed_display_sleep_disabled: bool,
 }
 
@@ -145,6 +146,25 @@ struct PersistedKeepAwakeHelper {
     helper: KeepAwakeHelperState,
 }
 
+/// How lid-close sleep prevention was switched on, so a later run knows
+/// whether restoring it may need the admin password dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ClosedDisplaySleepMethod {
+    Helper,
+    Pmset,
+}
+
+/// On-disk record that a Panes process set the system-wide SleepDisabled
+/// flag. It survives a crash or force quit so the next launch can restore the
+/// flag, and its absence means the flag (if set) is not ours to touch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ClosedDisplaySleepMarker {
+    owner: ProcessIdentity,
+    method: ClosedDisplaySleepMethod,
+    set_at_unix_secs: u64,
+}
+
 struct SpawnedKeepAwakeChild {
     child: Box<dyn KeepAwakeChild>,
     helper: Option<KeepAwakeHelperState>,
@@ -167,6 +187,19 @@ trait KeepAwakeProcessOps: Send + Sync {
     fn read_start_marker(&self, pid: u32) -> io::Result<Option<String>>;
     fn terminate(&self, pid: u32) -> io::Result<()>;
 }
+
+#[async_trait]
+trait ClosedDisplaySleepOps: Send + Sync {
+    /// Sets SleepDisabled=true. Returns how it was set, or None on failure.
+    async fn prevent(&self, allow_password_prompt: bool) -> Option<ClosedDisplaySleepMethod>;
+    /// Restores SleepDisabled=false. Returns true when the flag is off
+    /// afterwards (restored, or it already read false).
+    async fn allow(&self, allow_password_prompt: bool) -> bool;
+    async fn read_sleep_disabled(&self) -> Option<bool>;
+}
+
+#[derive(Debug)]
+struct SystemClosedDisplaySleepOps;
 
 #[derive(Debug)]
 struct ProcessKeepAwakeSpawner;
@@ -211,6 +244,12 @@ impl KeepAwakeManager {
         )
     }
 
+    #[cfg(test)]
+    fn with_closed_display_ops(mut self, ops: Arc<dyn ClosedDisplaySleepOps>) -> Self {
+        self.closed_display_ops = ops;
+        self
+    }
+
     fn with_dependencies(
         spawner: Arc<dyn KeepAwakeSpawner>,
         process_ops: Arc<dyn KeepAwakeProcessOps>,
@@ -220,6 +259,7 @@ impl KeepAwakeManager {
         Self {
             spawner,
             process_ops,
+            closed_display_ops: Arc::new(SystemClosedDisplaySleepOps),
             state_dir,
             current_process,
             runtime: Arc::new(Mutex::new(KeepAwakeRuntime {
@@ -331,6 +371,21 @@ impl KeepAwakeManager {
     }
 
     pub async fn enable_with_config(&self, config: &PowerConfig) -> Result<(), String> {
+        self.enable_with_config_inner(config, true).await
+    }
+
+    /// Startup re-apply, run before any window exists: never raises the admin
+    /// password dialog. `finish_startup_closed_display_sleep` retries the
+    /// lid-close part with the dialog once the window is up.
+    pub async fn enable_at_startup(&self, config: &PowerConfig) -> Result<(), String> {
+        self.enable_with_config_inner(config, false).await
+    }
+
+    async fn enable_with_config_inner(
+        &self,
+        config: &PowerConfig,
+        password_prompt_allowed_now: bool,
+    ) -> Result<(), String> {
         let profile = PowerProfile::from_config(config);
         let support = self.spawner.support_status();
         if !support.supported {
@@ -382,12 +437,11 @@ impl KeepAwakeManager {
                 }
 
                 // Ask privileged helper to disable closed-display sleep
-                #[cfg(target_os = "macos")]
                 if profile.prevent_closed_display_sleep {
-                    let success =
-                        try_prevent_closed_display_sleep(profile.allow_password_prompt_fallback)
-                            .await;
-                    self.runtime.lock().await.closed_display_sleep_disabled = success;
+                    self.prevent_closed_display_sleep(
+                        profile.allow_password_prompt_fallback && password_prompt_allowed_now,
+                    )
+                    .await;
                 }
 
                 tokio::time::sleep(KEEP_AWAKE_SPAWN_GRACE_PERIOD).await;
@@ -439,7 +493,6 @@ impl KeepAwakeManager {
         runtime.paused_due_to_battery = false;
 
         // Restore closed-display sleep via privileged helper
-        #[cfg(target_os = "macos")]
         if runtime.closed_display_sleep_disabled {
             runtime.closed_display_sleep_disabled = false;
             let allow_password_prompt = runtime
@@ -447,7 +500,8 @@ impl KeepAwakeManager {
                 .as_ref()
                 .is_some_and(|profile| profile.allow_password_prompt_fallback);
             drop(runtime);
-            try_allow_closed_display_sleep(allow_password_prompt).await;
+            self.restore_closed_display_sleep(allow_password_prompt)
+                .await;
             runtime = self.runtime.lock().await;
         }
 
@@ -456,6 +510,12 @@ impl KeepAwakeManager {
             cleanup.shutdown().await;
         }
         runtime.session_end_at = None;
+        // The Windows helper restores the screen saver in a `finally` block,
+        // which TerminateProcess (child.kill) skips, so restore it from here.
+        let restore_screen_saver = runtime
+            .active_profile
+            .as_ref()
+            .is_some_and(|profile| profile.prevent_screen_saver);
         runtime.active_profile = None;
 
         // Kill secondary child (Linux D-Bus inhibit)
@@ -496,6 +556,9 @@ impl KeepAwakeManager {
                 runtime.last_error = None;
                 runtime.helper = None;
                 drop(runtime);
+                if restore_screen_saver {
+                    restore_windows_screen_saver().await;
+                }
                 clear_helper_state(&self.state_path())?;
                 Ok(())
             }
@@ -536,6 +599,13 @@ impl KeepAwakeManager {
                     if !on_ac {
                         log::info!("keep awake pausing: switched to battery");
                         runtime.paused_due_to_battery = true;
+                        // Killing the Windows helper skips its screen saver
+                        // restore, and a later disable() finds no child.
+                        let restore_screen_saver = runtime.child.is_some()
+                            && runtime
+                                .active_profile
+                                .as_ref()
+                                .is_some_and(|profile| profile.prevent_screen_saver);
                         // Kill primary child but keep monitor running
                         if let Some(mut child) = runtime.child.take() {
                             let _ = child.kill().await;
@@ -549,7 +619,6 @@ impl KeepAwakeManager {
                         }
                         runtime.secondary_helper = None;
                         // Restore closed-display sleep via helper
-                        #[cfg(target_os = "macos")]
                         if runtime.closed_display_sleep_disabled {
                             runtime.closed_display_sleep_disabled = false;
                             let allow_password_prompt = runtime
@@ -557,9 +626,13 @@ impl KeepAwakeManager {
                                 .as_ref()
                                 .is_some_and(|profile| profile.allow_password_prompt_fallback);
                             drop(runtime);
-                            try_allow_closed_display_sleep(allow_password_prompt).await;
+                            self.restore_closed_display_sleep(allow_password_prompt)
+                                .await;
                         }
                         let _ = clear_helper_state(&self.state_path());
+                        if restore_screen_saver {
+                            restore_windows_screen_saver().await;
+                        }
                     } else if runtime.paused_due_to_battery {
                         log::info!("keep awake resuming: AC power restored");
                         let profile = runtime
@@ -605,14 +678,11 @@ impl KeepAwakeManager {
                                     }
 
                                     // Re-activate closed-display sleep prevention
-                                    #[cfg(target_os = "macos")]
                                     if profile.prevent_closed_display_sleep {
-                                        let success = try_prevent_closed_display_sleep(
+                                        self.prevent_closed_display_sleep(
                                             profile.allow_password_prompt_fallback,
                                         )
                                         .await;
-                                        self.runtime.lock().await.closed_display_sleep_disabled =
-                                            success;
                                     }
                                 }
                             }
@@ -700,6 +770,188 @@ impl KeepAwakeManager {
 
     pub async fn shutdown(&self) -> Result<(), String> {
         self.disable().await
+    }
+
+    /// Restores a SleepDisabled flag that a previous Panes run set and never
+    /// restored (crash, force quit, failed re-enable). Without a marker the
+    /// flag is left alone: the user may have set it on purpose. When the
+    /// current settings still want lid-close prevention, the flag is adopted
+    /// instead so no new password dialog is needed and disable() restores it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub async fn reclaim_stale_closed_display_sleep(
+        &self,
+        config: &PowerConfig,
+        allow_password_prompt: bool,
+    ) -> Result<(), String> {
+        let marker_path = self.closed_display_marker_path();
+        let Some(marker) = load_closed_display_marker(&marker_path)? else {
+            return Ok(());
+        };
+        if self.owner_may_still_be_running(&marker.owner)? {
+            return Ok(());
+        }
+
+        match self.closed_display_ops.read_sleep_disabled().await {
+            Some(true) => {}
+            Some(false) => return clear_helper_state(&marker_path),
+            None => return Ok(()),
+        }
+
+        if config.keep_awake_enabled && config.prevent_closed_display_sleep {
+            self.save_closed_display_marker(marker.method);
+            self.runtime.lock().await.closed_display_sleep_disabled = true;
+            log::info!("adopted lid-close sleep prevention left by a previous run");
+            return Ok(());
+        }
+
+        let use_password_prompt = allow_password_prompt
+            && marker.method == ClosedDisplaySleepMethod::Pmset
+            && config.allow_password_prompt_fallback;
+        if self.closed_display_ops.allow(use_password_prompt).await {
+            log::info!("restored lid-close sleep left disabled by a previous run");
+            clear_helper_state(&marker_path)?;
+        }
+        Ok(())
+    }
+
+    /// Runs after the main window exists: finishes the parts of the startup
+    /// re-apply that may raise the admin password dialog.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub async fn finish_startup_closed_display_sleep(&self, config: &PowerConfig) {
+        if let Err(error) = self.reclaim_stale_closed_display_sleep(config, true).await {
+            log::warn!("failed to restore stale lid-close sleep setting: {error}");
+        }
+
+        let retry = {
+            let runtime = self.runtime.lock().await;
+            runtime.child.is_some()
+                && !runtime.closed_display_sleep_disabled
+                && runtime.active_profile.as_ref().is_some_and(|profile| {
+                    profile.prevent_closed_display_sleep && profile.allow_password_prompt_fallback
+                })
+        };
+        if retry {
+            self.prevent_closed_display_sleep(true).await;
+        }
+    }
+
+    async fn prevent_closed_display_sleep(&self, allow_password_prompt: bool) {
+        if self.runtime.lock().await.closed_display_sleep_disabled {
+            return;
+        }
+
+        // Record the intent before the privileged call, so a crash or force
+        // quit while it (or its password dialog) is pending still leaves a
+        // marker. Without a marker, only a flag that reads off is changed: one
+        // already on is not ours (sleep is already prevented and Panes never
+        // restores it), and an unknown state could leave a flag no later run
+        // knows to restore. The same goes for a marker that cannot be read or
+        // written.
+        let marker_path = self.closed_display_marker_path();
+        let prior_marker = match load_closed_display_marker(&marker_path) {
+            Ok(marker) => marker,
+            Err(error) => {
+                log::warn!("lid-close sleep marker is unreadable, leaving it unchanged: {error}");
+                return;
+            }
+        };
+        let recorded_intent = prior_marker.is_none();
+        if recorded_intent {
+            match self.closed_display_ops.read_sleep_disabled().await {
+                Some(false) => {
+                    if !self.save_closed_display_marker(ClosedDisplaySleepMethod::Pmset) {
+                        return;
+                    }
+                }
+                Some(true) => return,
+                None => {
+                    log::warn!("lid-close sleep state is unknown, leaving it unchanged");
+                    return;
+                }
+            }
+        }
+
+        match self.closed_display_ops.prevent(allow_password_prompt).await {
+            Some(method) => {
+                self.save_closed_display_marker(method);
+                let mut runtime = self.runtime.lock().await;
+                let still_wanted = !runtime.paused_due_to_battery
+                    && runtime
+                        .active_profile
+                        .as_ref()
+                        .is_some_and(|profile| profile.prevent_closed_display_sleep);
+                if !still_wanted {
+                    // disable() or a settings change ran while we waited
+                    // (possibly on the password dialog), so nothing will
+                    // restore the flag later.
+                    drop(runtime);
+                    self.restore_closed_display_sleep(allow_password_prompt)
+                        .await;
+                    return;
+                }
+                runtime.closed_display_sleep_disabled = true;
+            }
+            None => {
+                // A cancelled dialog must not orphan a flag that an earlier
+                // run of ours left set: keep owning it so disable() restores it.
+                let Ok(Some(marker)) = load_closed_display_marker(&marker_path) else {
+                    return;
+                };
+                let stale_or_ours = marker.owner == self.current_process
+                    || !self
+                        .owner_may_still_be_running(&marker.owner)
+                        .unwrap_or(true);
+                if !stale_or_ours {
+                    return;
+                }
+                match self.closed_display_ops.read_sleep_disabled().await {
+                    Some(true) => {
+                        self.save_closed_display_marker(marker.method);
+                        self.runtime.lock().await.closed_display_sleep_disabled = true;
+                    }
+                    Some(false) if recorded_intent => {
+                        let _ = clear_helper_state(&marker_path);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Returns true when the flag is off afterwards. The marker is removed
+    /// only then, so a failed restore is retried on the next launch.
+    async fn restore_closed_display_sleep(&self, allow_password_prompt: bool) -> bool {
+        if self.closed_display_ops.allow(allow_password_prompt).await {
+            if let Err(error) = clear_helper_state(&self.closed_display_marker_path()) {
+                log::warn!("failed to clear lid-close sleep marker: {error}");
+            }
+            true
+        } else {
+            log::warn!("failed to restore lid-close sleep; it will be retried on next launch");
+            false
+        }
+    }
+
+    fn save_closed_display_marker(&self, method: ClosedDisplaySleepMethod) -> bool {
+        let marker = ClosedDisplaySleepMarker {
+            owner: self.current_process.clone(),
+            method,
+            set_at_unix_secs: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs())
+                .unwrap_or(0),
+        };
+        match save_json_state(&self.closed_display_marker_path(), &marker) {
+            Ok(()) => true,
+            Err(error) => {
+                log::warn!("failed to persist lid-close sleep marker: {error}");
+                false
+            }
+        }
+    }
+
+    fn closed_display_marker_path(&self) -> PathBuf {
+        closed_display_marker_path(&self.state_dir)
     }
 
     fn sync_child_state(&self, runtime: &mut KeepAwakeRuntime) {
@@ -867,13 +1119,15 @@ fn linux_display_inhibit_active(_runtime: &KeepAwakeRuntime) -> bool {
 /// when the user opted into that prompt; otherwise lid-close prevention stays
 /// off and the rest of keep-awake keeps working.
 #[cfg(target_os = "macos")]
-async fn try_prevent_closed_display_sleep(allow_password_prompt: bool) -> bool {
+async fn try_prevent_closed_display_sleep(
+    allow_password_prompt: bool,
+) -> Option<ClosedDisplaySleepMethod> {
     if macos_helper::helper_socket_exists() {
         match macos_helper::HelperConnection::connect().await {
             Ok(mut conn) => match conn.prevent_sleep().await {
                 Ok(()) => {
                     log::info!("closed-display sleep prevention activated via helper");
-                    return true;
+                    return Some(ClosedDisplaySleepMethod::Helper);
                 }
                 Err(error) => {
                     log::warn!("helper preventSleep failed: {error}");
@@ -889,18 +1143,21 @@ async fn try_prevent_closed_display_sleep(allow_password_prompt: bool) -> bool {
         log::info!(
             "keep-awake helper unavailable and the password prompt fallback is off; lid-close sleep prevention stays inactive"
         );
-        return false;
+        return None;
     }
 
     // Fallback: use pmset via osascript admin-password prompt
     log::info!("helper socket not available, falling back to pmset via osascript");
-    macos_helper::pmset_set_disablesleep(true).await
+    macos_helper::pmset_set_disablesleep(true)
+        .await
+        .then_some(ClosedDisplaySleepMethod::Pmset)
 }
 
 /// Best-effort: restore `SleepDisabled = false` via the helper, or via pmset
 /// when the password prompt fallback set it in the first place.
+/// Returns true when SleepDisabled is off afterwards.
 #[cfg(target_os = "macos")]
-async fn try_allow_closed_display_sleep(allow_password_prompt: bool) {
+async fn try_allow_closed_display_sleep(allow_password_prompt: bool) -> bool {
     if macos_helper::helper_socket_exists() {
         match macos_helper::HelperConnection::connect().await {
             Ok(mut conn) => {
@@ -908,7 +1165,7 @@ async fn try_allow_closed_display_sleep(allow_password_prompt: bool) {
                     log::warn!("helper allowSleep failed: {error}");
                 } else {
                     log::info!("closed-display sleep prevention deactivated via helper");
-                    return;
+                    return true;
                 }
             }
             Err(error) => {
@@ -917,22 +1174,65 @@ async fn try_allow_closed_display_sleep(allow_password_prompt: bool) {
         }
     }
 
-    // Without the opt-in, pmset never set the flag, so there is nothing of
-    // ours to restore and no reason to raise a password dialog.
-    if !allow_password_prompt {
-        return;
+    // Only restore via pmset if SleepDisabled is actually set, to avoid a
+    // spurious admin-password dialog on automatic disable events (AC-unplug,
+    // session expiry, battery threshold).
+    let is_set = read_sleep_disabled_blocking().await;
+    if is_set == Some(false) {
+        return true;
     }
 
-    // Fallback: only restore via pmset if SleepDisabled is actually set,
-    // to avoid a spurious admin-password dialog on automatic disable events
-    // (AC-unplug, session expiry, battery threshold).
-    let is_set = tokio::task::spawn_blocking(macos::read_sleep_disabled)
+    // Without the opt-in there is no password dialog to fall back to.
+    if !allow_password_prompt || is_set != Some(true) {
+        return false;
+    }
+
+    macos_helper::pmset_set_disablesleep(false).await
+}
+
+#[cfg(target_os = "macos")]
+async fn read_sleep_disabled_blocking() -> Option<bool> {
+    tokio::task::spawn_blocking(macos::read_sleep_disabled)
         .await
         .ok()
         .flatten()
-        .unwrap_or(false);
-    if is_set {
-        let _ = macos_helper::pmset_set_disablesleep(false).await;
+}
+
+#[async_trait]
+impl ClosedDisplaySleepOps for SystemClosedDisplaySleepOps {
+    async fn prevent(&self, allow_password_prompt: bool) -> Option<ClosedDisplaySleepMethod> {
+        #[cfg(target_os = "macos")]
+        {
+            try_prevent_closed_display_sleep(allow_password_prompt).await
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = allow_password_prompt;
+            None
+        }
+    }
+
+    async fn allow(&self, allow_password_prompt: bool) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            try_allow_closed_display_sleep(allow_password_prompt).await
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = allow_password_prompt;
+            true
+        }
+    }
+
+    async fn read_sleep_disabled(&self) -> Option<bool> {
+        #[cfg(target_os = "macos")]
+        {
+            read_sleep_disabled_blocking().await
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
     }
 }
 
@@ -1085,11 +1385,33 @@ fn state_file_path(state_dir: &Path, pid: u32) -> PathBuf {
     state_dir.join(format!("{pid}.json"))
 }
 
+/// Not `.json`: `list_helper_state_paths` treats every `.json` file in the
+/// state dir as a helper record and deletes the ones it cannot parse.
+fn closed_display_marker_path(state_dir: &Path) -> PathBuf {
+    state_dir.join("closed-display-sleep.state")
+}
+
+fn load_closed_display_marker(path: &Path) -> Result<Option<ClosedDisplaySleepMarker>, String> {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+
+    serde_json::from_slice::<ClosedDisplaySleepMarker>(&raw)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 fn save_helper_state(path: &Path, helper: &PersistedKeepAwakeHelper) -> Result<(), String> {
+    save_json_state(path, helper)
+}
+
+fn save_json_state<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let raw = serde_json::to_vec(helper).map_err(|error| error.to_string())?;
+    let raw = serde_json::to_vec(value).map_err(|error| error.to_string())?;
     let temp_path = path.with_extension(format!(
         "{}.tmp",
         path.extension()
@@ -1525,6 +1847,44 @@ fn resolve_windows_powershell() -> Option<PathBuf> {
     ["powershell.exe", "powershell", "pwsh", "pwsh.exe"]
         .into_iter()
         .find_map(crate::runtime_env::resolve_executable)
+}
+
+#[cfg(target_os = "windows")]
+async fn restore_windows_screen_saver() {
+    let script = build_windows_screen_saver_restore_script();
+    let result = tokio::task::spawn_blocking(move || run_windows_powershell_script(&script)).await;
+    match result {
+        Ok(Ok(output)) if output.status.success() => {}
+        Ok(Ok(output)) => log::warn!(
+            "failed to restore the screen saver setting: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+        Ok(Err(error)) => log::warn!("failed to restore the screen saver setting: {error}"),
+        Err(error) => log::warn!("failed to restore the screen saver setting: {error}"),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn restore_windows_screen_saver() {}
+
+/// Re-applies the user's saved ScreenSaveActive value. The helper turns the
+/// screen saver off with SystemParametersInfo without writing the registry,
+/// so the registry still holds the value to restore.
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_screen_saver_restore_script() -> String {
+    // One line, so the type definition is a plain single-quoted string rather
+    // than a here-string (whose header must end its line).
+    [
+        "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; \
+         public static class PanesScreenSaverRestore { \
+         [DllImport(\"user32.dll\", SetLastError=true)] \
+         public static extern bool SystemParametersInfo(uint action, uint param, IntPtr vparam, uint init); }';",
+        "$active = (Get-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name ScreenSaveActive \
+         -ErrorAction SilentlyContinue).ScreenSaveActive -eq '1';",
+        "$value = if ($active) { 1 } else { 0 };",
+        "[PanesScreenSaverRestore]::SystemParametersInfo(0x11, $value, [IntPtr]::Zero, 0) | Out-Null",
+    ]
+    .join(" ")
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -1997,6 +2357,16 @@ mod tests {
     }
 
     #[test]
+    fn windows_screen_saver_restore_reapplies_the_saved_setting() {
+        let script = build_windows_screen_saver_restore_script();
+
+        assert!(script.contains("Name ScreenSaveActive"));
+        assert!(script.contains("SystemParametersInfo(0x11, $value"));
+        assert!(!script.contains("@'"));
+        assert!(!script.contains('\n'));
+    }
+
+    #[test]
     fn battery_threshold_disables_preference_instead_of_leaving_paused_state() {
         with_temp_app_data_env(|| {
             AppConfig::mutate(|config| {
@@ -2318,7 +2688,7 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "/dev/null"));
         assert!(args
             .iter()
-            .any(|arg| arg == format!("--pid={}", std::process::id())));
+            .any(|arg| *arg == format!("--pid={}", std::process::id())));
     }
 
     #[test]
@@ -2464,6 +2834,510 @@ mod tests {
         assert!(!fingerprint
             .iter()
             .any(|arg| arg.contains("SetThreadExecutionState")));
+    }
+
+    #[derive(Debug, Default)]
+    struct FakeClosedDisplayOps {
+        sleep_disabled: StdMutex<Option<bool>>,
+        prevent_result: StdMutex<Option<ClosedDisplaySleepMethod>>,
+        allow_fails: StdMutex<bool>,
+        prevent_calls: StdMutex<Vec<bool>>,
+        allow_calls: StdMutex<Vec<bool>>,
+        /// Held by a test to keep `prevent` pending, like an open password dialog.
+        prevent_gate: tokio::sync::Mutex<()>,
+        /// When set, `prevent` records whether this marker file existed.
+        marker_path: StdMutex<Option<PathBuf>>,
+        marker_seen_by_prevent: StdMutex<Vec<bool>>,
+    }
+
+    impl FakeClosedDisplayOps {
+        fn with_flag(sleep_disabled: Option<bool>) -> Arc<Self> {
+            let ops = Self::default();
+            *ops.sleep_disabled.lock().unwrap() = sleep_disabled;
+            Arc::new(ops)
+        }
+
+        fn prevent_calls(&self) -> Vec<bool> {
+            self.prevent_calls.lock().unwrap().clone()
+        }
+
+        fn allow_calls(&self) -> Vec<bool> {
+            self.allow_calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl ClosedDisplaySleepOps for FakeClosedDisplayOps {
+        async fn prevent(&self, allow_password_prompt: bool) -> Option<ClosedDisplaySleepMethod> {
+            self.prevent_calls
+                .lock()
+                .unwrap()
+                .push(allow_password_prompt);
+            let marker_path = self.marker_path.lock().unwrap().clone();
+            if let Some(path) = marker_path {
+                self.marker_seen_by_prevent
+                    .lock()
+                    .unwrap()
+                    .push(path.exists());
+            }
+            let _gate = self.prevent_gate.lock().await;
+            let result = *self.prevent_result.lock().unwrap();
+            if result.is_some() {
+                *self.sleep_disabled.lock().unwrap() = Some(true);
+            }
+            result
+        }
+
+        async fn allow(&self, allow_password_prompt: bool) -> bool {
+            self.allow_calls.lock().unwrap().push(allow_password_prompt);
+            if *self.allow_fails.lock().unwrap() {
+                return false;
+            }
+            *self.sleep_disabled.lock().unwrap() = Some(false);
+            true
+        }
+
+        async fn read_sleep_disabled(&self) -> Option<bool> {
+            *self.sleep_disabled.lock().unwrap()
+        }
+    }
+
+    fn closed_display_manager(
+        state_dir: &Path,
+        process_ops: FakeProcessOps,
+        ops: Arc<FakeClosedDisplayOps>,
+        next_spawn: Vec<anyhow::Result<SpawnedKeepAwakeChild>>,
+    ) -> KeepAwakeManager {
+        KeepAwakeManager::with_dependencies(
+            Arc::new(FakeSpawner {
+                support: SupportStatus {
+                    supported: true,
+                    message: None,
+                },
+                next_spawn: StdMutex::new(next_spawn),
+            }),
+            Arc::new(process_ops),
+            state_dir.to_path_buf(),
+            test_process(60),
+        )
+        .with_closed_display_ops(ops)
+    }
+
+    fn write_closed_display_marker(
+        state_dir: &Path,
+        owner_pid: u32,
+        method: ClosedDisplaySleepMethod,
+    ) {
+        save_json_state(
+            &closed_display_marker_path(state_dir),
+            &ClosedDisplaySleepMarker {
+                owner: test_process(owner_pid),
+                method,
+                set_at_unix_secs: 0,
+            },
+        )
+        .expect("marker should save");
+    }
+
+    fn lid_close_config(keep_awake_enabled: bool, password_fallback: bool) -> PowerConfig {
+        PowerConfig {
+            keep_awake_enabled,
+            prevent_closed_display_sleep: true,
+            allow_password_prompt_fallback: password_fallback,
+            ..PowerConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_closed_display_marker_restores_sleep_when_keep_awake_is_off() {
+        let state_dir = temp_state_dir();
+        write_closed_display_marker(&state_dir, 900, ClosedDisplaySleepMethod::Helper);
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            Vec::new(),
+        );
+
+        manager
+            .reclaim_stale_closed_display_sleep(&PowerConfig::default(), true)
+            .await
+            .expect("reclaim should succeed");
+
+        assert_eq!(ops.allow_calls(), vec![false]);
+        assert!(ops.prevent_calls().is_empty());
+        assert!(!closed_display_marker_path(&state_dir).exists());
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+    }
+
+    #[tokio::test]
+    async fn stale_closed_display_marker_is_adopted_when_lid_close_is_still_wanted() {
+        let state_dir = temp_state_dir();
+        write_closed_display_marker(&state_dir, 901, ClosedDisplaySleepMethod::Pmset);
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 601))],
+        );
+        let config = lid_close_config(true, true);
+
+        manager
+            .reclaim_stale_closed_display_sleep(&config, false)
+            .await
+            .expect("reclaim should succeed");
+        assert!(ops.allow_calls().is_empty());
+        assert!(manager.status().await.closed_display_sleep_disabled);
+
+        manager
+            .enable_at_startup(&config)
+            .await
+            .expect("enable should succeed");
+        assert!(ops.prevent_calls().is_empty());
+
+        manager.disable().await.expect("disable should succeed");
+        assert_eq!(ops.allow_calls(), vec![true]);
+        assert!(!closed_display_marker_path(&state_dir).exists());
+    }
+
+    #[tokio::test]
+    async fn closed_display_flag_without_marker_is_left_alone() {
+        let state_dir = temp_state_dir();
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            Vec::new(),
+        );
+
+        manager
+            .reclaim_stale_closed_display_sleep(&PowerConfig::default(), true)
+            .await
+            .expect("reclaim should succeed");
+
+        assert!(ops.allow_calls().is_empty());
+        assert!(ops.prevent_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn closed_display_marker_of_live_owner_is_left_alone() {
+        let state_dir = temp_state_dir();
+        write_closed_display_marker(&state_dir, 902, ClosedDisplaySleepMethod::Helper);
+        let process_ops = FakeProcessOps::default();
+        process_ops
+            .start_markers
+            .lock()
+            .unwrap()
+            .insert(902, Some("owner-902".to_string()));
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        let manager = closed_display_manager(&state_dir, process_ops, ops.clone(), Vec::new());
+
+        manager
+            .reclaim_stale_closed_display_sleep(&PowerConfig::default(), true)
+            .await
+            .expect("reclaim should succeed");
+
+        assert!(ops.allow_calls().is_empty());
+        assert!(closed_display_marker_path(&state_dir).exists());
+    }
+
+    #[tokio::test]
+    async fn failed_closed_display_restore_keeps_marker_for_next_launch() {
+        let state_dir = temp_state_dir();
+        write_closed_display_marker(&state_dir, 903, ClosedDisplaySleepMethod::Pmset);
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        *ops.allow_fails.lock().unwrap() = true;
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            Vec::new(),
+        );
+
+        manager
+            .reclaim_stale_closed_display_sleep(&lid_close_config(false, true), true)
+            .await
+            .expect("reclaim should succeed");
+
+        assert_eq!(ops.allow_calls(), vec![true]);
+        assert!(closed_display_marker_path(&state_dir).exists());
+    }
+
+    #[tokio::test]
+    async fn startup_reclaim_defers_the_password_prompt_until_the_window_exists() {
+        let state_dir = temp_state_dir();
+        write_closed_display_marker(&state_dir, 904, ClosedDisplaySleepMethod::Pmset);
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        *ops.allow_fails.lock().unwrap() = true;
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            Vec::new(),
+        );
+        let config = lid_close_config(false, true);
+
+        manager
+            .reclaim_stale_closed_display_sleep(&config, false)
+            .await
+            .expect("reclaim should succeed");
+        assert_eq!(ops.allow_calls(), vec![false]);
+
+        *ops.allow_fails.lock().unwrap() = false;
+        manager.finish_startup_closed_display_sleep(&config).await;
+        assert_eq!(ops.allow_calls(), vec![false, true]);
+        assert!(!closed_display_marker_path(&state_dir).exists());
+    }
+
+    #[tokio::test]
+    async fn startup_enable_defers_the_password_prompt_until_the_window_exists() {
+        let state_dir = temp_state_dir();
+        let ops = FakeClosedDisplayOps::with_flag(Some(false));
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 602))],
+        );
+        let config = lid_close_config(true, true);
+
+        manager
+            .enable_at_startup(&config)
+            .await
+            .expect("enable should succeed");
+        assert_eq!(ops.prevent_calls(), vec![false]);
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+        assert!(!closed_display_marker_path(&state_dir).exists());
+
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Pmset);
+        manager.finish_startup_closed_display_sleep(&config).await;
+        assert_eq!(ops.prevent_calls(), vec![false, true]);
+        assert!(manager.status().await.closed_display_sleep_disabled);
+        assert!(closed_display_marker_path(&state_dir).exists());
+
+        manager.disable().await.expect("disable should succeed");
+        assert!(!closed_display_marker_path(&state_dir).exists());
+    }
+
+    #[tokio::test]
+    async fn cancelled_reenable_keeps_ownership_of_a_flag_left_by_a_crash() {
+        let state_dir = temp_state_dir();
+        write_closed_display_marker(&state_dir, 905, ClosedDisplaySleepMethod::Pmset);
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 603))],
+        );
+
+        manager
+            .enable_with_config(&lid_close_config(true, true))
+            .await
+            .expect("enable should succeed");
+        assert_eq!(ops.prevent_calls(), vec![true]);
+        assert!(manager.status().await.closed_display_sleep_disabled);
+
+        manager.disable().await.expect("disable should succeed");
+        assert_eq!(ops.allow_calls(), vec![true]);
+        assert!(!closed_display_marker_path(&state_dir).exists());
+    }
+
+    #[tokio::test]
+    async fn pending_startup_prompt_restores_the_flag_when_settings_drop_lid_close() {
+        let state_dir = temp_state_dir();
+        let ops = FakeClosedDisplayOps::with_flag(Some(false));
+        let (startup_child, _startup_state) = FakeChildHandle::new(0);
+        let (settings_child, _settings_state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![
+                Ok(make_spawn(settings_child, 605)),
+                Ok(make_spawn(startup_child, 604)),
+            ],
+        );
+        let lid_close = lid_close_config(true, true);
+        manager
+            .enable_at_startup(&lid_close)
+            .await
+            .expect("enable should succeed");
+
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Pmset);
+        let gate = ops.prevent_gate.lock().await;
+        let pending = {
+            let manager = manager.clone();
+            tokio::spawn(async move {
+                manager
+                    .finish_startup_closed_display_sleep(&lid_close)
+                    .await;
+            })
+        };
+        while ops.prevent_calls().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+
+        // set_power_settings while the password dialog is open.
+        manager.disable().await.expect("disable should succeed");
+        manager
+            .enable_with_config(&PowerConfig {
+                keep_awake_enabled: true,
+                ..PowerConfig::default()
+            })
+            .await
+            .expect("enable should succeed");
+        drop(gate);
+        pending.await.expect("startup task should finish");
+
+        assert_eq!(*ops.sleep_disabled.lock().unwrap(), Some(false));
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+        assert!(!closed_display_marker_path(&state_dir).exists());
+        manager.disable().await.expect("disable should succeed");
+    }
+
+    #[tokio::test]
+    async fn prevent_records_the_marker_before_changing_the_flag() {
+        let state_dir = temp_state_dir();
+        let ops = FakeClosedDisplayOps::with_flag(Some(false));
+        *ops.marker_path.lock().unwrap() = Some(closed_display_marker_path(&state_dir));
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Helper);
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 606))],
+        );
+
+        manager
+            .enable_with_config(&lid_close_config(true, false))
+            .await
+            .expect("enable should succeed");
+
+        assert_eq!(*ops.marker_seen_by_prevent.lock().unwrap(), vec![true]);
+        assert!(manager.status().await.closed_display_sleep_disabled);
+        manager.disable().await.expect("disable should succeed");
+        assert!(!closed_display_marker_path(&state_dir).exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prevent_is_skipped_when_the_marker_cannot_be_written() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let state_dir = temp_state_dir();
+        fs::create_dir_all(&state_dir).expect("state dir should exist");
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555))
+            .expect("state dir should become read only");
+        let ops = FakeClosedDisplayOps::with_flag(Some(false));
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Helper);
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 607))],
+        );
+
+        let result = manager
+            .enable_with_config(&lid_close_config(true, false))
+            .await;
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o755))
+            .expect("state dir should become writable");
+
+        result.expect("enable should succeed");
+        assert!(ops.prevent_calls().is_empty());
+        assert_eq!(*ops.sleep_disabled.lock().unwrap(), Some(false));
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+        manager.disable().await.expect("disable should succeed");
+    }
+
+    /// Unix only: Windows reports a file in place of a directory as NotFound.
+    /// The flag reads as unknown, so no provisional marker write fails first.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prevent_is_skipped_when_the_marker_cannot_be_read() {
+        let parent = temp_state_dir();
+        fs::create_dir_all(&parent).expect("parent dir should exist");
+        let state_dir = parent.join("not-a-dir");
+        fs::write(&state_dir, b"").expect("file should be written");
+        let ops = FakeClosedDisplayOps::with_flag(None);
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Helper);
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 608))],
+        );
+
+        manager
+            .enable_with_config(&lid_close_config(true, false))
+            .await
+            .expect("enable should succeed");
+
+        assert!(ops.prevent_calls().is_empty());
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+        // The helper state cannot be cleared from a file either.
+        let _ = manager.disable().await;
+    }
+
+    #[tokio::test]
+    async fn flag_already_on_without_a_marker_is_left_to_its_owner() {
+        let state_dir = temp_state_dir();
+        let ops = FakeClosedDisplayOps::with_flag(Some(true));
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Helper);
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 609))],
+        );
+
+        manager
+            .enable_with_config(&lid_close_config(true, false))
+            .await
+            .expect("enable should succeed");
+
+        assert!(ops.prevent_calls().is_empty());
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+        assert!(!closed_display_marker_path(&state_dir).exists());
+
+        manager.disable().await.expect("disable should succeed");
+        assert!(ops.allow_calls().is_empty());
+        assert_eq!(*ops.sleep_disabled.lock().unwrap(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn unknown_flag_without_a_marker_is_left_unchanged() {
+        let state_dir = temp_state_dir();
+        let ops = FakeClosedDisplayOps::with_flag(None);
+        *ops.prevent_result.lock().unwrap() = Some(ClosedDisplaySleepMethod::Helper);
+        let (child, _state) = FakeChildHandle::new(0);
+        let manager = closed_display_manager(
+            &state_dir,
+            FakeProcessOps::default(),
+            ops.clone(),
+            vec![Ok(make_spawn(child, 610))],
+        );
+
+        manager
+            .enable_with_config(&lid_close_config(true, false))
+            .await
+            .expect("enable should succeed");
+
+        assert!(ops.prevent_calls().is_empty());
+        assert!(!manager.status().await.closed_display_sleep_disabled);
+        assert!(!closed_display_marker_path(&state_dir).exists());
+        manager.disable().await.expect("disable should succeed");
     }
 
     fn exit_status_from_code(code: i32) -> ExitStatus {

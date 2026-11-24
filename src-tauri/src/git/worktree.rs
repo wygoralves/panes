@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use super::cli_fallback::run_git;
+use super::cli_fallback::{run_git, run_git_read, run_git_read_files};
 use crate::models::GitWorktreeDto;
 
 /// Directory Panes keeps its own repo-local scratch state in, worktrees included.
@@ -28,7 +28,24 @@ pub fn add_worktree(
         }
     }
 
-    let mut args = vec!["worktree", "add", "-b", branch_name, worktree_path];
+    // `git worktree add` hands the new branch and the base on to `git branch`
+    // with no option boundary, so a leading dash would be read as an option.
+    anyhow::ensure!(
+        !branch_name.starts_with('-'),
+        "invalid branch name: {branch_name}"
+    );
+    if let Some(base) = base_ref {
+        anyhow::ensure!(!base.starts_with('-'), "invalid base ref: {base}");
+    }
+
+    let mut args = vec![
+        "worktree",
+        "add",
+        "-b",
+        branch_name,
+        "--end-of-options",
+        worktree_path,
+    ];
     if let Some(base) = base_ref {
         args.push(base);
     }
@@ -41,14 +58,25 @@ pub fn add_worktree(
         .ok_or_else(|| anyhow::anyhow!("worktree created but not found in listing"))
 }
 
+/// Strips the one line ending git ends a printed path with, and nothing
+/// else: on unix a directory name can end in a space or a line break.
+pub fn strip_git_line_end(output: &str) -> &str {
+    let line = output.strip_suffix('\n').unwrap_or(output);
+    if cfg!(windows) {
+        line.strip_suffix('\r').unwrap_or(line)
+    } else {
+        line
+    }
+}
+
 /// Resolves the git directory shared by a repository and all of its linked
 /// worktrees. `git rev-parse --git-common-dir` follows `gitdir:` pointer files
 /// and linked-worktree admin directories, so the answer is the main repository's
 /// git dir even when `repo_path` is itself a worktree.
 pub fn git_common_dir(repo_path: &str) -> anyhow::Result<PathBuf> {
-    let output = run_git(repo_path, &["rev-parse", "--git-common-dir"])
+    let output = run_git_read(repo_path, &["rev-parse", "--git-common-dir"])
         .context("failed to resolve the git common directory")?;
-    let resolved = output.trim();
+    let resolved = strip_git_line_end(&output);
     if resolved.is_empty() {
         anyhow::bail!("git returned an empty common directory for '{repo_path}'");
     }
@@ -173,7 +201,7 @@ pub fn worktree_paths_match(listed_path: &str, requested_path: &str) -> bool {
 
 /// Lists all worktrees for a repository using porcelain format.
 pub fn list_worktrees(repo_path: &str) -> anyhow::Result<Vec<GitWorktreeDto>> {
-    let output = run_git(repo_path, &["worktree", "list", "--porcelain"])
+    let output = run_git_read(repo_path, &["worktree", "list", "--porcelain"])
         .context("failed to list worktrees")?;
 
     let mut worktrees = Vec::new();
@@ -238,28 +266,385 @@ pub fn list_worktrees(repo_path: &str) -> anyhow::Result<Vec<GitWorktreeDto>> {
     Ok(worktrees)
 }
 
-/// Removes a linked worktree. Use `force` to remove even with uncommitted changes.
+/// What happened to the branch after its worktree was removed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RemoveWorktreeOutcome {
+    /// Set when the worktree is gone but git refused to delete its branch,
+    /// usually because the branch has commits not merged into HEAD.
+    pub branch_delete_error: Option<String>,
+}
+
+/// Starts the error [`remove_worktree`] returns when it refuses a forced
+/// removal because the worktree's index has submodules.
+pub const WORKTREE_HAS_SUBMODULES_ERROR_PREFIX: &str = "worktree_has_submodules:";
+
+/// Removes a linked worktree. `force` removes it even with uncommitted or
+/// untracked files; `force_branch_delete` deletes the branch with `-D` even
+/// when it holds unmerged commits. The two are separate so forcing the
+/// directory never implies discarding commits.
+///
+/// Once the worktree is gone, a refused branch delete is reported in the
+/// outcome instead of as an error, so callers can still treat the worktree
+/// as removed.
+///
+/// `git worktree remove` succeeds even when the worktree's detached HEAD holds
+/// commits no ref reaches, and those commits go with it. `force` only confirms
+/// losing files, so unless `force_branch_delete` says the caller confirmed
+/// losing commits, such a removal is refused.
+///
+/// `--force` also skips git's check for checked-out submodules, and a
+/// submodule's work is never part of what the caller confirmed losing, so a
+/// forced removal is refused while the worktree's index has any submodule.
+/// Without force, git does not see files saved inside an uninitialized
+/// submodule directory and deletes them, so an unforced removal is refused
+/// unless every submodule path is empty. Both refusals start with
+/// [`WORKTREE_HAS_SUBMODULES_ERROR_PREFIX`].
 pub fn remove_worktree(
     repo_path: &str,
     worktree_path: &str,
     force: bool,
     branch_name: Option<&str>,
     delete_branch: bool,
-) -> anyhow::Result<()> {
+    force_branch_delete: bool,
+) -> anyhow::Result<RemoveWorktreeOutcome> {
+    if !force_branch_delete && Path::new(worktree_path).is_dir() {
+        let detached = count_commits_held_only_by_head(repo_path, worktree_path)?;
+        if detached > 0 {
+            anyhow::bail!(
+                "failed to remove worktree: its detached HEAD holds {detached} commit(s) that no branch, tag or remote reaches"
+            );
+        }
+    }
+
+    if Path::new(worktree_path).is_dir() {
+        if force {
+            if !indexed_gitlinks(worktree_path)?.is_empty() {
+                anyhow::bail!(
+                    "{WORKTREE_HAS_SUBMODULES_ERROR_PREFIX}the worktree has submodules, so Panes does not remove it by force"
+                );
+            }
+        } else if let Err(error) = ensure_submodule_paths_empty(worktree_path) {
+            anyhow::bail!("{WORKTREE_HAS_SUBMODULES_ERROR_PREFIX}{error:#}");
+        }
+    }
+
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
     }
-    args.push(worktree_path);
+    args.extend(["--end-of-options", worktree_path]);
     run_git(repo_path, &args).context("failed to remove worktree")?;
+
+    let mut outcome = RemoveWorktreeOutcome::default();
     if delete_branch {
         if let Some(branch) = branch_name {
-            let flag = if force { "-D" } else { "-d" };
-            run_git(repo_path, &["branch", flag, branch])
-                .with_context(|| format!("failed to delete worktree branch '{branch}'"))?;
+            let flag = if force_branch_delete { "-D" } else { "-d" };
+            if let Err(error) = run_git(repo_path, &["branch", flag, "--end-of-options", branch]) {
+                outcome.branch_delete_error = Some(format!(
+                    "failed to delete worktree branch '{branch}': {error:#}"
+                ));
+            }
         }
     }
+    Ok(outcome)
+}
+
+/// Work that removing a worktree and its branch without force would refuse to
+/// throw away.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorktreeInspection {
+    /// Tracked files with staged or unstaged changes.
+    pub changed_count: usize,
+    /// Untracked files (ignored files are not counted; git removes them).
+    pub untracked_count: usize,
+    /// Commits that only the branch or the worktree's HEAD hold: reachable from
+    /// no other ref (other branches, tags, remote-tracking refs) and from no
+    /// other worktree's HEAD, so deleting them with the worktree loses them.
+    pub unmerged_commit_count: usize,
+    /// Identifies the exact work counted above: the worktree HEAD, the branch
+    /// tip, the status entries, the staged blobs and the current content of
+    /// every listed path. Equal counts with a different fingerprint mean the
+    /// work was replaced, so a confirmation of the old work no longer covers it.
+    pub fingerprint: String,
+}
+
+/// Counts the uncommitted files in `worktree_path` and the commits that
+/// removing it and deleting `branch_name` would lose. A worktree
+/// directory that no longer exists has no files to lose.
+pub fn inspect_worktree(
+    repo_path: &str,
+    worktree_path: &str,
+    branch_name: Option<&str>,
+) -> anyhow::Result<WorktreeInspection> {
+    let mut inspection = WorktreeInspection::default();
+    let mut fingerprint = Vec::new();
+    // Commits reachable from these may be lost with the worktree and branch.
+    let mut tips = Vec::new();
+
+    if Path::new(worktree_path).is_dir() {
+        // Checking a submodule's contents runs `git status` inside it, under
+        // the submodule's own config, so status only compares its checked-out
+        // commit, and it never lists files under a submodule path. Work there
+        // goes unseen, so a worktree with anything at one is never reported as
+        // safe to remove.
+        ensure_submodule_paths_empty(worktree_path)?;
+        let status = run_git_read_files(
+            worktree_path,
+            &[
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--ignore-submodules=dirty",
+            ],
+        )
+        .context("failed to read worktree status")?;
+        let (changed, untracked) = count_porcelain_entries(&status);
+        inspection.changed_count = changed;
+        inspection.untracked_count = untracked;
+
+        // Commits made on a detached HEAD belong to no branch; removing the
+        // worktree drops the only reference to them.
+        if let Some(head) = worktree_head(worktree_path) {
+            tips.push(head);
+        }
+
+        let head = run_git_read(worktree_path, &["rev-parse", "HEAD"]).unwrap_or_default();
+        let staged = run_git_read(
+            worktree_path,
+            &["diff", "--cached", "--raw", "--no-abbrev", "-z"],
+        )
+        .unwrap_or_default();
+        fingerprint.extend_from_slice(format!("head\0{}\0", head.trim()).as_bytes());
+        fingerprint.extend_from_slice(b"status\0");
+        fingerprint.extend_from_slice(status.as_bytes());
+        fingerprint.extend_from_slice(b"staged\0");
+        fingerprint.extend_from_slice(staged.as_bytes());
+        for path in porcelain_paths(&status) {
+            fingerprint.extend_from_slice(format!("path\0{path}\0").as_bytes());
+            fingerprint_path(&Path::new(worktree_path).join(path), &mut fingerprint);
+        }
+    }
+
+    let mut removed_branch = None;
+    if let Some(branch) = branch_name.filter(|branch| !branch.trim().is_empty()) {
+        let branch_ref = format!("refs/heads/{branch}");
+        if let Ok(tip) = run_git_read(
+            repo_path,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{branch_ref}^{{commit}}"),
+            ],
+        ) {
+            let tip = tip.trim().to_string();
+            fingerprint.extend_from_slice(format!("branch\0{tip}\0").as_bytes());
+            tips.push(tip);
+            removed_branch = Some(branch);
+        }
+    }
+
+    inspection.unmerged_commit_count =
+        count_commits_at_risk(repo_path, worktree_path, &tips, removed_branch)?;
+
+    inspection.fingerprint = git2::Oid::hash_object(git2::ObjectType::Blob, &fingerprint)
+        .context("failed to hash worktree fingerprint")?
+        .to_string();
+    Ok(inspection)
+}
+
+/// Fails unless every submodule in the worktree's index is absent from disk or
+/// an empty directory, and the worktree's git dir holds no submodule
+/// repositories. Reads only the index and the filesystem, so no command the
+/// repo defines runs.
+fn ensure_submodule_paths_empty(worktree_path: &str) -> anyhow::Result<()> {
+    let repo = git2::Repository::open(worktree_path).context("failed to open worktree")?;
+    anyhow::ensure!(
+        !repo.path().join("modules").is_dir(),
+        "the worktree has checked-out submodules whose work Panes does not inspect"
+    );
+    for path in indexed_gitlinks(worktree_path)? {
+        let full_path = Path::new(worktree_path).join(&path);
+        let is_empty = match std::fs::symlink_metadata(&full_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Ok(metadata) if metadata.is_dir() => std::fs::read_dir(&full_path)
+                .with_context(|| format!("failed to read submodule path {path}"))?
+                .next()
+                .is_none(),
+            _ => false,
+        };
+        anyhow::ensure!(
+            is_empty,
+            "the worktree has content at submodule path {path}, which Panes does not inspect"
+        );
+    }
     Ok(())
+}
+
+/// The submodule (gitlink) paths in the worktree's index. Read with git so
+/// every index format git writes, split indexes included, is understood.
+/// Fails on a path that is not valid UTF-8, since it cannot be checked.
+fn indexed_gitlinks(worktree_path: &str) -> anyhow::Result<Vec<String>> {
+    let listing = run_git_read(worktree_path, &["ls-files", "--stage", "-z"])
+        .context("failed to read worktree index")?;
+    let mut gitlinks = Vec::new();
+    for entry in listing.split('\0').filter(|entry| !entry.is_empty()) {
+        let (fields, path) = entry
+            .split_once('\t')
+            .context("failed to parse worktree index listing")?;
+        if fields.starts_with("160000 ") {
+            // The listing is decoded lossily, so a replacement character
+            // marks a path whose bytes were not UTF-8.
+            anyhow::ensure!(
+                !path.contains('\u{FFFD}'),
+                "the worktree index has a submodule path that is not valid UTF-8"
+            );
+            gitlinks.push(path.to_string());
+        }
+    }
+    Ok(gitlinks)
+}
+
+/// Commits reachable from the worktree's HEAD but from no ref and no other
+/// worktree's HEAD: the ones a detached HEAD alone keeps alive.
+fn count_commits_held_only_by_head(repo_path: &str, worktree_path: &str) -> anyhow::Result<usize> {
+    let tips: Vec<String> = worktree_head(worktree_path).into_iter().collect();
+    count_commits_at_risk(repo_path, worktree_path, &tips, None)
+}
+
+/// The commit the worktree's HEAD points at, if it has one.
+fn worktree_head(worktree_path: &str) -> Option<String> {
+    run_git_read(
+        worktree_path,
+        &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+    )
+    .ok()
+    .map(|head| head.trim().to_string())
+    .filter(|head| !head.is_empty())
+}
+
+/// Counts the commits reachable from `tips` that nothing surviving the removal
+/// of `worktree_path` (and of `removed_branch`, when given) still reaches.
+///
+/// Survivors are every ref except the removed branch and `refs/stash`, plus
+/// the HEAD of every other worktree. A stash only keeps commits as the parent
+/// of a stash entry, which is not where anyone looks for branch work, so it
+/// does not count. Another worktree's detached HEAD does count: it keeps the
+/// commits alive while that worktree exists, and removing that worktree later
+/// runs this same check for its own HEAD. `--all` is not used because it also
+/// adds the HEAD of the worktree being removed.
+fn count_commits_at_risk(
+    repo_path: &str,
+    worktree_path: &str,
+    tips: &[String],
+    removed_branch: Option<&str>,
+) -> anyhow::Result<usize> {
+    if tips.is_empty() {
+        return Ok(0);
+    }
+    let other_heads: Vec<String> = list_worktrees(repo_path)?
+        .into_iter()
+        .filter(|worktree| !worktree.is_prunable)
+        .filter(|worktree| !worktree_paths_match(&worktree.path, worktree_path))
+        .filter_map(|worktree| worktree.head_sha)
+        .filter(|head| !head.is_empty() && head.bytes().any(|byte| byte != b'0'))
+        .collect();
+
+    let excluded_branch = removed_branch.map(|branch| format!("--exclude=refs/heads/{branch}"));
+    let mut args = vec!["rev-list", "--count"];
+    args.extend(tips.iter().map(String::as_str));
+    args.extend(["--not", "--exclude=refs/stash"]);
+    if let Some(excluded) = excluded_branch.as_deref() {
+        args.push(excluded);
+    }
+    // `--exclude` only applies to the next ref selector, so it comes first.
+    args.push("--glob=refs/*");
+    args.extend(other_heads.iter().map(String::as_str));
+
+    let count = run_git_read(repo_path, &args).context("failed to count unmerged commits")?;
+    Ok(count.trim().parse::<usize>().unwrap_or(0))
+}
+
+/// Every path named in `git status --porcelain=v1 -z` output, rename and copy
+/// sources included.
+fn porcelain_paths(status: &str) -> Vec<&str> {
+    let mut paths = Vec::new();
+    let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
+    while let Some(entry) = entries.next() {
+        let code = entry.get(..2).unwrap_or("");
+        if let Some(path) = entry.get(3..) {
+            paths.push(path);
+        }
+        if code != "??" && code != "!!" && code.contains(['R', 'C']) {
+            if let Some(source) = entries.next() {
+                paths.push(source);
+            }
+        }
+    }
+    paths
+}
+
+/// Appends what is on disk at `path` to `out`: a blob id for a file, the target
+/// for a symlink, and every entry recursively for a directory (an untracked
+/// nested repository is listed as one directory).
+fn fingerprint_path(path: &Path, out: &mut Vec<u8>) {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        out.extend_from_slice(b"missing\0");
+        return;
+    };
+    if metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(path).unwrap_or_default();
+        out.extend_from_slice(format!("link\0{}\0", target.display()).as_bytes());
+    } else if metadata.is_dir() {
+        let mut children = std::fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        children.sort();
+        out.extend_from_slice(b"dir\0");
+        for child in children {
+            out.extend_from_slice(format!("{}\0", child.to_string_lossy()).as_bytes());
+            fingerprint_path(&path.join(&child), out);
+        }
+        out.extend_from_slice(b"end\0");
+    } else if metadata.is_file() {
+        match git2::Oid::hash_file(git2::ObjectType::Blob, path) {
+            Ok(oid) => out.extend_from_slice(format!("file\0{oid}\0").as_bytes()),
+            Err(_) => out.extend_from_slice(b"unreadable\0"),
+        }
+    } else {
+        // A FIFO, socket or device holds no content git could keep, and
+        // opening a FIFO with no writer would block the inspection forever.
+        out.extend_from_slice(b"special\0");
+    }
+}
+
+/// Splits `git status --porcelain=v1 -z` output into (changed, untracked)
+/// counts. Renames and copies carry their source path as an extra entry.
+fn count_porcelain_entries(status: &str) -> (usize, usize) {
+    let mut changed = 0;
+    let mut untracked = 0;
+    let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
+    while let Some(entry) = entries.next() {
+        let code = entry.get(..2).unwrap_or("");
+        if code == "??" {
+            untracked += 1;
+            continue;
+        }
+        if code == "!!" {
+            continue;
+        }
+        changed += 1;
+        if code.contains(['R', 'C']) {
+            entries.next();
+        }
+    }
+    (changed, untracked)
 }
 
 /// Prunes stale worktree admin files for worktrees whose directories no longer exist.
@@ -319,6 +704,58 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn add_worktree_succeeds_when_the_repo_defines_an_unusable_filter_name() {
+        let repo = TempRepo::init();
+        run_git(repo.path_str(), &["config", "filter.a=b.clean", "cat"]).expect("config");
+        let worktree_path = repo.path.join(".panes/worktrees/feature");
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+
+        add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "feature",
+            None,
+        )
+        .expect("worktree listing does not read filter config");
+    }
+
+    #[test]
+    fn add_worktree_does_not_read_a_dash_prefixed_base_or_branch_as_an_option() {
+        let repo = TempRepo::init();
+        let worktree_path = repo.path.join(".panes/worktrees/feature");
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+
+        // Before the fix this ran `git worktree add -b feature <path> --lock`.
+        let result = add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "feature",
+            Some("--lock"),
+        );
+
+        assert!(result.is_err(), "--lock is not a ref");
+        assert!(!worktree_path.exists());
+
+        // git passes the new branch name on to `git branch`, where `-M`
+        // renamed the current branch.
+        run_git(repo.path_str(), &["branch", "other"]).expect("create branch");
+        let result = add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "-M",
+            Some("other"),
+        );
+
+        assert!(result.is_err(), "-M is not a branch name");
+        let branches = run_git(
+            repo.path_str(),
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        )
+        .expect("list branches");
+        assert_eq!(branches.trim(), "main\nother");
     }
 
     #[test]
@@ -389,6 +826,597 @@ mod tests {
         assert!(
             !worktree_path.join(".git/info/exclude").exists(),
             "linked worktrees must not get their own exclude file"
+        );
+    }
+
+    fn add_panes_worktree(repo: &TempRepo, branch: &str) -> String {
+        let worktree_path = repo.path.join(".panes/worktrees").join(branch);
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+        let worktree_path = worktree_path
+            .to_str()
+            .expect("utf-8 worktree path")
+            .to_string();
+        add_worktree(repo.path_str(), &worktree_path, branch, None).expect("add worktree");
+        worktree_path
+    }
+
+    fn commit_in(worktree_path: &str, file: &str) {
+        fs::write(Path::new(worktree_path).join(file), "agent work\n").expect("write file");
+        run_git(worktree_path, &["add", "-A"]).expect("git add");
+        run_git(worktree_path, &["commit", "-m", "agent work"]).expect("git commit");
+    }
+
+    fn branch_exists(repo: &TempRepo, branch: &str) -> bool {
+        run_git(
+            repo.path_str(),
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .is_ok()
+    }
+
+    #[test]
+    fn unforced_removal_keeps_a_worktree_with_untracked_files() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        fs::write(Path::new(&worktree_path).join("new.txt"), "unsaved\n").expect("write");
+
+        remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect_err("git must refuse removing a worktree with untracked files");
+
+        assert!(Path::new(&worktree_path).join("new.txt").is_file());
+        assert!(branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn forced_worktree_removal_keeps_an_unmerged_branch_unless_branch_delete_is_forced() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        fs::write(Path::new(&worktree_path).join("scratch.txt"), "unsaved\n").expect("write");
+
+        let outcome = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            true,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect("forced worktree removal succeeds");
+
+        assert!(!Path::new(&worktree_path).exists());
+        assert!(
+            branch_exists(&repo, "agent"),
+            "forcing the directory must not imply -D on the branch"
+        );
+        assert!(
+            outcome.branch_delete_error.is_some(),
+            "the refused branch delete must be reported"
+        );
+    }
+
+    #[test]
+    fn removal_reports_a_refused_branch_delete_after_removing_the_worktree() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+
+        let outcome = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect("a refused branch delete is not a failed removal");
+
+        assert!(!Path::new(&worktree_path).exists());
+        assert!(branch_exists(&repo, "agent"));
+        assert!(outcome
+            .branch_delete_error
+            .as_deref()
+            .is_some_and(|error| error.contains("agent")));
+    }
+
+    #[test]
+    fn forced_branch_delete_drops_an_unmerged_branch() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+
+        let outcome = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            true,
+            Some("agent"),
+            true,
+            true,
+        )
+        .expect("forced removal succeeds");
+
+        assert_eq!(outcome, RemoveWorktreeOutcome::default());
+        assert!(!branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn inspect_worktree_counts_changed_untracked_and_unmerged_work() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+
+        assert_eq!(
+            counts(
+                &inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect")
+            ),
+            (0, 0, 0),
+            "a fresh worktree has nothing to lose"
+        );
+
+        commit_in(&worktree_path, "agent.txt");
+        commit_in(&worktree_path, "agent2.txt");
+        fs::write(Path::new(&worktree_path).join("a.txt"), "changed\n").expect("modify");
+        fs::create_dir_all(Path::new(&worktree_path).join("out")).expect("mkdir");
+        fs::write(Path::new(&worktree_path).join("out/one.txt"), "1\n").expect("write");
+        fs::write(Path::new(&worktree_path).join("out/two.txt"), "2\n").expect("write");
+
+        assert_eq!(
+            counts(
+                &inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect")
+            ),
+            (1, 2, 2)
+        );
+    }
+
+    fn counts(inspection: &WorktreeInspection) -> (usize, usize, usize) {
+        (
+            inspection.changed_count,
+            inspection.untracked_count,
+            inspection.unmerged_commit_count,
+        )
+    }
+
+    #[test]
+    fn inspect_worktree_fingerprint_changes_when_work_is_replaced_at_equal_counts() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        let file = Path::new(&worktree_path).join("a.txt");
+        let nested = Path::new(&worktree_path).join("nested/inner.txt");
+        fs::write(&file, "first edit\n").expect("modify");
+        fs::create_dir_all(nested.parent().expect("parent")).expect("mkdir");
+        run_git(&worktree_path, &["init", "nested"]).expect("nested repo");
+        fs::write(&nested, "one\n").expect("write nested");
+
+        let inspect =
+            || inspect_worktree(repo.path_str(), &worktree_path, Some("agent")).expect("inspect");
+        let confirmed = inspect();
+        assert_eq!(counts(&confirmed), (1, 1, 1));
+        assert_eq!(
+            inspect().fingerprint,
+            confirmed.fingerprint,
+            "unchanged work keeps its fingerprint"
+        );
+
+        fs::write(&file, "second edit\n").expect("modify again");
+        let edited = inspect();
+        assert_eq!(counts(&edited), counts(&confirmed));
+        assert_ne!(
+            edited.fingerprint, confirmed.fingerprint,
+            "same file, new content"
+        );
+
+        fs::write(&file, "first edit\n").expect("restore");
+        fs::write(&nested, "two\n").expect("edit nested repo");
+        let nested_edit = inspect();
+        assert_eq!(counts(&nested_edit), counts(&confirmed));
+        assert_ne!(
+            nested_edit.fingerprint, confirmed.fingerprint,
+            "a nested repository counted once still changes the fingerprint"
+        );
+
+        fs::write(&nested, "one\n").expect("restore nested");
+        fs::write(Path::new(&worktree_path).join("agent.txt"), "amended\n").expect("amend file");
+        run_git(&worktree_path, &["add", "agent.txt"]).expect("stage amend");
+        run_git(&worktree_path, &["commit", "--amend", "-m", "amended"]).expect("amend");
+        let amended = inspect();
+        assert_eq!(counts(&amended), counts(&confirmed));
+        assert_ne!(
+            amended.fingerprint, confirmed.fingerprint,
+            "an amended commit is not the commit the user saw"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspect_worktree_does_not_block_on_a_fifo_inside_an_untracked_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["init", "nested"]).expect("nested repo");
+        let fifo = Path::new(&worktree_path).join("nested/pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo failed");
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let repo_path = repo.path_str().to_string();
+        let inspected_path = worktree_path.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(inspect_worktree(&repo_path, &inspected_path, Some("agent")));
+        });
+        let inspection = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("inspection must not wait for a FIFO writer")
+            .expect("inspect");
+        assert_eq!(counts(&inspection), (0, 1, 0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspect_worktree_refuses_a_populated_submodule_without_running_its_config() {
+        let repo = TempRepo::init();
+        let source = repo.path.join(".git/sub-source");
+        fs::create_dir_all(&source).expect("create submodule source");
+        fs::write(source.join(".gitattributes"), "*.txt filter=x\n").expect("attributes");
+        fs::write(source.join("a.txt"), "a\n").expect("write file");
+        let source_str = source.to_str().expect("utf-8 source path");
+        run_git(source_str, &["init", "-q", "--initial-branch=main"]).expect("init source");
+        run_git(source_str, &["add", "-A"]).expect("add source");
+        run_git(
+            source_str,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "-m",
+                "sub",
+            ],
+        )
+        .expect("commit source");
+        run_git(
+            repo.path_str(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                source_str,
+                "sub",
+            ],
+        )
+        .expect("add submodule");
+        run_git(repo.path_str(), &["commit", "-q", "-m", "add submodule"]).expect("commit");
+
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        let fresh = inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect("an unpopulated submodule leaves the worktree inspectable");
+        assert_eq!(counts(&fresh), (0, 0, 0));
+
+        run_git(
+            &worktree_path,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+                "-q",
+            ],
+        )
+        .expect("populate submodule");
+        let sub = Path::new(&worktree_path).join("sub");
+        let marker = repo.path.join(".git/clean-ran");
+        let clean = format!("touch {}; cat", marker.display());
+        run_git(sub.to_str().unwrap(), &["config", "filter.x.clean", &clean])
+            .expect("set submodule filter");
+        fs::write(sub.join("a.txt"), "b\n").expect("edit submodule");
+
+        inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect_err("a populated submodule's work cannot be checked, so it is not safe");
+        assert!(!marker.exists(), "the submodule's clean filter ran");
+    }
+
+    /// Commits a submodule entry (a gitlink) at `sub` without cloning anything,
+    /// then adds a Panes worktree that has the gitlink in its index.
+    fn add_worktree_with_gitlink(repo: &TempRepo) -> String {
+        let head = run_git(repo.path_str(), &["rev-parse", "HEAD"]).expect("head");
+        let cacheinfo = format!("160000,{},sub", head.trim());
+        run_git(
+            repo.path_str(),
+            &["update-index", "--add", "--cacheinfo", &cacheinfo],
+        )
+        .expect("add gitlink");
+        run_git(repo.path_str(), &["commit", "-q", "-m", "add gitlink"]).expect("commit");
+        add_panes_worktree(repo, "agent")
+    }
+
+    #[test]
+    fn inspect_worktree_refuses_files_inside_an_uninitialized_submodule_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        let sub = Path::new(&worktree_path).join("sub");
+        fs::create_dir_all(&sub).expect("create submodule dir");
+        inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect("an empty submodule directory leaves the worktree inspectable");
+
+        fs::write(sub.join("notes.txt"), "unsaved\n").expect("write note");
+
+        inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect_err("git status skips files under a submodule path, so they cannot be counted");
+    }
+
+    #[test]
+    fn forced_removal_refuses_a_worktree_whose_index_holds_a_gitlink() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        fs::write(Path::new(&worktree_path).join("a.txt"), "edited\n").expect("edit file");
+
+        let error = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            true,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect_err("force skips git's submodule check, so Panes refuses it");
+
+        assert!(error
+            .to_string()
+            .starts_with(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX));
+        assert!(Path::new(&worktree_path).join("a.txt").is_file());
+        assert!(branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn unforced_removal_keeps_files_inside_an_uninitialized_submodule_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        let sub = Path::new(&worktree_path).join("sub");
+        fs::create_dir_all(&sub).expect("create submodule dir");
+        fs::write(sub.join("notes.txt"), "unsaved\n").expect("write note");
+
+        let error = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect_err("git does not see files under a submodule path, so Panes refuses");
+
+        assert!(error
+            .to_string()
+            .starts_with(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX));
+        assert!(sub.join("notes.txt").is_file());
+        assert!(branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn unforced_removal_removes_a_worktree_with_an_empty_submodule_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        fs::create_dir_all(Path::new(&worktree_path).join("sub")).expect("create submodule dir");
+
+        remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            false,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect("an empty submodule directory holds nothing to lose");
+
+        assert!(!Path::new(&worktree_path).exists());
+    }
+
+    #[test]
+    fn inspect_worktree_reads_a_split_index() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["update-index", "--split-index"]).expect("split index");
+
+        let inspection = inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect("a split index is a normal git index");
+        assert_eq!(counts(&inspection), (0, 0, 0));
+    }
+
+    #[test]
+    fn unforced_removal_keeps_a_worktree_whose_detached_head_holds_unreachable_commits() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["checkout", "--detach"]).expect("detach");
+        commit_in(&worktree_path, "detached.txt");
+
+        remove_worktree(repo.path_str(), &worktree_path, false, None, false, false)
+            .expect_err("an unforced removal must not drop commits only HEAD reaches");
+        assert!(Path::new(&worktree_path).join("detached.txt").is_file());
+
+        fs::write(Path::new(&worktree_path).join("notes.txt"), "draft\n").expect("write");
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect_err("confirming files alone must not drop commits only HEAD reaches");
+        assert!(Path::new(&worktree_path).join("detached.txt").is_file());
+
+        remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            true,
+            Some("agent"),
+            true,
+            true,
+        )
+        .expect("confirming the files and the commits allows the removal");
+        assert!(!Path::new(&worktree_path).exists());
+    }
+
+    #[test]
+    fn inspect_worktree_counts_commits_held_only_by_a_detached_head() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["checkout", "--detach"]).expect("detach");
+        commit_in(&worktree_path, "detached.txt");
+
+        assert_eq!(
+            inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+                .expect("inspect")
+                .unmerged_commit_count,
+            1
+        );
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_already_on_the_upstream() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "pushed.txt");
+        // A remote-tracking ref stands in for a pushed branch.
+        run_git(
+            repo.path_str(),
+            &[
+                "update-ref",
+                "refs/remotes/origin/agent",
+                "refs/heads/agent",
+            ],
+        )
+        .expect("create remote-tracking ref");
+        run_git(
+            repo.path_str(),
+            &["config", "branch.agent.remote", "origin"],
+        )
+        .expect("set remote");
+        run_git(
+            repo.path_str(),
+            &["config", "branch.agent.merge", "refs/heads/agent"],
+        )
+        .expect("set merge");
+        run_git(
+            repo.path_str(),
+            &[
+                "config",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        )
+        .expect("set fetch refspec");
+        commit_in(&worktree_path, "local.txt");
+
+        assert_eq!(
+            inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+                .expect("inspect")
+                .unmerged_commit_count,
+            1,
+            "only the commit missing from both HEAD and the upstream is at risk"
+        );
+    }
+
+    fn unmerged_commits(repo: &TempRepo, worktree_path: &str) -> usize {
+        inspect_worktree(repo.path_str(), worktree_path, Some("agent"))
+            .expect("inspect")
+            .unmerged_commit_count
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_another_local_branch_reaches() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        run_git(repo.path_str(), &["branch", "keep", "agent"]).expect("create branch");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 0);
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_a_tag_reaches() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        run_git(repo.path_str(), &["tag", "v1", "agent"]).expect("create tag");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 0);
+    }
+
+    #[test]
+    fn inspect_worktree_does_not_count_commits_on_a_remote_ref_that_is_not_the_upstream() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        commit_in(&worktree_path, "agent.txt");
+        run_git(
+            repo.path_str(),
+            &[
+                "update-ref",
+                "refs/remotes/fork/agent-copy",
+                "refs/heads/agent",
+            ],
+        )
+        .expect("create remote-tracking ref");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 0);
+    }
+
+    #[test]
+    fn inspect_worktree_counts_commits_only_the_branch_holds() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(repo.path_str(), &["tag", "base"]).expect("tag the base");
+        commit_in(&worktree_path, "agent.txt");
+        commit_in(&worktree_path, "agent2.txt");
+        // A stash entry has the branch tip as parent but is not a place to
+        // find branch work, so it does not keep the commits.
+        fs::write(Path::new(&worktree_path).join("a.txt"), "stashed\n").expect("modify");
+        run_git(&worktree_path, &["stash"]).expect("stash");
+
+        assert_eq!(unmerged_commits(&repo, &worktree_path), 2);
+    }
+
+    #[test]
+    fn unforced_removal_still_refuses_a_detached_head_nothing_else_reaches() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(repo.path_str(), &["tag", "base"]).expect("tag the base");
+        run_git(&worktree_path, &["checkout", "--detach"]).expect("detach");
+        commit_in(&worktree_path, "detached.txt");
+        fs::write(Path::new(&worktree_path).join("a.txt"), "stashed\n").expect("modify");
+        run_git(&worktree_path, &["stash"]).expect("stash");
+
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect_err("commits only the detached HEAD reaches must not be dropped");
+        assert!(Path::new(&worktree_path).join("detached.txt").is_file());
+
+        run_git(repo.path_str(), &["tag", "kept", "agent"]).expect("tag unrelated");
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect_err("a ref that does not reach the commits does not keep them");
+
+        let head = run_git(&worktree_path, &["rev-parse", "HEAD"]).expect("read head");
+        run_git(repo.path_str(), &["tag", "saved", head.trim()]).expect("tag the head");
+        remove_worktree(repo.path_str(), &worktree_path, true, None, false, false)
+            .expect("a tag on the detached HEAD keeps its commits");
+        assert!(!Path::new(&worktree_path).exists());
+    }
+
+    #[test]
+    fn count_porcelain_entries_skips_rename_sources() {
+        assert_eq!(
+            count_porcelain_entries("R  new.txt\0old.txt\0 M a.txt\0?? b.txt\0"),
+            (2, 1)
         );
     }
 

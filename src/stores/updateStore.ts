@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import {
+  confirmDiscardUnsavedWork,
+  hasDirtyTabsEditedSince,
+  snapshotDirtyTabs,
+} from "../lib/unsavedChangesGuard";
 
 type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
 type DownloadPhase = "idle" | "downloading" | "installing";
@@ -62,8 +67,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       downloadedBytes: 0,
       totalBytes: null,
     });
+    let update: Awaited<ReturnType<typeof check>> = null;
     try {
-      const update = await check();
+      update = await check();
       if (!update) {
         set({
           status: "idle",
@@ -73,7 +79,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         });
         return;
       }
-      await update.downloadAndInstall((event) => {
+      await update.download((event) => {
         if (event.event === "Started") {
           set({
             downloadPhase: "downloading",
@@ -93,9 +99,29 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
           downloadedBytes: state.totalBytes ?? state.downloadedBytes,
         }));
       });
+      // Ask only now, so edits made during the download count too. On Windows
+      // the installer exits the app inside install(), and relaunch() skips the
+      // window close guard.
+      if (!(await confirmDiscardUnsavedWork())) {
+        // The downloaded installer stays in native memory until released.
+        await update.close();
+        set({ status: "available", downloadPhase: "idle", downloadedBytes: 0, totalBytes: null });
+        return;
+      }
+      // Discard leaves the approved tabs dirty; remember their text so the
+      // check below does not ask about them twice.
+      const approvedTabs = snapshotDirtyTabs();
+      await update.install();
       set({ status: "ready" });
+      // The editor stays usable while install() runs; ask again only about
+      // edits made meanwhile. On cancel the update applies at the next launch.
+      if (hasDirtyTabsEditedSince(approvedTabs) && !(await confirmDiscardUnsavedWork())) {
+        return;
+      }
       await relaunch();
     } catch (err) {
+      // A failed install leaves the downloaded installer in native memory.
+      await update?.close().catch(() => undefined);
       set({
         status: "error",
         error: err instanceof Error ? err.message : "Update failed",

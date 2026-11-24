@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { setCargoLockPackageVersion } from "./lib/cargo-lock.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 
@@ -66,5 +68,13 @@ function updateTauriConfig(nextVersion) {
   console.log(`  ✓ src-tauri/tauri.conf.json -> ${nextVersion}`);
 }
 
+function updateCargoLock(nextVersion) {
+  const lockPath = join(root, "src-tauri", "Cargo.lock");
+  const raw = readFileSync(lockPath, "utf-8");
+  writeFileSync(lockPath, setCargoLockPackageVersion(raw, "Panes", nextVersion));
+  console.log(`  ✓ src-tauri/Cargo.lock -> ${nextVersion}`);
+}
+
 updateCargoToml(version);
+updateCargoLock(version);
 updateTauriConfig(version);

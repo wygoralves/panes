@@ -51,6 +51,30 @@ describe("harness install actions", () => {
     })).toBe("manual");
   });
 
+  it("uses the host-specific command the backend sends", () => {
+    const windowsKiro = {
+      ...baseHarness,
+      id: "kiro",
+      command: "kiro-cli",
+      canAutoInstall: true,
+      installCommandDisplay:
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://cli.kiro.dev/install.ps1 | iex"',
+    };
+
+    expect(getHarnessInstallCommand(windowsKiro)).toBe(windowsKiro.installCommandDisplay);
+    expect(getHarnessInstallCommand(windowsKiro)).not.toContain("bash");
+    expect(getHarnessTileAction(windowsKiro)).toBe("install");
+  });
+
+  it("falls back to manual mode when the backend sends no command for this host", () => {
+    expect(getHarnessTileAction({
+      ...baseHarness,
+      id: "kiro",
+      canAutoInstall: true,
+      installCommandDisplay: null,
+    })).toBe("manual");
+  });
+
   it("uses the published npm package name for OpenCode", () => {
     expect(getHarnessInstallCommand("opencode")).toBe(
       "npm install -g opencode-ai",
@@ -63,6 +87,24 @@ describe("harness install actions", () => {
     );
     expect(getHarnessInstallCommand("opencode", "mise")).toBe(
       "mise use -g npm:opencode-ai",
+    );
+  });
+
+  it("knows the install commands for the newer coding CLIs", () => {
+    expect(getHarnessInstallCommand("cursor-cli")).toBe(
+      "curl https://cursor.com/install -fsS | bash",
+    );
+    expect(getHarnessInstallCommand("amp", "mise")).toBe(
+      "curl -fsSL https://ampcode.com/install.sh | bash",
+    );
+    expect(getHarnessInstallCommand("copilot-cli", "mise")).toBe(
+      "mise use -g npm:@github/copilot",
+    );
+    expect(getHarnessInstallCommand("qwen-code")).toBe(
+      "npm install -g @qwen-code/qwen-code",
+    );
+    expect(getHarnessInstallCommand("crush", "mise")).toBe(
+      "mise use -g npm:@charmland/crush",
     );
   });
 

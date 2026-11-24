@@ -241,6 +241,8 @@ export interface Message {
   createdAt: string;
   hydration?: "full" | "summary";
   hasDeferredContent?: boolean;
+  /** Sequence of the last stream event already folded into `blocks`. */
+  streamSeq?: number;
 }
 
 export interface MessageWindowCursor {
@@ -354,7 +356,8 @@ export interface ApprovalBlock {
   actionType: ActionType;
   summary: string;
   details: Record<string, unknown>;
-  status: "pending" | "answered";
+  /** `expired`: the turn ended before anyone answered; it can no longer be answered. */
+  status: "pending" | "answered" | "expired";
   decision?:
     | "accept"
     | "accept_for_session"
@@ -852,6 +855,8 @@ export interface GitFileCompare {
   hasStagedChanges: boolean;
   hasUnstagedChanges: boolean;
   isBinary: boolean;
+  /** The working-tree side was not valid UTF-8 and was decoded lossily. */
+  modifiedIsLossyDecode?: boolean;
   isEditable?: boolean;
   fallbackReason?: string | null;
 }
@@ -927,6 +932,22 @@ export interface WorktreeSessionInfo {
   branch: string;
 }
 
+export interface GitWorktreeRemoval {
+  /** Set when the worktree was removed but git kept its branch. */
+  branchDeleteError: string | null;
+}
+
+export interface GitWorktreeInspection {
+  changedCount: number;
+  untrackedCount: number;
+  unmergedCommitCount: number;
+  /** Identifies the exact files and commits counted, not just how many. */
+  fingerprint: string;
+}
+
+/** A worktree whose removal would discard uncommitted files or unmerged commits. */
+export interface WorktreeRemovalRisk extends WorktreeSessionInfo, GitWorktreeInspection {}
+
 export interface FileTreeEntry {
   path: string;
   isDir: boolean;
@@ -945,6 +966,8 @@ export interface ReadFileResult {
   content: string;
   sizeBytes: number;
   isBinary: boolean;
+  /** True when the file is not valid UTF-8 and `content` holds replacement characters. */
+  isLossyDecode: boolean;
 }
 
 export interface ResolvedEditorFileReference {
@@ -985,6 +1008,20 @@ export interface EditorTab {
   gitContext: GitEditorContext | null;
   pendingReveal: EditorRevealRequest | null;
   loadError?: string;
+  /** Line ending used on disk. `content` and `savedContent` stay LF-normalized. */
+  lineEnding?: EditorLineEnding;
+  /** Set when saving could corrupt the file, so the editor opens it read-only. */
+  readOnlyReason?: EditorReadOnlyReason | null;
+  /** Disk content that changed under a dirty buffer, awaiting the user's choice. */
+  diskConflict?: EditorDiskConflict | null;
+}
+
+export type EditorLineEnding = "\n" | "\r\n";
+
+export type EditorReadOnlyReason = "non-utf8" | "mixed-line-endings";
+
+export interface EditorDiskConflict {
+  diskContent: string;
 }
 
 export interface TerminalSession {
@@ -1197,6 +1234,8 @@ export interface HarnessInfo {
   version: string | null;
   path: string | null;
   canAutoInstall: boolean;
+  /** Install command line for the host OS; null when it must be installed by hand. */
+  installCommandDisplay?: string | null;
   website: string;
   native: boolean;
 }
@@ -1338,6 +1377,11 @@ export interface ApprovalResolvedEvent {
   approval_id: string;
 }
 
+export interface ApprovalExpiredEvent {
+  type: "ApprovalExpired";
+  approval_ids: string[];
+}
+
 export interface ErrorEvent {
   type: "Error";
   message: string;
@@ -1398,6 +1442,7 @@ export type StreamEvent =
   | DiffUpdatedEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
+  | ApprovalExpiredEvent
   | ModelReroutedEvent
   | NoticeEvent
   | TaskListUpdatedEvent
