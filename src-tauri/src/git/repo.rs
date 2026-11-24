@@ -2865,7 +2865,7 @@ mod tests {
         let paths = page
             .entries
             .into_iter()
-            .map(|entry| entry.path)
+            .map(|entry| entry.path.replace('\\', "/"))
             .collect::<Vec<_>>();
 
         assert!(paths.contains(&"repo/a.txt".to_string()));
