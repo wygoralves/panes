@@ -274,6 +274,10 @@ pub struct RemoveWorktreeOutcome {
     pub branch_delete_error: Option<String>,
 }
 
+/// Starts the error [`remove_worktree`] returns when it refuses a forced
+/// removal because the worktree's index has submodules.
+pub const WORKTREE_HAS_SUBMODULES_ERROR_PREFIX: &str = "worktree_has_submodules:";
+
 /// Removes a linked worktree. `force` removes it even with uncommitted or
 /// untracked files; `force_branch_delete` deletes the branch with `-D` even
 /// when it holds unmerged commits. The two are separate so forcing the
@@ -287,6 +291,10 @@ pub struct RemoveWorktreeOutcome {
 /// commits no ref reaches, and those commits go with it. `force` only confirms
 /// losing files, so unless `force_branch_delete` says the caller confirmed
 /// losing commits, such a removal is refused.
+///
+/// `--force` also skips git's check for checked-out submodules, and a
+/// submodule's work is never part of what the caller confirmed losing, so a
+/// forced removal is refused while the worktree's index has any submodule.
 pub fn remove_worktree(
     repo_path: &str,
     worktree_path: &str,
@@ -302,6 +310,12 @@ pub fn remove_worktree(
                 "failed to remove worktree: its detached HEAD holds {detached} commit(s) that no branch, tag or remote reaches"
             );
         }
+    }
+
+    if force && Path::new(worktree_path).is_dir() && !indexed_gitlinks(worktree_path)?.is_empty() {
+        anyhow::bail!(
+            "{WORKTREE_HAS_SUBMODULES_ERROR_PREFIX}the worktree has submodules, so Panes does not remove it by force"
+        );
     }
 
     let mut args = vec!["worktree", "remove"];
@@ -360,12 +374,10 @@ pub fn inspect_worktree(
     if Path::new(worktree_path).is_dir() {
         // Checking a submodule's contents runs `git status` inside it, under
         // the submodule's own config, so status only compares its checked-out
-        // commit. Work inside a submodule then goes unseen, so a worktree with
-        // one checked out is never reported as safe to remove.
-        anyhow::ensure!(
-            !has_populated_submodule(worktree_path)?,
-            "the worktree has checked-out submodules whose work Panes does not inspect"
-        );
+        // commit, and it never lists files under a submodule path. Work there
+        // goes unseen, so a worktree with anything at one is never reported as
+        // safe to remove.
+        ensure_submodule_paths_empty(worktree_path)?;
         let status = run_git_read_files(
             worktree_path,
             &[
@@ -432,27 +444,56 @@ pub fn inspect_worktree(
     Ok(inspection)
 }
 
-/// Whether the worktree has a submodule checked out, judged the way `git
-/// worktree remove` does before it refuses one: the worktree's git dir holds
-/// submodule repositories, or a submodule in its index has a `.git` on disk.
-/// Reads only the index and the filesystem, so no repo command runs.
-fn has_populated_submodule(worktree_path: &str) -> anyhow::Result<bool> {
+/// Fails unless every submodule in the worktree's index is absent from disk or
+/// an empty directory, and the worktree's git dir holds no submodule
+/// repositories. Reads only the index and the filesystem, so no command the
+/// repo defines runs.
+fn ensure_submodule_paths_empty(worktree_path: &str) -> anyhow::Result<()> {
     let repo = git2::Repository::open(worktree_path).context("failed to open worktree")?;
-    if repo.path().join("modules").is_dir() {
-        return Ok(true);
-    }
-    let index = repo.index().context("failed to read worktree index")?;
-    const GITLINK_MODE: u32 = 0o160000;
-    for entry in index.iter().filter(|entry| entry.mode == GITLINK_MODE) {
-        // A path that is not UTF-8 cannot be checked, so it counts.
-        let Ok(path) = std::str::from_utf8(&entry.path) else {
-            return Ok(true);
+    anyhow::ensure!(
+        !repo.path().join("modules").is_dir(),
+        "the worktree has checked-out submodules whose work Panes does not inspect"
+    );
+    for path in indexed_gitlinks(worktree_path)? {
+        let full_path = Path::new(worktree_path).join(&path);
+        let is_empty = match std::fs::symlink_metadata(&full_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Ok(metadata) if metadata.is_dir() => std::fs::read_dir(&full_path)
+                .with_context(|| format!("failed to read submodule path {path}"))?
+                .next()
+                .is_none(),
+            _ => false,
         };
-        if std::fs::symlink_metadata(Path::new(worktree_path).join(path).join(".git")).is_ok() {
-            return Ok(true);
+        anyhow::ensure!(
+            is_empty,
+            "the worktree has content at submodule path {path}, which Panes does not inspect"
+        );
+    }
+    Ok(())
+}
+
+/// The submodule (gitlink) paths in the worktree's index. Read with git so
+/// every index format git writes, split indexes included, is understood.
+/// Fails on a path that is not valid UTF-8, since it cannot be checked.
+fn indexed_gitlinks(worktree_path: &str) -> anyhow::Result<Vec<String>> {
+    let listing = run_git_read(worktree_path, &["ls-files", "--stage", "-z"])
+        .context("failed to read worktree index")?;
+    let mut gitlinks = Vec::new();
+    for entry in listing.split('\0').filter(|entry| !entry.is_empty()) {
+        let (fields, path) = entry
+            .split_once('\t')
+            .context("failed to parse worktree index listing")?;
+        if fields.starts_with("160000 ") {
+            // The listing is decoded lossily, so a replacement character
+            // marks a path whose bytes were not UTF-8.
+            anyhow::ensure!(
+                !path.contains('\u{FFFD}'),
+                "the worktree index has a submodule path that is not valid UTF-8"
+            );
+            gitlinks.push(path.to_string());
         }
     }
-    Ok(false)
+    Ok(gitlinks)
 }
 
 /// Commits reachable from the worktree's HEAD but from no ref and no other
@@ -1080,6 +1121,69 @@ mod tests {
         inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
             .expect_err("a populated submodule's work cannot be checked, so it is not safe");
         assert!(!marker.exists(), "the submodule's clean filter ran");
+    }
+
+    /// Commits a submodule entry (a gitlink) at `sub` without cloning anything,
+    /// then adds a Panes worktree that has the gitlink in its index.
+    fn add_worktree_with_gitlink(repo: &TempRepo) -> String {
+        let head = run_git(repo.path_str(), &["rev-parse", "HEAD"]).expect("head");
+        let cacheinfo = format!("160000,{},sub", head.trim());
+        run_git(
+            repo.path_str(),
+            &["update-index", "--add", "--cacheinfo", &cacheinfo],
+        )
+        .expect("add gitlink");
+        run_git(repo.path_str(), &["commit", "-q", "-m", "add gitlink"]).expect("commit");
+        add_panes_worktree(repo, "agent")
+    }
+
+    #[test]
+    fn inspect_worktree_refuses_files_inside_an_uninitialized_submodule_directory() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        let sub = Path::new(&worktree_path).join("sub");
+        fs::create_dir_all(&sub).expect("create submodule dir");
+        inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect("an empty submodule directory leaves the worktree inspectable");
+
+        fs::write(sub.join("notes.txt"), "unsaved\n").expect("write note");
+
+        inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect_err("git status skips files under a submodule path, so they cannot be counted");
+    }
+
+    #[test]
+    fn forced_removal_refuses_a_worktree_whose_index_holds_a_gitlink() {
+        let repo = TempRepo::init();
+        let worktree_path = add_worktree_with_gitlink(&repo);
+        fs::write(Path::new(&worktree_path).join("a.txt"), "edited\n").expect("edit file");
+
+        let error = remove_worktree(
+            repo.path_str(),
+            &worktree_path,
+            true,
+            Some("agent"),
+            true,
+            false,
+        )
+        .expect_err("force skips git's submodule check, so Panes refuses it");
+
+        assert!(error
+            .to_string()
+            .starts_with(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX));
+        assert!(Path::new(&worktree_path).join("a.txt").is_file());
+        assert!(branch_exists(&repo, "agent"));
+    }
+
+    #[test]
+    fn inspect_worktree_reads_a_split_index() {
+        let repo = TempRepo::init();
+        let worktree_path = add_panes_worktree(&repo, "agent");
+        run_git(&worktree_path, &["update-index", "--split-index"]).expect("split index");
+
+        let inspection = inspect_worktree(repo.path_str(), &worktree_path, Some("agent"))
+            .expect("a split index is a normal git index");
+        assert_eq!(counts(&inspection), (0, 0, 0));
     }
 
     #[test]

@@ -456,6 +456,47 @@ describe("terminalStore.createMultiSessionGroup", () => {
     expect(useTerminalStore.getState().workspaces["ws-1"]?.error).toBeUndefined();
   });
 
+  it("keeps a confirmed worktree whose forced removal the backend refuses for submodules", async () => {
+    mockIpc.inspectGitWorktree.mockResolvedValueOnce({
+      changedCount: 1,
+      untrackedCount: 0,
+      unmergedCommitCount: 0,
+      fingerprint: "fp",
+    });
+    mockIpc.removeGitWorktree.mockRejectedValueOnce(
+      "worktree_has_submodules:the worktree has submodules, so Panes does not remove it by force",
+    );
+
+    await expect(
+      useTerminalStore.getState().removeGroupWorktrees(
+        "ws-1",
+        [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+          },
+        ],
+        {
+          forceWorktrees: [
+            {
+              repoPath: "/repo",
+              worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+              branch: "panes/r1/agent-1",
+              changedCount: 1,
+              untrackedCount: 0,
+              unmergedCommitCount: 0,
+              fingerprint: "fp",
+            },
+          ],
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockIpc.removeGitWorktree.mock.calls[0]?.[2]).toBe(true);
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.error).toBeUndefined();
+  });
+
   it("treats a kept unmerged branch as a removed worktree, not a failure", async () => {
     mockIpc.removeGitWorktree.mockResolvedValueOnce({
       branchDeleteError: "error: the branch 'panes/r1/agent-1' is not fully merged",

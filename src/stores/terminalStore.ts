@@ -690,6 +690,12 @@ interface WorktreeRemovalResult {
   keptWorktrees: string[];
 }
 
+/**
+ * Starts the error the backend returns when it refuses a forced removal
+ * because the worktree has submodules; that worktree is kept, not failed.
+ */
+const WORKTREE_HAS_SUBMODULES_ERROR_PREFIX = "worktree_has_submodules:";
+
 /** Whether git may discard uncommitted files and unmerged commits, or "keep". */
 type WorktreeRemovalDecision = { forceWorktree: boolean; forceBranch: boolean } | "keep";
 
@@ -727,6 +733,10 @@ async function removeWorktreesSequential(
         keptBranches.push(worktree.branch || worktree.worktreePath);
       }
     } catch (error) {
+      if (String(error).includes(WORKTREE_HAS_SUBMODULES_ERROR_PREFIX)) {
+        keptWorktrees.push(worktree.branch || worktree.worktreePath);
+        continue;
+      }
       failures.push(`${worktree.branch || worktree.worktreePath}: ${String(error)}`);
     }
   }
@@ -2128,13 +2138,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       // Clean up any worktrees created before the failure
       if (createdWorktrees.length > 0) {
-        const { failures, keptBranches } = await removeWorktreesSequential(
+        const { failures, keptBranches, keptWorktrees } = await removeWorktreesSequential(
           createdWorktrees,
           forceRollback,
         );
         const cleanupFailures = [
           ...failures,
           ...keptBranches.map((branch) => `${branch}: branch was kept`),
+          ...keptWorktrees.map((worktree) => `${worktree}: worktree was kept`),
         ];
         if (cleanupFailures.length > 0) {
           message = `${message}. Cleanup failed for ${cleanupFailures.length} worktree(s): ${cleanupFailures.join("; ")}`;
