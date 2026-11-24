@@ -91,8 +91,8 @@ describe("renderMarkdownToHtml", () => {
   it("does not allow local file URLs in image sources", () => {
     const html = renderMarkdownToHtml("![local](file:///repo/secret.png)");
 
-    expect(html).toContain('src="#"');
-    expect(html).not.toContain('src="file:///repo/secret.png"');
+    expect(html).toContain('<img alt="local" />');
+    expect(html).not.toContain("src=");
   });
 
   it("sanitizes dangerous tags, handlers and javascript links", () => {
@@ -104,7 +104,8 @@ describe("renderMarkdownToHtml", () => {
       ].join("\n"),
     );
 
-    expect(html).toContain("href=\"#\"");
+    expect(html).toContain('<a rel="noreferrer noopener">xss</a>');
+    expect(html).not.toContain("href=");
     expect(html).not.toContain("<script");
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("&lt;img src=&quot;javascript:alert(1)&quot;");
@@ -145,7 +146,8 @@ describe("renderMarkdownToHtml", () => {
     );
 
     expect(html).not.toContain("evil.example");
-    expect(html).toContain('<a href="#" rel="noreferrer noopener">a</a>');
+    expect(html).toContain('<a rel="noreferrer noopener">a</a>');
+    expect(renderMarkdownToHtml("note[^1]\n\n[^1]: text")).toContain('href="#user-content-fn-1"');
     expect(html).toContain('href="./notes"');
     expect(html).toContain('href="../x"');
     expect(html).toContain('href="/repo/README.md"');

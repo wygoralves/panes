@@ -50,10 +50,12 @@ const safeHtmlTagExtension: HtmlExtension = {
   },
 };
 
-function sanitizeUrl(url: string, attrName: string): string {
+// Returns null for a target that may not be rendered, so the caller drops the
+// attribute instead of pointing the link at a bare fragment.
+function sanitizeUrl(url: string, attrName: string): string | null {
   const trimmed = url.trim();
   if (!trimmed) {
-    return "#";
+    return null;
   }
 
   if (attrName.toLowerCase() === "href" && isLocalFileLinkSyntax(trimmed)) {
@@ -63,7 +65,7 @@ function sanitizeUrl(url: string, attrName: string): string {
   // Protocol-relative ("//host") and backslash-prefixed links resolve to a
   // remote host against the app origin, so they never pass as relative paths.
   if (/^[\\/]{2}/.test(trimmed)) {
-    return "#";
+    return null;
   }
 
   if (
@@ -85,7 +87,7 @@ function sanitizeUrl(url: string, attrName: string): string {
     return trimmed;
   }
 
-  return "#";
+  return null;
 }
 
 function sanitizeRenderedHtml(html: string): string {
@@ -94,7 +96,7 @@ function sanitizeRenderedHtml(html: string): string {
     (_full, attrName: string, _quoted: string, doubleValue: string, singleValue: string) => {
       const rawValue = typeof doubleValue === "string" ? doubleValue : singleValue;
       const safe = sanitizeUrl(rawValue, attrName);
-      return ` ${attrName}="${safe}"`;
+      return safe === null ? "" : ` ${attrName}="${safe}"`;
     },
   );
 
