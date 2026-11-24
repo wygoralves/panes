@@ -897,8 +897,10 @@ mod tests {
     #[test]
     fn trust_follows_the_repository_git_opens() {
         let repo = TestRepo::init();
-        // Registered paths are canonical, as the workspace scan stores them.
-        let root = repo.path.canonicalize().expect("canonical repo path");
+        // Registered paths are canonical, as the workspace scan stores them:
+        // without the Windows verbatim prefix, which git cannot create
+        // worktree directories under.
+        let root = crate::path_utils::canonicalize_path(&repo.path).expect("canonical repo path");
         let registered = crate::db::repos::upsert_repo(
             &repo.state.db,
             &repo.workspace_id,
