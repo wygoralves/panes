@@ -57,7 +57,7 @@
     "diff": "^8.0.3",
     "dompurify": "^3.5.0",
     "highlight.js": "^11.11.1",
-    "i18next": "^25.6.0",
+    "i18next": "^27.2.3",
     "lucide-react": "^0.400.0",
     "micromark": "^4.0.2",
     "micromark-extension-gfm": "^3.0.0",
