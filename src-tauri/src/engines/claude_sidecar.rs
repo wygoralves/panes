@@ -433,6 +433,10 @@ impl ClaudeTransport {
         if let Some(module_specifier) = sdk_module_specifier {
             command.env("CLAUDE_AGENT_SDK_MODULE", module_specifier);
         }
+        // The sidecar reads this variable directly. Drop an inherited one, which
+        // the resolver may have rejected (such as an npm shim), before the
+        // provider env and the resolved executable below set it on purpose.
+        command.env_remove("PANES_CLAUDE_CODE_EXECUTABLE");
         for (key, value) in instance.process_env("claude") {
             command.env(key, value);
         }
@@ -1197,9 +1201,12 @@ impl ClaudeSidecarEngine {
         let instance = self.instance_settings();
         let api_key_set = std::env::var("ANTHROPIC_API_KEY").is_ok()
             || instance.env.contains_key("ANTHROPIC_API_KEY");
-        let system_claude = resolve_claude_executable_for_instance(&instance);
+        let claude_resolution = resolve_claude_runtime_for_instance(&instance);
+        let system_claude = claude_resolution.executable;
         let system_claude_version = match system_claude.as_deref() {
-            Some(executable) => probe_claude_version(executable).await,
+            Some(executable) => {
+                probe_claude_version(executable, node_resolution.executable.as_deref()).await
+            }
             None => None,
         };
         let runtime_info = if node_available && sidecar_exists {
@@ -1245,6 +1252,13 @@ impl ClaudeSidecarEngine {
             checks.push("Agent SDK sidecar script found".to_string());
         } else {
             warnings.push("Agent SDK sidecar script not found".to_string());
+        }
+
+        if let Some(shim) = claude_resolution.dropped_shim.as_ref() {
+            warnings.push(format!(
+                "Claude Code at `{}` is a script shim the Agent SDK cannot launch, so the bundled runtime is used instead",
+                shim.display()
+            ));
         }
 
         if let Some(claude_path) = system_claude.as_ref() {
@@ -1579,9 +1593,92 @@ fn paths_match(left: &Path, right: &Path) -> bool {
 }
 
 fn resolve_claude_executable_for_instance(instance: &EngineInstanceSettings) -> Option<PathBuf> {
-    instance
+    resolve_claude_runtime_for_instance(instance).executable
+}
+
+/// The Claude Code executable the Agent SDK will spawn, if any.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ClaudeExecutableResolution {
+    executable: Option<PathBuf>,
+    /// A Windows npm shim that was found but had nothing spawnable next to
+    /// it, so the bundled runtime is used instead.
+    dropped_shim: Option<PathBuf>,
+}
+
+fn resolve_claude_runtime_for_instance(
+    instance: &EngineInstanceSettings,
+) -> ClaudeExecutableResolution {
+    match instance
         .executable_override()
         .or_else(resolve_system_claude_executable)
+    {
+        Some(found) => spawnable_claude_executable(found, cfg!(target_os = "windows")),
+        None => ClaudeExecutableResolution::default(),
+    }
+}
+
+/// The SDK spawns the executable without a shell, and Node refuses to spawn
+/// a .cmd or .bat that way (EINVAL since CVE-2024-27980); a .ps1 cannot be
+/// spawned at all. On Windows, swap an npm shim for the program behind it, or
+/// drop it so the bundled runtime is used.
+fn spawnable_claude_executable(path: PathBuf, is_windows: bool) -> ClaudeExecutableResolution {
+    if !is_windows || !is_windows_cli_shim(&path) {
+        return ClaudeExecutableResolution {
+            executable: Some(path),
+            dropped_shim: None,
+        };
+    }
+
+    match unwrap_windows_cli_shim(&path) {
+        Some(target) => {
+            log::info!(
+                "claude: using {} behind the npm shim {}",
+                target.display(),
+                path.display()
+            );
+            ClaudeExecutableResolution {
+                executable: Some(target),
+                dropped_shim: None,
+            }
+        }
+        None => {
+            log::warn!(
+                "claude: {} is a shim the Agent SDK cannot spawn and no claude.exe or cli.js sits next to it; using the bundled runtime",
+                path.display()
+            );
+            ClaudeExecutableResolution {
+                executable: None,
+                dropped_shim: Some(path),
+            }
+        }
+    }
+}
+
+fn is_windows_cli_shim(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["cmd", "bat", "ps1"]
+                .iter()
+                .any(|shim| extension.eq_ignore_ascii_case(shim))
+        })
+}
+
+fn unwrap_windows_cli_shim(shim: &Path) -> Option<PathBuf> {
+    let shim_dir = shim.parent()?;
+    let package_dir = shim_dir
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code");
+    [
+        // npm layout since 2.1: the package bin is a native executable.
+        package_dir.join("bin").join("claude.exe"),
+        // npm layout up to 2.0: the SDK runs .js entries with node.
+        package_dir.join("cli.js"),
+        shim_dir.join("claude.exe"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
 }
 
 fn resolve_system_claude_executable() -> Option<PathBuf> {
@@ -1607,8 +1704,18 @@ fn resolve_system_claude_executable() -> Option<PathBuf> {
     which::which_in("claude", Some(search_path), cwd).ok()
 }
 
-async fn probe_claude_version(executable: &Path) -> Option<String> {
-    let mut command = Command::new(executable);
+async fn probe_claude_version(executable: &Path, node: Option<&Path>) -> Option<String> {
+    let is_js_entry = executable
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("js"));
+    let mut command = if is_js_entry {
+        // Probe a cli.js the way the SDK runs it: through node.
+        let mut command = Command::new(node?);
+        command.arg(executable);
+        command
+    } else {
+        Command::new(executable)
+    };
     process_utils::configure_tokio_command(&mut command);
     let output = timeout(Duration::from_secs(5), command.arg("--version").output())
         .await
@@ -1912,9 +2019,9 @@ async fn detect_node_via_login_shell() -> Option<PathBuf> {
         for powershell in runtime_env::windows_login_probe_shells() {
             let mut cmd = Command::new(&powershell);
             cmd.args([
-                "-NoLogo",
-                "-Command",
-                "(Get-Command node -ErrorAction SilentlyContinue | Select-Object -First 1).Source",
+                "-NoLogo".to_string(),
+                "-Command".to_string(),
+                runtime_env::windows_application_probe_expression("node"),
             ]);
             process_utils::configure_tokio_command(&mut cmd);
 
@@ -2798,6 +2905,75 @@ async fn wait_for_cancel_ack(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_shim_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("panes-claude-shim-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir should exist");
+        dir
+    }
+
+    fn touch(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("path has a parent"))
+            .expect("parent should exist");
+        std::fs::write(path, "").expect("file should exist");
+    }
+
+    #[test]
+    fn windows_npm_shim_unwraps_to_the_packaged_claude_exe() {
+        let dir = temp_shim_dir();
+        let shim = dir.join("claude.cmd");
+        touch(&shim);
+        let exe = dir.join("node_modules/@anthropic-ai/claude-code/bin/claude.exe");
+        touch(&exe);
+        touch(&dir.join("node_modules/@anthropic-ai/claude-code/cli.js"));
+
+        let resolution = spawnable_claude_executable(shim, true);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(resolution.executable, Some(exe));
+        assert_eq!(resolution.dropped_shim, None);
+    }
+
+    #[test]
+    fn windows_npm_shim_unwraps_to_cli_js_for_older_packages() {
+        let dir = temp_shim_dir();
+        let shim = dir.join("claude.CMD");
+        touch(&shim);
+        let cli = dir.join("node_modules/@anthropic-ai/claude-code/cli.js");
+        touch(&cli);
+
+        let resolution = spawnable_claude_executable(shim, true);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(resolution.executable, Some(cli));
+    }
+
+    #[test]
+    fn windows_bare_shim_is_dropped_for_the_bundled_runtime() {
+        let dir = temp_shim_dir();
+        let shim = dir.join("claude.ps1");
+        touch(&shim);
+
+        let resolution = spawnable_claude_executable(shim.clone(), true);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(resolution.executable, None);
+        assert_eq!(resolution.dropped_shim, Some(shim));
+    }
+
+    #[test]
+    fn non_shim_and_non_windows_paths_pass_through() {
+        let exe = PathBuf::from(r"C:\Users\me\.local\bin\claude.exe");
+        assert_eq!(
+            spawnable_claude_executable(exe.clone(), true).executable,
+            Some(exe)
+        );
+        let shim = PathBuf::from("/usr/local/bin/claude.cmd");
+        assert_eq!(
+            spawnable_claude_executable(shim.clone(), false).executable,
+            Some(shim)
+        );
+    }
 
     fn sandbox_policy(sandbox_mode: &str, allow_network: bool) -> SandboxPolicy {
         SandboxPolicy {

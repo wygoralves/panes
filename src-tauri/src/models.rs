@@ -1091,6 +1091,9 @@ pub struct HarnessInfo {
     pub version: Option<String>,
     pub path: Option<String>,
     pub can_auto_install: bool,
+    /// Install command line for the host OS, or None when the harness has to
+    /// be installed by hand there.
+    pub install_command_display: Option<String>,
     pub website: String,
     pub native: bool,
 }

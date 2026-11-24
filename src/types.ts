@@ -1234,6 +1234,8 @@ export interface HarnessInfo {
   version: string | null;
   path: string | null;
   canAutoInstall: boolean;
+  /** Install command line for the host OS; null when it must be installed by hand. */
+  installCommandDisplay?: string | null;
   website: string;
   native: boolean;
 }

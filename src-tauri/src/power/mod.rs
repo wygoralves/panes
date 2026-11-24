@@ -456,6 +456,12 @@ impl KeepAwakeManager {
             cleanup.shutdown().await;
         }
         runtime.session_end_at = None;
+        // The Windows helper restores the screen saver in a `finally` block,
+        // which TerminateProcess (child.kill) skips, so restore it from here.
+        let restore_screen_saver = runtime
+            .active_profile
+            .as_ref()
+            .is_some_and(|profile| profile.prevent_screen_saver);
         runtime.active_profile = None;
 
         // Kill secondary child (Linux D-Bus inhibit)
@@ -496,6 +502,9 @@ impl KeepAwakeManager {
                 runtime.last_error = None;
                 runtime.helper = None;
                 drop(runtime);
+                if restore_screen_saver {
+                    restore_windows_screen_saver().await;
+                }
                 clear_helper_state(&self.state_path())?;
                 Ok(())
             }
@@ -536,6 +545,13 @@ impl KeepAwakeManager {
                     if !on_ac {
                         log::info!("keep awake pausing: switched to battery");
                         runtime.paused_due_to_battery = true;
+                        // Killing the Windows helper skips its screen saver
+                        // restore, and a later disable() finds no child.
+                        let restore_screen_saver = runtime.child.is_some()
+                            && runtime
+                                .active_profile
+                                .as_ref()
+                                .is_some_and(|profile| profile.prevent_screen_saver);
                         // Kill primary child but keep monitor running
                         if let Some(mut child) = runtime.child.take() {
                             let _ = child.kill().await;
@@ -560,6 +576,9 @@ impl KeepAwakeManager {
                             try_allow_closed_display_sleep(allow_password_prompt).await;
                         }
                         let _ = clear_helper_state(&self.state_path());
+                        if restore_screen_saver {
+                            restore_windows_screen_saver().await;
+                        }
                     } else if runtime.paused_due_to_battery {
                         log::info!("keep awake resuming: AC power restored");
                         let profile = runtime
@@ -1527,6 +1546,44 @@ fn resolve_windows_powershell() -> Option<PathBuf> {
         .find_map(crate::runtime_env::resolve_executable)
 }
 
+#[cfg(target_os = "windows")]
+async fn restore_windows_screen_saver() {
+    let script = build_windows_screen_saver_restore_script();
+    let result = tokio::task::spawn_blocking(move || run_windows_powershell_script(&script)).await;
+    match result {
+        Ok(Ok(output)) if output.status.success() => {}
+        Ok(Ok(output)) => log::warn!(
+            "failed to restore the screen saver setting: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+        Ok(Err(error)) => log::warn!("failed to restore the screen saver setting: {error}"),
+        Err(error) => log::warn!("failed to restore the screen saver setting: {error}"),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn restore_windows_screen_saver() {}
+
+/// Re-applies the user's saved ScreenSaveActive value. The helper turns the
+/// screen saver off with SystemParametersInfo without writing the registry,
+/// so the registry still holds the value to restore.
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_screen_saver_restore_script() -> String {
+    // One line, so the type definition is a plain single-quoted string rather
+    // than a here-string (whose header must end its line).
+    [
+        "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; \
+         public static class PanesScreenSaverRestore { \
+         [DllImport(\"user32.dll\", SetLastError=true)] \
+         public static extern bool SystemParametersInfo(uint action, uint param, IntPtr vparam, uint init); }';",
+        "$active = (Get-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name ScreenSaveActive \
+         -ErrorAction SilentlyContinue).ScreenSaveActive -eq '1';",
+        "$value = if ($active) { 1 } else { 0 };",
+        "[PanesScreenSaverRestore]::SystemParametersInfo(0x11, $value, [IntPtr]::Zero, 0) | Out-Null",
+    ]
+    .join(" ")
+}
+
 #[cfg(any(target_os = "windows", test))]
 fn build_windows_keep_awake_args(owner_pid: u32, profile: &PowerProfile) -> Vec<OsString> {
     vec![
@@ -1994,6 +2051,16 @@ mod tests {
             status.message.as_deref(),
             Some("failed to resume keep awake on AC power: resume failed")
         );
+    }
+
+    #[test]
+    fn windows_screen_saver_restore_reapplies_the_saved_setting() {
+        let script = build_windows_screen_saver_restore_script();
+
+        assert!(script.contains("Name ScreenSaveActive"));
+        assert!(script.contains("SystemParametersInfo(0x11, $value"));
+        assert!(!script.contains("@'"));
+        assert!(!script.contains('\n'));
     }
 
     #[test]

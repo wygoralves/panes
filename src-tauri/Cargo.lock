@@ -18,6 +18,7 @@ dependencies = [
  "libc",
  "log",
  "notify",
+ "open",
  "portable-pty",
  "reqwest 0.12.28",
  "rusqlite",

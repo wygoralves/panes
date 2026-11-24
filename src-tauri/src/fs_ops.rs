@@ -70,7 +70,7 @@ pub fn list_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<Vec<FileTreeE
 
         let relative = path
             .strip_prefix(&repo_root)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| forward_slash_path(&p.to_string_lossy(), std::path::MAIN_SEPARATOR))
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
         entries.push(FileTreeEntryDto {
@@ -86,6 +86,16 @@ pub fn list_dir(repo_path: &str, dir_path: &str) -> anyhow::Result<Vec<FileTreeE
     });
 
     Ok(entries)
+}
+
+/// Repo-relative paths cross IPC with `/` separators on every platform; the
+/// explorers and git views split on `/`.
+fn forward_slash_path(rendered: &str, separator: char) -> String {
+    if separator == '/' {
+        rendered.to_string()
+    } else {
+        rendered.replace(separator, "/")
+    }
 }
 
 pub fn read_file(repo_path: &str, file_path: &str) -> anyhow::Result<ReadFileResultDto> {
@@ -352,8 +362,8 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::{
-        create_dir, create_file, delete_path, read_file, rename_path, write_file,
-        FILE_CHANGED_ON_DISK,
+        create_dir, create_file, delete_path, forward_slash_path, list_dir, read_file, rename_path,
+        write_file, FILE_CHANGED_ON_DISK,
     };
     use uuid::Uuid;
 
@@ -366,6 +376,27 @@ mod tests {
         let result = f(root.clone());
         let _ = fs::remove_dir_all(&root);
         result
+    }
+
+    #[test]
+    fn list_dir_reports_forward_slash_relative_paths() {
+        assert_eq!(
+            forward_slash_path(r"src\components\Button.tsx", '\\'),
+            "src/components/Button.tsx"
+        );
+        assert_eq!(forward_slash_path(r"a\b.txt", '/'), r"a\b.txt");
+
+        with_temp_repo(|root| {
+            fs::create_dir_all(root.join("src").join("components")).expect("dirs should exist");
+            fs::write(root.join("src").join("components").join("Button.tsx"), "")
+                .expect("file should exist");
+
+            let entries = list_dir(root.to_string_lossy().as_ref(), "src/components")
+                .expect("nested listing should succeed");
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].path, "src/components/Button.tsx");
+        });
     }
 
     #[test]

@@ -33,6 +33,10 @@ struct HarnessDef {
     /// Raw shell script for install (used for curl-pipe installers).
     /// Takes precedence over `install_command` when set.
     install_script: Option<&'static str>,
+    /// PowerShell expression from the tool's official Windows instructions.
+    /// Windows terminals start in cmd.exe, where the Unix curl-pipe scripts
+    /// fail or install into WSL, so Windows uses this instead.
+    install_script_windows: Option<&'static str>,
     website: &'static str,
     native: bool,
     /// Oldest Node.js major release the npm package supports (its
@@ -51,6 +55,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@openai/codex"],
         install_script: None,
+        install_script_windows: None,
         website: "https://github.com/openai/codex",
         native: true,
         min_node_major: None,
@@ -64,6 +69,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@anthropic-ai/claude-code"],
         install_script: Some("curl -fsSL https://claude.ai/install.sh | bash"),
+        install_script_windows: Some("irm https://claude.ai/install.ps1 | iex"),
         website: "https://code.claude.com/docs/en/overview",
         native: false,
         min_node_major: None,
@@ -77,6 +83,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@google/gemini-cli"],
         install_script: None,
+        install_script_windows: None,
         website: "https://github.com/google-gemini/gemini-cli",
         native: false,
         min_node_major: None,
@@ -90,6 +97,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
+        install_script_windows: Some("irm https://antigravity.google/cli/install.ps1 | iex"),
         website: "https://antigravity.google",
         native: false,
         min_node_major: None,
@@ -103,6 +111,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://cli.kiro.dev/install | bash"),
+        install_script_windows: Some("irm https://cli.kiro.dev/install.ps1 | iex"),
         website: "https://kiro.dev",
         native: false,
         min_node_major: None,
@@ -116,6 +125,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "opencode-ai"],
         install_script: None,
+        install_script_windows: None,
         website: "https://opencode.ai",
         native: false,
         min_node_major: None,
@@ -129,6 +139,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@kilocode/cli"],
         install_script: None,
+        install_script_windows: None,
         website: "https://kilo.ai",
         native: false,
         min_node_major: None,
@@ -142,6 +153,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://app.factory.ai/cli | sh"),
+        install_script_windows: Some("irm https://app.factory.ai/cli/windows | iex"),
         website: "https://factory.com",
         native: false,
         min_node_major: None,
@@ -157,6 +169,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl https://cursor.com/install -fsS | bash"),
+        install_script_windows: None,
         website: "https://cursor.com/cli",
         native: false,
         min_node_major: None,
@@ -170,6 +183,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@github/copilot"],
         install_script: None,
+        install_script_windows: None,
         website: "https://github.com/github/copilot-cli",
         native: false,
         min_node_major: None,
@@ -183,6 +197,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: None,
         install_args: &[],
         install_script: Some("curl -fsSL https://ampcode.com/install.sh | bash"),
+        install_script_windows: None,
         website: "https://ampcode.com",
         native: false,
         min_node_major: None,
@@ -196,6 +211,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@qwen-code/qwen-code"],
         install_script: None,
+        install_script_windows: None,
         website: "https://github.com/QwenLM/qwen-code",
         native: false,
         min_node_major: Some(22),
@@ -209,6 +225,7 @@ const HARNESSES: &[HarnessDef] = &[
         install_command: Some("npm"),
         install_args: &["install", "-g", "@charmland/crush"],
         install_script: None,
+        install_script_windows: None,
         website: "https://github.com/charmbracelet/crush",
         native: false,
         min_node_major: None,
@@ -272,6 +289,17 @@ pub async fn install_harness(app: AppHandle, harness_id: String) -> Result<Insta
                 def.name, def.website
             ));
         }
+    }
+
+    // On Windows, run the official PowerShell installer directly (no cmd.exe),
+    // the same command the Harnesses panel shows and types into a terminal.
+    #[cfg(target_os = "windows")]
+    if let Some(expression) = def.install_script_windows {
+        let args: Vec<String> = windows_powershell_install_args(expression)
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect();
+        return run_harness_install(&app, &harness_id, &windows_powershell_program(), &args).await;
     }
 
     // Prefer install_script (curl-pipe installers) over install_command (npm).
@@ -451,6 +479,7 @@ async fn detect_harness(def: &HarnessDef, node_major: Option<u32>) -> HarnessInf
                 version: Some(version),
                 path: Some(path.display().to_string()),
                 can_auto_install: harness_can_auto_install(def, node_major),
+                install_command_display: install_command_display(def),
                 website: def.website.to_string(),
                 native: def.native,
             };
@@ -470,6 +499,7 @@ async fn detect_harness(def: &HarnessDef, node_major: Option<u32>) -> HarnessInf
             version: Some(version),
             path: Some(path),
             can_auto_install: harness_can_auto_install(def, node_major),
+            install_command_display: install_command_display(def),
             website: def.website.to_string(),
             native: def.native,
         };
@@ -484,6 +514,7 @@ async fn detect_harness(def: &HarnessDef, node_major: Option<u32>) -> HarnessInf
         version: None,
         path: None,
         can_auto_install: harness_can_auto_install(def, node_major),
+        install_command_display: install_command_display(def),
         website: def.website.to_string(),
         native: def.native,
     }
@@ -500,12 +531,76 @@ fn harness_can_auto_install(def: &HarnessDef, node_major: Option<u32>) -> bool {
         return false;
     }
 
-    #[cfg(target_os = "windows")]
-    if def.install_script.is_some() {
-        return def.install_command.is_some();
+    harness_can_auto_install_on(def, cfg!(target_os = "windows"))
+}
+
+fn harness_can_auto_install_on(def: &HarnessDef, is_windows: bool) -> bool {
+    if is_windows {
+        return def.install_script_windows.is_some() || def.install_command.is_some();
     }
 
     def.install_command.is_some() || def.install_script.is_some()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn windows_powershell_install_args(expression: &str) -> [&str; 5] {
+    [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        expression,
+    ]
+}
+
+/// Windows PowerShell from System32. The install command is typed into a
+/// terminal that starts in the workspace, where cmd.exe would run a
+/// powershell.exe, .bat or .cmd from that folder before the system one.
+fn windows_powershell_program() -> String {
+    std::env::var_os("SystemRoot")
+        .map(|root| {
+            Path::new(&root)
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe")
+        })
+        .filter(|path| path.is_file())
+        .map(|path| path.display().to_string())
+        // Typed unquoted, so it works the same in cmd.exe and PowerShell.
+        .filter(|path| !path.contains(char::is_whitespace))
+        .unwrap_or_else(|| "powershell".to_string())
+}
+
+/// The install command line for this OS, matching what install_harness runs.
+/// Shown in the Harnesses panel and typed into a terminal by "Install".
+fn install_command_display(def: &HarnessDef) -> Option<String> {
+    let windows_powershell = cfg!(target_os = "windows").then(windows_powershell_program);
+    install_command_display_on(def, windows_powershell.as_deref())
+}
+
+/// `windows_powershell` is the PowerShell program on Windows, None elsewhere.
+fn install_command_display_on(
+    def: &HarnessDef,
+    windows_powershell: Option<&str>,
+) -> Option<String> {
+    let package_manager_command = || {
+        def.install_command
+            .map(|program| format!("{program} {}", def.install_args.join(" ")))
+    };
+
+    if let Some(powershell) = windows_powershell {
+        if let Some(expression) = def.install_script_windows {
+            return Some(format!(
+                "{powershell} -NoProfile -ExecutionPolicy Bypass -Command \"{expression}\""
+            ));
+        }
+        return package_manager_command();
+    }
+
+    def.install_script
+        .map(str::to_string)
+        .or_else(package_manager_command)
 }
 
 // ---------------------------------------------------------------------------
@@ -816,9 +911,8 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
 #[cfg(target_os = "windows")]
 async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(String, String)> {
     let probe_script = format!(
-        "$p = (Get-Command {cmd} -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \
-         if ($p) {{ Write-Output $p; & $p {flag} }}",
-        cmd = command,
+        "$p = {probe}; if ($p) {{ Write-Output $p; & $p {flag} }}",
+        probe = runtime_env::windows_application_probe_expression(command),
         flag = version_flag,
     );
 
@@ -910,6 +1004,52 @@ mod tests {
             "copilot version v1.34.1"
         ));
         assert!(version_belongs_to_harness(copilot, "1.0.114"));
+    }
+
+    #[test]
+    fn windows_install_commands_never_pipe_into_a_unix_shell() {
+        for id in ["claude-code", "kiro", "antigravity", "factory-droid"] {
+            let def = HARNESSES
+                .iter()
+                .find(|def| def.id == id)
+                .expect("harness exists");
+            let command = install_command_display_on(
+                def,
+                Some(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            )
+            .expect("windows command");
+
+            assert!(harness_can_auto_install_on(def, true), "{id}");
+            assert!(
+                command.starts_with(
+                    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile"
+                ),
+                "{id}: {command}"
+            );
+            assert!(
+                !command.contains("| bash") && !command.contains("| sh"),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_command_display_keeps_unix_scripts_and_npm_commands() {
+        let claude = HARNESSES
+            .iter()
+            .find(|def| def.id == "claude-code")
+            .unwrap();
+        assert_eq!(
+            install_command_display_on(claude, None).as_deref(),
+            Some("curl -fsSL https://claude.ai/install.sh | bash")
+        );
+        let codex = HARNESSES.iter().find(|def| def.id == "codex").unwrap();
+        for windows_powershell in [None, Some("powershell")] {
+            assert_eq!(
+                install_command_display_on(codex, windows_powershell).as_deref(),
+                Some("npm install -g @openai/codex")
+            );
+        }
     }
 
     #[test]
