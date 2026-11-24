@@ -306,4 +306,31 @@ describe("workspaceStore.loadWorkspaces", () => {
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBe(validWorkspace.id);
     expect(useWorkspaceStore.getState().repos).toEqual([repo]);
   });
+
+  it("activates the only workspace on a first run with nothing saved", async () => {
+    vi.mocked(localStorage.getItem).mockReturnValue(null);
+    const workspace = makeWorkspace("ws-default", "/home/panes");
+    const repo = makeRepo("repo-default", workspace.id, "/home/panes");
+
+    mockIpc.listWorkspaces.mockResolvedValue([workspace]);
+    mockIpc.getRepos.mockResolvedValue([repo]);
+
+    await useWorkspaceStore.getState().loadWorkspaces();
+
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBe(workspace.id);
+    expect(mockIpc.getRepos).toHaveBeenCalledWith(workspace.id);
+  });
+
+  it("leaves no workspace active on a first run with several workspaces", async () => {
+    vi.mocked(localStorage.getItem).mockReturnValue(null);
+    mockIpc.listWorkspaces.mockResolvedValue([
+      makeWorkspace("ws-a", "/home/panes/a"),
+      makeWorkspace("ws-b", "/home/panes/b"),
+    ]);
+
+    await useWorkspaceStore.getState().loadWorkspaces();
+
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+    expect(mockIpc.getRepos).not.toHaveBeenCalled();
+  });
 });
