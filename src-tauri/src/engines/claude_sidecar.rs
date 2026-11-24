@@ -721,10 +721,10 @@ struct ClaudeState {
     resource_dir: Option<PathBuf>,
     runtime_model_cache: Option<Vec<ModelInfo>>,
     runtime_info: Option<ClaudeRuntimeInfo>,
-    /// Approvals the sidecar still waits on, mapped to the query that asked.
-    /// The sidecar ignores an answer for any other id, so Panes must not
-    /// report one as delivered.
-    pending_approvals: HashMap<String, String>,
+    /// Approvals the sidecar still waits on, mapped to the query that asked
+    /// and the transport that query runs on. The sidecar ignores an answer
+    /// for any other id, so Panes must not report one as delivered.
+    pending_approvals: HashMap<String, (String, Arc<ClaudeTransport>)>,
 }
 
 pub struct ClaudeSidecarEngine {
@@ -2262,7 +2262,7 @@ impl Engine for ClaudeSidecarEngine {
                 _ = cancellation.cancelled() => {
                     cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                     let mut state = self.state.lock().await;
-                    state.pending_approvals.retain(|_, owner| owner != &request_id);
+                    state.pending_approvals.retain(|_, (owner, _)| owner != &request_id);
                     if let Some(config) = state.threads.get_mut(engine_thread_id) {
                         if config.active_request_id.as_deref() == Some(request_id.as_str()) {
                             config.active_request_id = None;
@@ -2478,7 +2478,10 @@ impl Engine for ClaudeSidecarEngine {
                                         .lock()
                                         .await
                                         .pending_approvals
-                                        .insert(approval_id.clone(), request_id.clone());
+                                        .insert(
+                                            approval_id.clone(),
+                                            (request_id.clone(), Arc::clone(&transport)),
+                                        );
                                     event_tx
                                         .send(EngineEvent::ApprovalRequested {
                                             approval_id,
@@ -2689,7 +2692,7 @@ impl Engine for ClaudeSidecarEngine {
                                 .lock()
                                 .await
                                 .pending_approvals
-                                .retain(|_, owner| owner != &request_id);
+                                .retain(|_, (owner, _)| owner != &request_id);
                             cancel_sidecar_request(&transport, &mut rx, &request_id).await;
                             let message = format!(
                                 "Claude sidecar event stream skipped {n} messages under load."
@@ -2757,7 +2760,7 @@ impl Engine for ClaudeSidecarEngine {
         let mut state = self.state.lock().await;
         state
             .pending_approvals
-            .retain(|_, owner| owner != &request_id);
+            .retain(|_, (owner, _)| owner != &request_id);
         if let Some(config) = state.threads.get_mut(engine_thread_id) {
             config.active_request_id = None;
         }
@@ -2809,19 +2812,20 @@ impl Engine for ClaudeSidecarEngine {
         let mut state = self.state.lock().await;
         // The sidecar silently drops an answer for an approval it no longer
         // holds; refusing it here keeps the caller from recording it.
-        if !state.pending_approvals.contains_key(approval_id) {
+        let Some((_, transport)) = state.pending_approvals.get(approval_id) else {
             anyhow::bail!(crate::db::actions::APPROVAL_NOT_PENDING_ERROR);
-        }
-        if let Some(transport) = state.transport.clone() {
-            let approval_cmd = serde_json::json!({
-                "method": "approval_response",
-                "params": {
-                    "approvalId": approval_id,
-                    "response": normalized_response,
-                },
-            });
-            transport.send_command(&approval_cmd).await?;
-        }
+        };
+        // A settings change can replace the engine's transport while this
+        // query keeps running on the one that asked, so answer through that.
+        let transport = Arc::clone(transport);
+        let approval_cmd = serde_json::json!({
+            "method": "approval_response",
+            "params": {
+                "approvalId": approval_id,
+                "response": normalized_response,
+            },
+        });
+        transport.send_command(&approval_cmd).await?;
         state.pending_approvals.remove(approval_id);
         Ok(())
     }
@@ -3296,6 +3300,88 @@ mod tests {
             .expect("turn task");
         drain.await.expect("drain task");
         assert!(engine.state.lock().await.pending_approvals.is_empty());
+    }
+
+    #[cfg(unix)]
+    async fn request_approval(
+        transport: &ClaudeTransport,
+        events: &mut mpsc::Receiver<EngineEvent>,
+        request_id: &str,
+        approval_id: &str,
+    ) {
+        transport
+            .event_tx
+            .send(SidecarEvent::ApprovalRequested {
+                id: Some(request_id.to_string()),
+                approval_id: approval_id.to_string(),
+                action_type: "command".to_string(),
+                summary: "run a command".to_string(),
+                details: None,
+            })
+            .expect("the turn is subscribed");
+        let forwarded = timeout(Duration::from_secs(5), events.recv())
+            .await
+            .expect("approval forwarded")
+            .expect("channel open");
+        assert!(matches!(forwarded, EngineEvent::ApprovalRequested { .. }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn approvals_reach_the_query_transport_after_a_settings_change() {
+        let (transport, mut commands) = echo_transport();
+        let engine = Arc::new(engine_with_transport(&transport).await);
+        let (event_tx, mut events) = mpsc::channel(4);
+
+        let turn = tokio::spawn({
+            let engine = Arc::clone(&engine);
+            async move {
+                engine
+                    .send_message("thread-1", turn_input(), event_tx, CancellationToken::new())
+                    .await
+                    .expect("send_message");
+            }
+        });
+        let query = next_command(&mut commands).await;
+        let request_id = query["id"].as_str().expect("request id").to_string();
+        request_approval(&transport, &mut events, &request_id, "approval-1").await;
+
+        // New provider settings drop the engine's transport, but the running
+        // query keeps its own and still waits on this approval.
+        engine
+            .update_instance_settings(EngineInstanceSettings {
+                launch_args: vec!["--changed".to_string()],
+                ..Default::default()
+            })
+            .await;
+        assert!(engine.state.lock().await.transport.is_none());
+
+        engine
+            .respond_to_approval(
+                "approval-1",
+                serde_json::json!({ "decision": "accept" }),
+                None,
+            )
+            .await
+            .expect("the answer is delivered");
+        let answer = next_command(&mut commands).await;
+        assert_eq!(answer["method"], "approval_response");
+        assert_eq!(answer["params"]["approvalId"], "approval-1");
+
+        transport
+            .event_tx
+            .send(SidecarEvent::TurnCompleted {
+                id: Some(request_id),
+                status: "completed".to_string(),
+                session_id: None,
+                token_usage: None,
+                stop_reason: None,
+            })
+            .expect("the turn is subscribed");
+        timeout(Duration::from_secs(5), turn)
+            .await
+            .expect("the turn ends")
+            .expect("turn task");
     }
 
     #[test]
