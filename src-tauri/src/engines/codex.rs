@@ -36,7 +36,7 @@ use crate::{process_utils, runtime_env};
 use super::{
     codex_event_mapper::{ApprovalRequest, TurnEventMapper},
     codex_protocol::{raw_value_to_value, IncomingMessage},
-    codex_transport::CodexTransport,
+    codex_transport::{is_transport_failure, CodexTransport},
     ApprovalRequestRoute, CodexRemoteThreadSummary, Engine, EngineEvent, EngineThread,
     ImportedThreadMessage, ModelAvailabilityNux, ModelInfo, ModelUpgradeInfo,
     ReasoningEffortOption, SandboxPolicy, ThreadScope, ThreadSyncSnapshot, TurnAttachment,
@@ -53,6 +53,8 @@ const THREAD_UNARCHIVE_METHODS: &[&str] = &["thread/unarchive"];
 const THREAD_SET_NAME_METHODS: &[&str] = &["thread/name/set"];
 const THREAD_LIST_METHODS: &[&str] = &["thread/list"];
 const THREAD_FORK_METHODS: &[&str] = &["thread/fork"];
+const THREAD_REVERT_METHODS: &[&str] = &["thread/revert"];
+/// Removed from the app-server in Codex 0.156; kept for older CLIs only.
 const THREAD_ROLLBACK_METHODS: &[&str] = &["thread/rollback"];
 const THREAD_COMPACT_START_METHODS: &[&str] = &["thread/compact/start"];
 const REVIEW_START_METHODS: &[&str] = &["review/start"];
@@ -167,6 +169,17 @@ struct CodexState {
     runtime_model_cache: Option<Vec<ModelInfo>>,
     sandbox_probe_completed: bool,
     force_external_sandbox: bool,
+    /// Set once Panes' own workspaceWrite command probe has passed on this
+    /// transport, so it does not run again before every turn.
+    workspace_probe_passed: bool,
+    /// Why a startup probe moved Codex to external sandbox mode. Only Panes'
+    /// own probes set this; command output from a turn never does.
+    sandbox_fallback_reason: Option<String>,
+    /// Threads that were already told about the sandbox fallback.
+    sandbox_fallback_notified_threads: HashSet<String>,
+    /// New threads started because Codex no longer had the thread Panes asked
+    /// to resume, keyed by the new id, with the id that could not be resumed.
+    resume_fallback_threads: HashMap<String, String>,
     protocol_diagnostics: Option<CodexProtocolDiagnosticsDto>,
     runtime_monitor_transport_tag: Option<usize>,
 }
@@ -321,145 +334,38 @@ impl Engine for CodexEngine {
         &self.name
     }
 
+    /// Offline fallback used only when `model/list` fails. Mirrors the
+    /// non-hidden entries of the Codex 0.170 catalog.
     fn models(&self) -> Vec<ModelInfo> {
         vec![
-            ModelInfo {
-                id: "gpt-5.4".to_string(),
-                display_name: "gpt-5.4".to_string(),
-                description: "Latest frontier agentic coding model.".to_string(),
-                hidden: false,
-                is_default: true,
-                upgrade: None,
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: true,
-                default_reasoning_effort: "medium".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Fast responses with lighter reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balances speed and reasoning depth for everyday tasks"
-                            .to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Greater reasoning depth for complex problems".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "xhigh".to_string(),
-                        description: "Extra high reasoning depth for complex problems".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "gpt-5.3-codex".to_string(),
-                display_name: "gpt-5.3-codex".to_string(),
-                description: "Frontier Codex-optimized agentic coding model.".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: Some("gpt-5.4".to_string()),
-                availability_nux: None,
-                upgrade_info: Some(ModelUpgradeInfo {
-                    model: "gpt-5.4".to_string(),
-                    upgrade_copy: None,
-                    model_link: None,
-                    migration_markdown: None,
-                }),
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: true,
-                default_reasoning_effort: "medium".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Fast responses with lighter reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balanced speed and reasoning depth".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Greater reasoning depth for complex problems".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "xhigh".to_string(),
-                        description: "Extra high reasoning depth for complex problems".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "gpt-5.3-codex-spark".to_string(),
-                display_name: "GPT-5.3-Codex-Spark".to_string(),
-                description: "Ultra-fast coding model.".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: None,
-                availability_nux: None,
-                upgrade_info: None,
-                input_modalities: vec!["text".to_string()],
-                attachment_modalities: vec!["text".to_string()],
-                limits: None,
-                supports_personality: true,
-                default_reasoning_effort: "high".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "low".to_string(),
-                        description: "Fast responses with lighter reasoning".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Balances speed and reasoning depth for everyday tasks"
-                            .to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Greater reasoning depth for complex problems".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "xhigh".to_string(),
-                        description: "Extra high reasoning depth for complex problems".to_string(),
-                    },
-                ],
-            },
-            ModelInfo {
-                id: "gpt-5.1-codex-mini".to_string(),
-                display_name: "gpt-5.1-codex-mini".to_string(),
-                description: "Optimized for codex. Cheaper, faster, but less capable.".to_string(),
-                hidden: false,
-                is_default: false,
-                upgrade: Some("gpt-5.4".to_string()),
-                availability_nux: None,
-                upgrade_info: Some(ModelUpgradeInfo {
-                    model: "gpt-5.4".to_string(),
-                    upgrade_copy: None,
-                    model_link: None,
-                    migration_markdown: None,
-                }),
-                input_modalities: vec!["text".to_string(), "image".to_string()],
-                attachment_modalities: vec!["text".to_string(), "image".to_string()],
-                limits: None,
-                supports_personality: false,
-                default_reasoning_effort: "medium".to_string(),
-                supported_reasoning_efforts: vec![
-                    ReasoningEffortOption {
-                        reasoning_effort: "medium".to_string(),
-                        description: "Dynamically adjusts reasoning based on the task".to_string(),
-                    },
-                    ReasoningEffortOption {
-                        reasoning_effort: "high".to_string(),
-                        description: "Maximizes reasoning depth for complex or ambiguous problems"
-                            .to_string(),
-                    },
-                ],
-            },
+            static_codex_model(
+                "gpt-6.2-sol",
+                "GPT-6.2-Sol",
+                "Fast, go-to model for coding and everyday work.",
+                true,
+                "low",
+            ),
+            static_codex_model(
+                "gpt-6.2-astra",
+                "GPT-6.2-Astra",
+                "Our most capable model for complex coding and professional work.",
+                false,
+                "low",
+            ),
+            static_codex_model(
+                "gpt-6.1-sol",
+                "GPT-6.1-Sol",
+                "Previous generation model for coding and everyday work.",
+                false,
+                "low",
+            ),
+            static_codex_model(
+                "gpt-6-luna",
+                "GPT-6-Luna",
+                "Fast and affordable model for easier tasks.",
+                false,
+                "medium",
+            ),
         ]
     }
 
@@ -479,6 +385,9 @@ impl Engine for CodexEngine {
             .approval_policy
             .clone()
             .unwrap_or_else(|| serde_json::Value::String("on-request".to_string()));
+        // A dead app-server is replaced here, which resets the sandbox state,
+        // so the sandbox mode is read after it.
+        let transport = self.ensure_ready_transport().await?;
         let mut force_external_sandbox = self.resolve_external_sandbox_mode().await;
         let mut sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
         let mut sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
@@ -496,19 +405,27 @@ impl Engine for CodexEngine {
             native_plan_mode_active: false,
         };
 
-        let transport = self.ensure_ready_transport().await?;
-
+        // A full-access thread does not use the OS sandbox, so it neither
+        // probes it nor records a result for other threads.
         if !force_external_sandbox
-            && self
-                .detect_workspace_write_sandbox_failure(transport.as_ref(), &cwd, &sandbox)
-                .await
+            && sandbox.sandbox_mode.as_deref() != Some("danger-full-access")
+            && !self.workspace_probe_passed().await
         {
-            force_external_sandbox = true;
-            self.set_force_external_sandbox(true).await;
-            log::warn!("forcing external sandbox mode after workspaceWrite command probe failed");
-            sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
-            sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
-            requested_runtime.sandbox_policy = sandbox_policy.clone();
+            // An inconclusive probe (`None`) runs again before the next turn.
+            let probe_failed = self
+                .detect_workspace_write_sandbox_failure(transport.as_ref(), &cwd, &sandbox)
+                .await;
+            if let Some(failed) = probe_failed {
+                if self.record_workspace_probe(&transport, failed).await && failed {
+                    force_external_sandbox = true;
+                    log::warn!(
+                        "forcing external sandbox mode after workspaceWrite command probe failed"
+                    );
+                    sandbox_mode = sandbox_mode_from_policy(&sandbox, force_external_sandbox);
+                    sandbox_policy = sandbox_policy_to_json(&sandbox, force_external_sandbox);
+                    requested_runtime.sandbox_policy = sandbox_policy.clone();
+                }
+            }
         }
 
         if let Some(existing_thread_id) = resume_engine_thread_id {
@@ -527,6 +444,7 @@ impl Engine for CodexEngine {
             }
         }
 
+        let mut replaced_thread_id = None;
         if let Some(existing_thread_id) = resume_engine_thread_id {
             let resume_params = build_thread_resume_params(
                 existing_thread_id,
@@ -556,8 +474,22 @@ impl Engine for CodexEngine {
 
                     return Ok(EngineThread { engine_thread_id });
                 }
+                Err(error) if reply_names_missing_thread(&error) => {
+                    log::warn!(
+                        "codex thread {existing_thread_id} no longer exists, starting a new thread: {error}"
+                    );
+                    replaced_thread_id = Some(existing_thread_id.to_string());
+                }
                 Err(error) => {
-                    log::warn!("codex thread resume failed, falling back to thread/start: {error}");
+                    // Starting a fresh thread here would silently drop the
+                    // conversation context, so the turn fails instead.
+                    if reply_is_auth_failure(&error) {
+                        self.invalidate_transport(
+                            "resetting codex transport after auth failure while resuming thread",
+                        )
+                        .await;
+                    }
+                    return Err(error).context("failed to resume codex thread");
                 }
             }
         }
@@ -576,7 +508,7 @@ impl Engine for CodexEngine {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                if is_auth_related_error(&error.to_string()) {
+                if reply_is_auth_failure(&error) {
                     self.invalidate_transport(
                         "resetting codex transport after auth failure while creating thread",
                     )
@@ -602,6 +534,13 @@ impl Engine for CodexEngine {
             requested_runtime.output_schema.clone(),
         );
         self.store_thread_runtime(&engine_thread_id, runtime).await;
+        if let Some(replaced_thread_id) = replaced_thread_id {
+            self.state
+                .lock()
+                .await
+                .resume_fallback_threads
+                .insert(engine_thread_id.clone(), replaced_thread_id);
+        }
 
         Ok(EngineThread { engine_thread_id })
     }
@@ -628,6 +567,21 @@ impl Engine for CodexEngine {
             .resolve_turn_plan_mode_activation(runtime.as_ref(), &input)
             .await;
         validate_turn_attachments(&input.attachments).await?;
+        if let Some(notice) = self.take_sandbox_fallback_notice(&thread_id).await {
+            event_tx.send(notice).await.ok();
+        }
+        let replaced_thread_id = self
+            .state
+            .lock()
+            .await
+            .resume_fallback_threads
+            .remove(&thread_id);
+        if let Some(replaced_thread_id) = replaced_thread_id {
+            event_tx
+                .send(resume_fallback_notice(&replaced_thread_id))
+                .await
+                .ok();
+        }
 
         let transport_for_rate_limits = transport.clone();
         let rate_limits_task = tokio::spawn(async move {
@@ -726,7 +680,7 @@ impl Engine for CodexEngine {
                 let outcome = match response {
                   Ok(Ok(outcome)) => outcome,
                   Ok(Err(error)) => {
-                    if is_auth_related_error(&error.to_string()) {
+                    if reply_is_auth_failure(&error) {
                       self
                         .invalidate_transport(
                           "resetting codex transport after auth failure while starting turn",
@@ -758,9 +712,6 @@ impl Engine for CodexEngine {
                 }
 
                 for event in mapper.map_turn_result(&result) {
-                  if event_indicates_sandbox_denial(&event) {
-                    self.force_external_sandbox_for_thread(&thread_id).await;
-                  }
                   if event_indicates_auth_failure(&event) {
                     self
                       .invalidate_transport(
@@ -833,7 +784,6 @@ impl Engine for CodexEngine {
                       }
                       self
                         .route_sub_agent_notification(
-                          &thread_id,
                           &child_thread_id,
                           &link,
                           &method,
@@ -884,9 +834,6 @@ impl Engine for CodexEngine {
                     }
 
                     for event in mapped_events {
-                      if event_indicates_sandbox_denial(&event) {
-                        self.force_external_sandbox_for_thread(&thread_id).await;
-                      }
                       if event_indicates_auth_failure(&event) {
                         self
                           .invalidate_transport(
@@ -1412,17 +1359,29 @@ impl CodexEngine {
         num_turns: u32,
     ) -> anyhow::Result<ThreadSyncSnapshot> {
         let transport = self.ensure_ready_transport().await?;
-        let response = request_with_fallback(
-            transport.as_ref(),
-            THREAD_ROLLBACK_METHODS,
-            serde_json::json!({
-                "threadId": engine_thread_id,
-                "numTurns": num_turns,
-            }),
-            DEFAULT_TIMEOUT,
-        )
-        .await
-        .context("failed to rollback codex thread")?;
+        let response = match self
+            .revert_thread_turns(transport.as_ref(), engine_thread_id, num_turns)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if reply_names_unsupported_method(&error) => {
+                log::debug!(
+                    "codex thread/revert unavailable, falling back to thread/rollback: {error}"
+                );
+                request_with_fallback(
+                    transport.as_ref(),
+                    THREAD_ROLLBACK_METHODS,
+                    serde_json::json!({
+                        "threadId": engine_thread_id,
+                        "numTurns": num_turns,
+                    }),
+                    DEFAULT_TIMEOUT,
+                )
+                .await
+                .context("failed to rollback codex thread")?
+            }
+            Err(error) => return Err(error).context("failed to rollback codex thread"),
+        };
 
         Ok(ThreadSyncSnapshot {
             title: extract_thread_title(&response),
@@ -1431,6 +1390,39 @@ impl CodexEngine {
             active_flags: extract_thread_runtime_active_flags(&response),
             imported_messages: Vec::new(),
         })
+    }
+
+    /// Drops the last `num_turns` turns by reverting the thread to just before
+    /// the oldest of them. Errors from older servers that lack `thread/turns/list`
+    /// or `thread/revert` are returned unchanged so the caller can fall back.
+    async fn revert_thread_turns(
+        &self,
+        transport: &CodexTransport,
+        engine_thread_id: &str,
+        num_turns: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        let turns_newest_first =
+            fetch_paginated_data(transport, THREAD_TURNS_LIST_METHODS, |cursor| {
+                serde_json::json!({
+                  "threadId": engine_thread_id,
+                  "cursor": cursor,
+                  "limit": 100,
+                  "sortDirection": "desc",
+                  "itemsView": "notLoaded",
+                })
+            })
+            .await?;
+        let before_turn_id = revert_before_turn_id(&turns_newest_first, num_turns)?;
+        request_with_fallback(
+            transport,
+            THREAD_REVERT_METHODS,
+            serde_json::json!({
+                "threadId": engine_thread_id,
+                "beforeTurnId": before_turn_id,
+            }),
+            DEFAULT_TIMEOUT,
+        )
+        .await
     }
 
     pub async fn compact_thread(&self, engine_thread_id: &str) -> anyhow::Result<()> {
@@ -1539,7 +1531,7 @@ impl CodexEngine {
                 let result = match response {
                   Ok(Ok(result)) => result,
                   Ok(Err(error)) => {
-                    if is_auth_related_error(&error.to_string()) {
+                    if reply_is_auth_failure(&error) {
                       self
                         .invalidate_transport(
                           "resetting codex transport after auth failure while starting review",
@@ -1580,9 +1572,6 @@ impl CodexEngine {
                 }
 
                 for event in mapper.map_turn_result(&result) {
-                  if event_indicates_sandbox_denial(&event) {
-                    self.force_external_sandbox_for_thread(&active_thread_id).await;
-                  }
                   if event_indicates_auth_failure(&event) {
                     self
                       .invalidate_transport(
@@ -1664,9 +1653,6 @@ impl CodexEngine {
                     }
 
                     for event in mapped_events {
-                      if event_indicates_sandbox_denial(&event) {
-                        self.force_external_sandbox_for_thread(&active_thread_id).await;
-                      }
                       if event_indicates_auth_failure(&event) {
                         self
                           .invalidate_transport(
@@ -1955,21 +1941,32 @@ impl CodexEngine {
         self.resolve_external_sandbox_mode().await
     }
 
+    /// Records a finished sandbox probe without running one.
+    #[cfg(test)]
+    pub(crate) async fn set_sandbox_probe_result_for_test(&self, force_external_sandbox: bool) {
+        let mut state = self.state.lock().await;
+        state.sandbox_probe_completed = true;
+        state.force_external_sandbox = force_external_sandbox;
+    }
+
     pub async fn sandbox_preflight_warning(&self) -> Option<String> {
         if !self.resolve_external_sandbox_mode().await {
             return None;
         }
 
         if prefer_external_sandbox_by_default() {
-            Some(
-                "Panes is forcing Codex external sandbox mode on macOS to avoid opaque tool-call failures in local workspace-write mode. Set `PANES_CODEX_PREFER_WORKSPACE_WRITE=1` only for diagnostics."
-                    .to_string(),
-            )
-        } else {
-            Some(
-                "macOS denied Codex local sandbox (`sandbox-exec`). Commands may fail unless Panes uses external sandbox mode. This is an OS/policy restriction, not a promptable permission.".to_string(),
-            )
+            return Some(format!(
+                "Codex runs without its OS sandbox because `{EXTERNAL_SANDBOX_OPT_IN_ENV}` is set. Unset it to restore read-only and workspace-write limits."
+            ));
         }
+
+        let reason = self.state.lock().await.sandbox_fallback_reason.clone();
+        Some(match reason {
+            Some(reason) => format!(
+                "Codex runs without its OS sandbox because {reason}. Commands can write anywhere your user account can."
+            ),
+            None => "Codex runs without its OS sandbox. Commands can write anywhere your user account can.".to_string(),
+        })
     }
 
     async fn probe_version_from_resolution(
@@ -2140,7 +2137,7 @@ impl CodexEngine {
         .await
         {
             Ok(turns) => turns,
-            Err(error) if is_method_not_supported_error(&error.to_string()) => {
+            Err(error) if reply_names_unsupported_method(&error) => {
                 log::debug!(
                     "codex thread/turns/list unsupported, falling back to thread/read includeTurns"
                 );
@@ -2444,6 +2441,10 @@ impl CodexEngine {
             state.thread_runtimes.clear();
             state.sandbox_probe_completed = false;
             state.force_external_sandbox = false;
+            state.workspace_probe_passed = false;
+            state.sandbox_fallback_reason = None;
+            state.sandbox_fallback_notified_threads.clear();
+            state.resume_fallback_threads.clear();
             if let Some(diagnostics) = state.protocol_diagnostics.as_mut() {
                 diagnostics.stale = true;
             }
@@ -2973,7 +2974,7 @@ impl CodexEngine {
         let prefer_external_default = prefer_external_sandbox_by_default();
         if prefer_external_default {
             log::warn!(
-                "forcing Codex externalSandbox mode by default on macOS; local workspace-write mode can fail tool calls without diagnostics"
+                "forcing Codex externalSandbox mode because {EXTERNAL_SANDBOX_OPT_IN_ENV} is set"
             );
         }
 
@@ -2995,23 +2996,66 @@ impl CodexEngine {
                 return true;
             }
             state.force_external_sandbox = prefer_external_default || preflight_failed;
+            if preflight_failed && !prefer_external_default {
+                state.sandbox_fallback_reason =
+                    Some("macOS refused to start its sandbox (`sandbox-exec`)".to_string());
+            }
         }
 
         state.force_external_sandbox
     }
 
-    async fn set_force_external_sandbox(&self, force_external_sandbox: bool) {
+    /// Records the workspace-write probe result for `transport`. A result
+    /// from an app-server that was replaced while the probe ran says nothing
+    /// about the new one, so it is dropped and this returns false.
+    async fn record_workspace_probe(&self, transport: &Arc<CodexTransport>, failed: bool) -> bool {
         let mut state = self.state.lock().await;
-        state.sandbox_probe_completed = true;
-        state.force_external_sandbox = force_external_sandbox;
+        let current = state
+            .transport
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, transport));
+        if !current {
+            return false;
+        }
+        if failed {
+            fall_back_to_external_sandbox(
+                &mut state,
+                "the Codex workspace-write sandbox probe failed on this machine",
+            );
+        } else {
+            state.workspace_probe_passed = true;
+        }
+        true
     }
 
+    async fn workspace_probe_passed(&self) -> bool {
+        self.state.lock().await.workspace_probe_passed
+    }
+
+    /// Returns a notice for the first turn of each thread after a startup
+    /// probe failed. Every thread runs without the Codex OS sandbox from then
+    /// on, whatever policy `thread/start` echoed back for it.
+    async fn take_sandbox_fallback_notice(&self, engine_thread_id: &str) -> Option<EngineEvent> {
+        let mut state = self.state.lock().await;
+        let reason = state.sandbox_fallback_reason.clone()?;
+        if !state
+            .sandbox_fallback_notified_threads
+            .insert(engine_thread_id.to_string())
+        {
+            return None;
+        }
+        Some(sandbox_fallback_notice(&reason))
+    }
+
+    /// Runs Panes' own fixed probe commands under the thread's sandbox policy.
+    /// `Some(true)` means the sandbox failed, `Some(false)` that it worked, and
+    /// `None` that a transport or protocol error left the answer unknown.
     async fn detect_workspace_write_sandbox_failure(
         &self,
         transport: &CodexTransport,
         cwd: &str,
         sandbox: &SandboxPolicy,
-    ) -> bool {
+    ) -> Option<bool> {
         #[cfg(target_os = "macos")]
         {
             let probe_commands: &[&[&str]] = &[&["/usr/bin/true"], &["/bin/zsh", "-lc", "pwd"]];
@@ -3037,51 +3081,49 @@ impl CodexEngine {
                             log::warn!(
                                 "workspaceWrite command probe returned a failed result payload; forcing externalSandbox fallback (result={result})"
                             );
-                            return true;
+                            return Some(true);
+                        }
+                        if !workspace_probe_result_reports_exit(&result) {
+                            log::warn!(
+                                "workspaceWrite command probe returned no exit code; probing again next turn (result={result})"
+                            );
+                            return None;
                         }
                     }
                     Err(error) => {
-                        let error_text = error.to_string();
+                        let Some(error_text) = reply_error_text(&error) else {
+                            log::warn!(
+                                "workspaceWrite command probe failed in the transport; skipping externalSandbox fallback (probe_error={error})"
+                            );
+                            return None;
+                        };
                         if is_sandbox_denied_error(&error_text) {
                             log::warn!(
                                 "workspaceWrite command probe detected sandbox denial: {error}"
                             );
-                            return true;
+                            return Some(true);
                         }
                         if is_opaque_workspace_probe_failure(&error_text) {
                             log::warn!(
                                 "workspaceWrite command probe failed without explicit sandbox signature; forcing externalSandbox fallback (probe_error={error_text})"
                             );
-                            return true;
+                            return Some(true);
                         }
                         log::warn!(
                             "workspaceWrite command probe failed due transport/protocol error; skipping externalSandbox fallback (probe_error={error_text})"
                         );
-                        return false;
+                        return None;
                     }
                 }
             }
 
-            false
+            Some(false)
         }
 
         #[cfg(not(target_os = "macos"))]
         {
             let _ = (transport, cwd, sandbox);
-            false
-        }
-    }
-
-    async fn force_external_sandbox_for_thread(&self, engine_thread_id: &str) {
-        self.set_force_external_sandbox(true).await;
-
-        let mut state = self.state.lock().await;
-        if let Some(runtime) = state.thread_runtimes.get_mut(engine_thread_id) {
-            let allow_network = sandbox_policy_network_enabled(&runtime.sandbox_policy);
-            runtime.sandbox_policy = serde_json::json!({
-              "type": "externalSandbox",
-              "networkAccess": if allow_network { "enabled" } else { "restricted" },
-            });
+            Some(false)
         }
     }
 
@@ -3279,7 +3321,6 @@ impl CodexEngine {
     #[allow(clippy::too_many_arguments)]
     async fn route_sub_agent_notification(
         &self,
-        root_thread_id: &str,
         child_thread_id: &str,
         link: &SubAgentLink,
         method: &str,
@@ -3308,9 +3349,6 @@ impl CodexEngine {
             .map_notification(method, params);
         let mut outgoing = Vec::with_capacity(mapped_events.len() + 1);
         for event in mapped_events {
-            if event_indicates_sandbox_denial(&event) {
-                self.force_external_sandbox_for_thread(root_thread_id).await;
-            }
             if event_indicates_auth_failure(&event) {
                 self.invalidate_transport(
                     "resetting codex transport after auth failure during sub-agent event",
@@ -3413,7 +3451,6 @@ impl CodexEngine {
                     }
                     let child_turn_completed = self
                         .route_sub_agent_notification(
-                            root_thread_id,
                             &child_thread_id,
                             &link,
                             &method,
@@ -3994,7 +4031,9 @@ async fn request_turn_start(
             native_plan_mode_active: input.plan_mode && uses_native_collaboration_mode,
         }),
         Err(error) => {
-            if !uses_native_collaboration_mode || !is_plan_mode_protocol_error(&error.to_string()) {
+            if !uses_native_collaboration_mode
+                || !reply_error_text(&error).is_some_and(|text| is_plan_mode_protocol_error(&text))
+            {
                 return Err(error).context("codex turn/start request failed");
             }
 
@@ -4504,6 +4543,9 @@ async fn request_with_fallback(
     for method in methods {
         match transport.request(method, params.clone(), timeout).await {
             Ok(result) => return Ok(result),
+            // No other method can answer once the transport has failed, and
+            // the failure must stay typed so no reply classifier reads it.
+            Err(error) if is_transport_failure(&error) => return Err(error),
             Err(error) => {
                 errors.push(format!("{method}: {error}"));
             }
@@ -4827,22 +4869,122 @@ async fn detect_macos_sandbox_exec_failure() -> bool {
     }
 }
 
-fn prefer_external_sandbox_by_default() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let override_workspace_write = env::var("PANES_CODEX_PREFER_WORKSPACE_WRITE")
-            .ok()
-            .map(|value| {
-                let normalized = value.trim().to_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
-        !override_workspace_write
-    }
+/// Opt-in for the old behaviour of running Codex without its OS sandbox.
+/// Codex's own sandbox is used by default on every platform, and Panes falls
+/// back to external mode only when one of its startup probes fails.
+const EXTERNAL_SANDBOX_OPT_IN_ENV: &str = "PANES_CODEX_FORCE_EXTERNAL_SANDBOX";
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        false
+fn prefer_external_sandbox_by_default() -> bool {
+    external_sandbox_opt_in(env::var(EXTERNAL_SANDBOX_OPT_IN_ENV).ok().as_deref())
+}
+
+/// Moves the engine to external sandbox mode after one of Panes' own startup
+/// probes failed. Never call this from turn output: a command can print any
+/// text, including a sandbox denial.
+fn fall_back_to_external_sandbox(state: &mut CodexState, reason: &str) {
+    state.sandbox_probe_completed = true;
+    state.force_external_sandbox = true;
+    state.sandbox_fallback_reason = Some(reason.to_string());
+}
+
+fn external_sandbox_opt_in(value: Option<&str>) -> bool {
+    value
+        .map(|value| {
+            let normalized = value.trim().to_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes"
+        })
+        .unwrap_or(false)
+}
+
+fn static_codex_model(
+    id: &str,
+    display_name: &str,
+    description: &str,
+    is_default: bool,
+    default_reasoning_effort: &str,
+) -> ModelInfo {
+    let effort = |reasoning_effort: &str, description: &str| ReasoningEffortOption {
+        reasoning_effort: reasoning_effort.to_string(),
+        description: description.to_string(),
+    };
+    ModelInfo {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        description: description.to_string(),
+        hidden: false,
+        is_default,
+        upgrade: None,
+        availability_nux: None,
+        upgrade_info: None,
+        input_modalities: vec!["text".to_string(), "image".to_string()],
+        attachment_modalities: vec!["text".to_string(), "image".to_string()],
+        limits: None,
+        supports_personality: false,
+        default_reasoning_effort: default_reasoning_effort.to_string(),
+        supported_reasoning_efforts: vec![
+            effort("low", "Fast responses with lighter reasoning"),
+            effort(
+                "medium",
+                "Balances speed and reasoning depth for everyday tasks",
+            ),
+            effort("high", "Greater reasoning depth for complex problems"),
+            effort("xhigh", "Extra high reasoning depth for complex problems"),
+        ],
+    }
+}
+
+/// The text of a reply error that classifiers may read, or `None` when the
+/// request got no reply because the transport failed. A transport failure's
+/// message can carry the app-server's stderr tail, and nothing written there
+/// may decide how Panes treats a thread or the sandbox.
+fn reply_error_text(error: &anyhow::Error) -> Option<String> {
+    if is_transport_failure(error) {
+        None
+    } else {
+        Some(error.to_string())
+    }
+}
+
+fn reply_names_missing_thread(error: &anyhow::Error) -> bool {
+    reply_error_text(error).is_some_and(|text| is_missing_thread_error(&text))
+}
+
+fn reply_is_auth_failure(error: &anyhow::Error) -> bool {
+    reply_error_text(error).is_some_and(|text| is_auth_related_error(&text))
+}
+
+fn reply_names_unsupported_method(error: &anyhow::Error) -> bool {
+    reply_error_text(error).is_some_and(|text| is_method_not_supported_error(&text))
+}
+
+/// True when `thread/resume` failed because Codex has no such thread (for
+/// example its rollout file is gone), as opposed to a transient failure.
+fn is_missing_thread_error(error: &str) -> bool {
+    let value = error.to_lowercase();
+    value.contains("no rollout found")
+        || value.contains("thread not found")
+        || value.contains("invalid session id")
+}
+
+fn resume_fallback_notice(replaced_thread_id: &str) -> EngineEvent {
+    EngineEvent::Notice {
+        kind: "codex_thread_replaced".to_string(),
+        level: "warning".to_string(),
+        title: "Started a new Codex thread".to_string(),
+        message: format!(
+            "Codex no longer has thread {replaced_thread_id}, so Panes started a new Codex thread. Earlier messages in this chat are not part of the model's context."
+        ),
+    }
+}
+
+fn sandbox_fallback_notice(reason: &str) -> EngineEvent {
+    EngineEvent::Notice {
+        kind: "codex_sandbox_fallback".to_string(),
+        level: "warning".to_string(),
+        title: "Codex sandbox is off".to_string(),
+        message: format!(
+            "Panes is running Codex without its OS sandbox because {reason}. Commands can write anywhere your user account can. Restart Codex to probe the sandbox again."
+        ),
     }
 }
 
@@ -4916,6 +5058,13 @@ fn workspace_probe_result_indicates_failure(result: &serde_json::Value) -> bool 
     false
 }
 
+/// `command/exec` always reports an exit code, so a reply without one cannot
+/// count as a pass.
+#[cfg(any(target_os = "macos", test))]
+fn workspace_probe_result_reports_exit(result: &serde_json::Value) -> bool {
+    extract_any_i64(result, &["exitCode", "exit_code"]).is_some()
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn is_opaque_workspace_probe_failure(error: &str) -> bool {
     let value = error.to_lowercase();
@@ -4937,6 +5086,7 @@ fn is_transport_or_protocol_error(value: &str) -> bool {
         || value.contains("exited with status")
         || value.contains("codex app-server exited")
         || value.contains("broken pipe")
+        || value.contains("codex stdin")
         || value.contains("connection reset")
         || value.contains("connection refused")
         || value.contains("not connected")
@@ -4944,38 +5094,6 @@ fn is_transport_or_protocol_error(value: &str) -> bool {
         || value.contains("method not found")
         || value.contains("invalid params")
         || value.contains("invalid request")
-}
-
-fn sandbox_policy_network_enabled(policy: &serde_json::Value) -> bool {
-    match policy.get("networkAccess") {
-        Some(serde_json::Value::Bool(value)) => *value,
-        Some(serde_json::Value::String(value)) => value.eq_ignore_ascii_case("enabled"),
-        _ => false,
-    }
-}
-
-fn event_indicates_sandbox_denial(event: &EngineEvent) -> bool {
-    match event {
-        // Only an explicit sandbox signature may flip the session to
-        // externalSandbox (danger-full-access). Opaque failures (empty output,
-        // synthesized "Action failed with status `failed`") are routinely
-        // produced by benign non-zero commands, so treating them as denials
-        // silently disabled codex's own sandbox for every later turn.
-        EngineEvent::ActionCompleted { result, .. } if !result.success => {
-            result
-                .error
-                .as_deref()
-                .map(is_sandbox_denied_error)
-                .unwrap_or(false)
-                || result
-                    .output
-                    .as_deref()
-                    .map(is_sandbox_denied_error)
-                    .unwrap_or(false)
-        }
-        EngineEvent::Error { message, .. } => is_sandbox_denied_error(message),
-        _ => false,
-    }
 }
 
 fn event_indicates_auth_failure(event: &EngineEvent) -> bool {
@@ -5937,11 +6055,10 @@ async fn fetch_paginated_data(
 }
 
 fn method_call_outcome_from_error<T>(error: anyhow::Error) -> MethodCallOutcome<T> {
-    let message = error.to_string();
-    if is_method_not_supported_error(&message) {
-        MethodCallOutcome::Unsupported(Some(message))
+    if reply_names_unsupported_method(&error) {
+        MethodCallOutcome::Unsupported(Some(error.to_string()))
     } else {
-        MethodCallOutcome::Error(message)
+        MethodCallOutcome::Error(error.to_string())
     }
 }
 
@@ -5951,6 +6068,40 @@ fn is_method_not_supported_error(message: &str) -> bool {
         || normalized.contains("method not found")
         || normalized.contains("unknown method")
         || normalized.contains("not supported")
+        || names_unknown_method_variant(&normalized)
+}
+
+/// Newer app-servers reject a removed method while deserializing the request:
+/// "Invalid request: unknown variant `thread/rollback`, ...". A bad enum value
+/// in the params ("unknown variant `notLoaded`") is a real error, so only a
+/// method-shaped name counts.
+fn names_unknown_method_variant(message: &str) -> bool {
+    message.split("unknown variant `").skip(1).any(|rest| {
+        rest.split('`')
+            .next()
+            .is_some_and(|name| name.contains('/'))
+    })
+}
+
+/// Picks the turn that `thread/revert` should cut at so that exactly
+/// `num_turns` turns are removed. `turns_newest_first` is a
+/// `thread/turns/list` result sorted in descending order.
+fn revert_before_turn_id(
+    turns_newest_first: &[serde_json::Value],
+    num_turns: u32,
+) -> anyhow::Result<String> {
+    let available = turns_newest_first.len();
+    let index = usize::try_from(num_turns)
+        .ok()
+        .filter(|count| *count > 0 && *count <= available)
+        .map(|count| count - 1)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot roll back {num_turns} turn(s): the Codex thread has {available}"
+            )
+        })?;
+    extract_any_string(&turns_newest_first[index], &["id", "turnId"])
+        .ok_or_else(|| anyhow::anyhow!("codex turn list entry is missing its id"))
 }
 
 async fn fetch_experimental_features(
@@ -8419,37 +8570,73 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_denial_ignores_opaque_action_failures() {
-        let event = EngineEvent::ActionCompleted {
-            action_id: "action-1".to_string(),
-            result: ActionResult {
-                success: false,
-                output: None,
-                error: Some("Action failed with status `failed`".to_string()),
-                diff: None,
-                duration_ms: 52,
-            },
-        };
+    fn revert_before_turn_id_cuts_at_the_oldest_removed_turn() {
+        let turns = vec![
+            json!({ "id": "t3" }),
+            json!({ "id": "t2" }),
+            json!({ "id": "t1" }),
+        ];
 
-        assert!(!event_indicates_sandbox_denial(&event));
+        assert_eq!(revert_before_turn_id(&turns, 1).unwrap(), "t3");
+        assert_eq!(revert_before_turn_id(&turns, 3).unwrap(), "t1");
+        assert!(revert_before_turn_id(&turns, 4).is_err());
+        assert!(revert_before_turn_id(&turns, 0).is_err());
+        assert!(revert_before_turn_id(&[], 1).is_err());
     }
 
     #[test]
-    fn sandbox_denial_requires_explicit_sandbox_signature() {
-        let event = EngineEvent::ActionCompleted {
-            action_id: "action-1".to_string(),
-            result: ActionResult {
-                success: false,
-                output: None,
-                error: Some(
-                    "sandbox denied: operation not permitted while writing /etc/hosts".to_string(),
-                ),
-                diff: None,
-                duration_ms: 52,
-            },
-        };
+    fn removed_methods_count_as_unsupported() {
+        assert!(is_method_not_supported_error(
+            "all rpc methods failed: thread/rollback: Invalid request: unknown variant `thread/rollback`, expected one of `initialize`, `thread/start`"
+        ));
+        assert!(!is_method_not_supported_error(
+            "all rpc methods failed: thread/revert: thread not found"
+        ));
+        assert!(!is_method_not_supported_error(
+            "all rpc methods failed: thread/turns/list: rpc error -32600: Invalid request: unknown variant `notLoaded`, expected `full`"
+        ));
+    }
 
-        assert!(event_indicates_sandbox_denial(&event));
+    #[test]
+    fn only_a_missing_thread_lets_resume_start_a_new_thread() {
+        assert!(is_missing_thread_error(
+            "all rpc methods failed: thread/resume: no rollout found for thread id 0199a213"
+        ));
+        assert!(is_missing_thread_error("thread not found: abc"));
+        assert!(!is_missing_thread_error(
+            "codex request timeout for method `thread/resume`"
+        ));
+        assert!(!is_missing_thread_error("401 Unauthorized"));
+        assert!(!is_missing_thread_error("codex app-server exited"));
+    }
+
+    #[test]
+    fn static_model_catalog_defaults_to_a_current_codex_model() {
+        let models = CodexEngine::default().models();
+        let defaults = models
+            .iter()
+            .filter(|model| model.is_default)
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(defaults, vec!["gpt-6.2-sol"]);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol", "gpt-6-luna"]
+        );
+    }
+
+    #[test]
+    fn external_sandbox_requires_an_explicit_opt_in() {
+        assert!(!external_sandbox_opt_in(None));
+        assert!(!external_sandbox_opt_in(Some("")));
+        assert!(!external_sandbox_opt_in(Some("0")));
+        assert!(external_sandbox_opt_in(Some("1")));
+        assert!(external_sandbox_opt_in(Some(" TRUE ")));
+        assert!(external_sandbox_opt_in(Some("yes")));
     }
 
     #[test]
@@ -8460,6 +8647,18 @@ mod tests {
         assert!(is_opaque_workspace_probe_failure(
             "all rpc methods failed: command/exec: failed"
         ));
+        assert!(!is_opaque_workspace_probe_failure(
+            "all rpc methods failed: command/exec: failed writing payload to codex stdin"
+        ));
+    }
+
+    #[test]
+    fn workspace_probe_result_without_exit_code_is_not_a_pass() {
+        assert!(workspace_probe_result_reports_exit(
+            &json!({ "exitCode": 0, "stdout": "", "stderr": "" })
+        ));
+        assert!(!workspace_probe_result_reports_exit(&json!(null)));
+        assert!(!workspace_probe_result_reports_exit(&json!({})));
     }
 
     #[test]
@@ -9240,6 +9439,296 @@ mod tests {
 mod sub_agent_routing_tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn sandbox_fallback_notice_is_sent_once_per_thread_after_a_probe_failure() {
+        let engine = CodexEngine::default();
+
+        // External mode without a failed probe (the opt-in) does not notify.
+        engine.state.lock().await.force_external_sandbox = true;
+        assert!(engine
+            .take_sandbox_fallback_notice("thread-1")
+            .await
+            .is_none());
+
+        fall_back_to_external_sandbox(&mut *engine.state.lock().await, "the probe failed");
+        // `thread/start` echoes `dangerFullAccess` for a new thread's first
+        // turn, so the notice cannot depend on the stored policy type.
+        let notice = engine.take_sandbox_fallback_notice("thread-1").await;
+        assert!(matches!(
+            notice,
+            Some(EngineEvent::Notice { ref kind, ref message, .. })
+                if kind == "codex_sandbox_fallback" && message.contains("the probe failed")
+        ));
+        assert!(engine
+            .take_sandbox_fallback_notice("thread-1")
+            .await
+            .is_none());
+        assert!(engine
+            .take_sandbox_fallback_notice("thread-2")
+            .await
+            .is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_probe_from_a_replaced_app_server_is_dropped() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("panes-codex-probe-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let script = dir.join("codex");
+        std::fs::write(&script, "#!/bin/sh\nsleep 5\n").expect("write fake codex");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake codex executable");
+        let settings = EngineInstanceSettings::default();
+        let executable = script.to_str().expect("utf-8 path");
+        let retired = Arc::new(
+            CodexTransport::spawn(executable, &settings)
+                .await
+                .expect("spawn fake codex"),
+        );
+        let current = Arc::new(
+            CodexTransport::spawn(executable, &settings)
+                .await
+                .expect("spawn fake codex"),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let engine = CodexEngine::default();
+        engine.state.lock().await.transport = Some(current.clone());
+
+        assert!(!engine.record_workspace_probe(&retired, true).await);
+        assert!(!engine.state.lock().await.force_external_sandbox);
+        assert!(engine.record_workspace_probe(&current, true).await);
+        assert!(engine.state.lock().await.force_external_sandbox);
+    }
+
+    /// Spawns a fake app-server that writes `stderr` and exits on its first
+    /// request. The script's folder must outlive that request, so the caller
+    /// removes it.
+    #[cfg(unix)]
+    async fn app_server_that_exits_with_stderr(
+        stderr: &str,
+    ) -> (Arc<CodexTransport>, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("panes-codex-exit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let script = dir.join("codex");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\nread line\necho '{stderr}' >&2\nexit 1\n"),
+        )
+        .expect("write fake codex");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake codex executable");
+        let transport = CodexTransport::spawn(
+            script.to_str().expect("utf-8 path"),
+            &EngineInstanceSettings::default(),
+        )
+        .await
+        .expect("spawn fake codex");
+        (Arc::new(transport), dir)
+    }
+
+    #[cfg(unix)]
+    async fn exit_error_with_stderr(method: &str, stderr: &str) -> anyhow::Error {
+        let (transport, dir) = app_server_that_exits_with_stderr(stderr).await;
+        let error = request_with_fallback(
+            transport.as_ref(),
+            &[method],
+            json!({}),
+            Duration::from_secs(30),
+        )
+        .await
+        .expect_err("the app-server exited without answering");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            error.to_string().contains(stderr),
+            "the stderr tail stays in the message people read: {error}"
+        );
+        error
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_a_sandbox_denial_leaves_the_probe_inconclusive() {
+        let (transport, dir) =
+            app_server_that_exits_with_stderr("sandbox: operation not permitted").await;
+        let engine = CodexEngine::default();
+        engine.state.lock().await.transport = Some(transport.clone());
+
+        let sandbox = SandboxPolicy {
+            writable_roots: vec!["/tmp".to_string()],
+            allow_network: false,
+            approval_policy: None,
+            permission_profile: None,
+            approvals_reviewer: None,
+            reasoning_effort: None,
+            sandbox_mode: Some("workspace-write".to_string()),
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            opencode_agent: None,
+            project_settings_trusted: false,
+        };
+        let probe = engine
+            .detect_workspace_write_sandbox_failure(transport.as_ref(), "/tmp", &sandbox)
+            .await;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(probe, None);
+        let state = engine.state.lock().await;
+        assert!(!state.force_external_sandbox);
+        assert!(state.sandbox_fallback_reason.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_a_missing_thread_does_not_replace_the_thread() {
+        let error =
+            exit_error_with_stderr("thread/resume", "no rollout found for thread 0199").await;
+        assert!(!reply_names_missing_thread(&error));
+        assert!(reply_names_missing_thread(&anyhow::anyhow!(
+            "all rpc methods failed: thread/resume: no rollout found for thread 0199"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_an_auth_failure_is_not_an_auth_failure() {
+        let error = exit_error_with_stderr("turn/start", "401 Unauthorized").await;
+        assert!(!reply_is_auth_failure(&error));
+        assert!(reply_is_auth_failure(&anyhow::anyhow!(
+            "all rpc methods failed: turn/start: 401 Unauthorized"
+        )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_app_server_exit_naming_an_unknown_method_is_not_unsupported() {
+        let error = exit_error_with_stderr("thread/revert", "method not found").await;
+        assert!(!reply_names_unsupported_method(&error));
+        assert!(matches!(
+            method_call_outcome_from_error::<()>(error),
+            MethodCallOutcome::Error(_)
+        ));
+        assert!(reply_names_unsupported_method(&anyhow::anyhow!(
+            "all rpc methods failed: thread/revert: method not found"
+        )));
+    }
+
+    fn workspace_write_runtime() -> ThreadRuntime {
+        ThreadRuntime {
+            cwd: "/tmp/workspace".to_string(),
+            model_id: "gpt-6.2-sol".to_string(),
+            approval_policy: json!("on-request"),
+            permission_profile: None,
+            approvals_reviewer: None,
+            sandbox_policy: json!({ "type": "workspaceWrite", "networkAccess": false }),
+            reasoning_effort: None,
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            native_plan_mode_active: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn turn_output_naming_a_sandbox_denial_keeps_the_sandbox() {
+        let engine = CodexEngine::default();
+        engine
+            .store_thread_runtime("root-1", workspace_write_runtime())
+            .await;
+        engine
+            .record_sub_agent_thread("child-1", "root-1", Some("explorer"))
+            .await;
+        engine.set_active_turn("child-1", "turn-child").await;
+
+        let (broadcast_tx, _idle_receiver) = broadcast::channel(16);
+        let mut subscription = broadcast_tx.subscribe();
+        let command = json!({
+            "id": "cmd-1",
+            "type": "commandExecution",
+            "command": "make test",
+            "status": "inProgress",
+        });
+        for (method, params) in [
+            (
+                "item/started",
+                json!({ "threadId": "child-1", "turnId": "turn-child", "item": command }),
+            ),
+            (
+                "item/completed",
+                json!({
+                    "threadId": "child-1",
+                    "turnId": "turn-child",
+                    "item": {
+                        "id": "cmd-1",
+                        "type": "commandExecution",
+                        "command": "make test",
+                        "status": "failed",
+                        "aggregatedOutput": "sandbox: operation not permitted",
+                    }
+                }),
+            ),
+            (
+                "error",
+                json!({
+                    "threadId": "child-1",
+                    "turnId": "turn-child",
+                    "error": { "message": "sandbox denied exec error, exit code 1" },
+                    "willRetry": false,
+                }),
+            ),
+            (
+                "turn/completed",
+                json!({
+                    "threadId": "child-1",
+                    "turn": { "id": "turn-child", "status": "failed" }
+                }),
+            ),
+        ] {
+            broadcast_tx
+                .send(child_notification(method, params))
+                .expect("subscriber should receive the notification");
+        }
+
+        let (event_tx, mut event_rx) = mpsc::channel(32);
+        let mut sub_agents = SubAgentStreamState::default();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            engine.drain_stopped_sub_agents(
+                "root-1",
+                BTreeMap::from([("child-1".to_string(), TurnCompletionStatus::Interrupted)]),
+                &mut sub_agents,
+                &mut subscription,
+                &event_tx,
+                Duration::from_secs(30),
+            ),
+        )
+        .await
+        .expect("drain should return once every child reported");
+
+        let events = drained_events(&mut event_rx);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                EngineEvent::ActionCompleted { result, .. } if !result.success
+            )),
+            "expected the failed command to reach the root turn, got {events:?}"
+        );
+        assert!(!engine.state.lock().await.force_external_sandbox);
+        assert_eq!(
+            engine
+                .thread_runtime("root-1")
+                .await
+                .expect("root runtime should remain")
+                .sandbox_policy["type"],
+            json!("workspaceWrite")
+        );
+    }
 
     #[test]
     fn records_nested_sub_agents_under_the_root_thread() {

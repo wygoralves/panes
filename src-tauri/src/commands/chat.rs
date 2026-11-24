@@ -558,13 +558,23 @@ async fn prepare_send_message_turn(
         configured_reasoning_effort.clone()
     };
     let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
+    let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
+        state
+            .engines
+            .codex_uses_external_sandbox_for(&thread.engine_id)
+            .await
+    } else {
+        false
+    };
     let supports_panes_sandbox = engine_kind(&thread.engine_id) != "opencode";
     let sandbox_mode = if supports_panes_sandbox {
-        Some(
-            sandbox_mode_override
-                .clone()
-                .unwrap_or_else(|| "workspace-write".to_string()),
-        )
+        Some(sandbox_mode_override.clone().unwrap_or_else(|| {
+            super::threads::default_thread_sandbox_mode(
+                &thread.engine_id,
+                thread.engine_metadata.as_ref(),
+            )
+            .to_string()
+        }))
     } else {
         if sandbox_mode_override.is_some() {
             log::warn!(
@@ -614,11 +624,6 @@ async fn prepare_send_message_turn(
         move |db| project_settings_trusted_for_cwd(db, &trust_level, &cwd)
     })
     .await?;
-    let codex_external_sandbox_active = if engine_kind(&thread.engine_id) == "codex" {
-        state.engines.codex_uses_external_sandbox().await
-    } else {
-        false
-    };
     let permission_profile = if engine_kind(&thread.engine_id) == "codex" {
         thread_permission_profile(thread.engine_metadata.as_ref())
     } else {
@@ -640,7 +645,10 @@ async fn prepare_send_message_turn(
 
             if workspace_write_confirmation_required(
                 workspace_writable_roots.as_ref(),
-                sandbox_mode,
+                super::threads::sandbox_mode_for_write_confirmation(
+                    sandbox_mode,
+                    codex_external_sandbox_active,
+                ),
                 workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
             ) {
                 return Err(

@@ -1,5 +1,13 @@
 use std::{
-    collections::HashMap, ffi::OsString, path::Path, process::Stdio, sync::Arc, time::Duration,
+    collections::{HashMap, VecDeque},
+    ffi::OsString,
+    path::Path,
+    process::Stdio,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -26,13 +34,52 @@ use super::trim_action_output_delta_content;
 const INCOMING_EVENT_BUFFER_CAPACITY: usize = 256;
 const TRANSPORT_ERROR_LINE_MAX_CHARS: usize = 16 * 1024;
 const TRANSPORT_ERROR_LINE_TRUNCATED_PREFIX: &str = "... [protocol line truncated; showing tail]\n";
+/// Lines of app-server stderr kept so a crash can say why it happened.
+const STDERR_TAIL_MAX_LINES: usize = 50;
+/// How long the stdout reader waits for stderr to finish after the
+/// app-server closes stdout, so the exit error carries its last words.
+const STDERR_DRAIN_GRACE: Duration = Duration::from_millis(500);
+const APP_SERVER_EXITED_MESSAGE: &str = "codex app-server exited";
+
+type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>;
+
+/// A request that ended without a reply from the app-server: the process
+/// exited, its pipes failed, or the reply did not arrive in time. The message
+/// is for people and can carry the app-server's stderr tail, so code that
+/// classifies reply errors by their text must check `is_transport_failure`
+/// first and never read this text.
+#[derive(Debug)]
+pub struct TransportFailure(String);
+
+impl std::fmt::Display for TransportFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TransportFailure {}
+
+fn transport_failure(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(TransportFailure(message.into()))
+}
+
+/// True when `error`, or anything it wraps, is a `TransportFailure`.
+pub fn is_transport_failure(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<TransportFailure>().is_some())
+}
+type StderrTail = Arc<std::sync::Mutex<VecDeque<String>>>;
 
 pub struct CodexTransport {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
+    pending: PendingRequests,
     incoming_tx: broadcast::Sender<IncomingMessage>,
     next_request_id: std::sync::atomic::AtomicU64,
+    /// Set once stdout is closed; no response can arrive after that.
+    closed: Arc<AtomicBool>,
+    stderr_tail: StderrTail,
 }
 
 impl Drop for CodexTransport {
@@ -86,13 +133,15 @@ impl CodexTransport {
             .ok_or_else(|| anyhow::anyhow!("codex app-server stderr not available"))?;
 
         let (incoming_tx, _) = broadcast::channel(INCOMING_EVENT_BUFFER_CAPACITY);
-        let pending = Arc::new(Mutex::new(
-            HashMap::<String, oneshot::Sender<RpcResponse>>::new(),
-        ));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let stderr_tail: StderrTail = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+        let (stderr_done_tx, stderr_done_rx) = oneshot::channel::<()>();
 
         {
             let pending = pending.clone();
             let incoming_tx = incoming_tx.clone();
+            let closed = closed.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
 
@@ -140,17 +189,25 @@ impl CodexTransport {
                         }
                     }
                 }
+
+                // No response can arrive any more: fail every waiting request
+                // now instead of letting each one run into its timeout.
+                let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, stderr_done_rx).await;
+                closed.store(true, Ordering::SeqCst);
+                fail_pending_requests(&pending).await;
             });
         }
 
         {
+            let stderr_tail = stderr_tail.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 loop {
                     match lines.next_line().await {
                         Ok(Some(line)) => {
                             if !line.trim().is_empty() {
-                                log::debug!("codex stderr: {line}");
+                                log::warn!("codex stderr: {line}");
+                                push_stderr_line(&stderr_tail, line);
                             }
                         }
                         Ok(None) => break,
@@ -160,6 +217,7 @@ impl CodexTransport {
                         }
                     }
                 }
+                let _ = stderr_done_tx.send(());
             });
         }
 
@@ -169,6 +227,8 @@ impl CodexTransport {
             pending,
             incoming_tx,
             next_request_id: std::sync::atomic::AtomicU64::new(1),
+            closed,
+            stderr_tail,
         })
     }
 
@@ -192,21 +252,40 @@ impl CodexTransport {
         let payload = request_payload(&id, method, params);
         let (sender, receiver) = oneshot::channel::<RpcResponse>();
         self.pending.lock().await.insert(id.clone(), sender);
+        // The stdout reader sets `closed` before it drains `pending`, so a
+        // request registered after that drain is caught here.
+        if self.closed.load(Ordering::SeqCst) {
+            self.pending.lock().await.remove(&id);
+            return Err(transport_failure(app_server_exited_message(
+                &self.stderr_tail,
+            )));
+        }
 
         if let Err(error) = self.write_payload(&payload).await {
             self.pending.lock().await.remove(&id);
-            return Err(error);
+            return Err(transport_failure(format!("{error:#}")));
         }
 
         let response = match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(response)) => response,
             Ok(Err(_)) => {
                 self.pending.lock().await.remove(&id);
-                anyhow::bail!("codex response channel closed for method `{method}`")
+                // The stdout reader drops every waiting sender once the
+                // app-server has exited.
+                if self.closed.load(Ordering::SeqCst) {
+                    return Err(transport_failure(app_server_exited_message(
+                        &self.stderr_tail,
+                    )));
+                }
+                return Err(transport_failure(format!(
+                    "codex response channel closed for method `{method}`"
+                )));
             }
             Err(_) => {
                 self.pending.lock().await.remove(&id);
-                anyhow::bail!("codex request timeout for method `{method}`")
+                return Err(transport_failure(format!(
+                    "codex request timeout for method `{method}`"
+                )));
             }
         };
 
@@ -275,14 +354,51 @@ impl CodexTransport {
 
     async fn ensure_alive(&self) -> anyhow::Result<()> {
         let mut child = self.child.lock().await;
-        if let Some(status) = child
-            .try_wait()
-            .context("failed to query codex process status")?
-        {
-            anyhow::bail!("codex app-server exited with status {status}");
+        let status = child.try_wait().map_err(|error| {
+            transport_failure(format!("failed to query codex process status: {error}"))
+        })?;
+        if let Some(status) = status {
+            return Err(transport_failure(format!(
+                "codex app-server exited with status {status}{}",
+                stderr_tail_suffix(&self.stderr_tail)
+            )));
         }
         Ok(())
     }
+}
+
+fn push_stderr_line(tail: &StderrTail, line: String) {
+    let mut tail = tail
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if tail.len() == STDERR_TAIL_MAX_LINES {
+        tail.pop_front();
+    }
+    tail.push_back(line);
+}
+
+fn stderr_tail_suffix(tail: &StderrTail) -> String {
+    let tail = tail
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if tail.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; last stderr output:\n{}",
+            tail.iter().cloned().collect::<Vec<_>>().join("\n")
+        )
+    }
+}
+
+fn app_server_exited_message(tail: &StderrTail) -> String {
+    format!("{APP_SERVER_EXITED_MESSAGE}{}", stderr_tail_suffix(tail))
+}
+
+/// Drops every waiting sender. Each waiter then sees `closed` set and fails
+/// with the exit message, typed as a transport failure rather than a reply.
+async fn fail_pending_requests(pending: &PendingRequests) {
+    pending.lock().await.drain();
 }
 
 fn trim_buffered_incoming_message(message: IncomingMessage) -> IncomingMessage {
@@ -392,6 +508,46 @@ fn codex_augmented_path(executable: &str) -> Option<OsString> {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn requests_fail_with_stderr_as_soon_as_the_app_server_exits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir =
+            std::env::temp_dir().join(format!("panes-codex-transport-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let script = dir.join("codex");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nread line\necho 'Error loading config.toml: bad key' >&2\nexit 1\n",
+        )
+        .expect("write fake codex");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake codex executable");
+
+        let transport = CodexTransport::spawn(
+            script.to_str().expect("utf-8 path"),
+            &EngineInstanceSettings::default(),
+        )
+        .await
+        .expect("spawn fake codex");
+        let started = std::time::Instant::now();
+        let error = transport
+            .request("initialize", serde_json::json!({}), Duration::from_secs(30))
+            .await
+            .expect_err("the app-server exited without answering");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "request waited for its timeout instead of failing on exit"
+        );
+        let message = error.to_string();
+        assert!(message.contains("codex app-server exited"), "{message}");
+        assert!(message.contains("bad key"), "{message}");
+        assert!(is_transport_failure(&error), "{message}");
+    }
 
     #[test]
     fn incoming_event_buffer_capacity_bounds_idle_retention() {
