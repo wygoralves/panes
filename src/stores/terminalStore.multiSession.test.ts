@@ -10,6 +10,7 @@ const mockIpc = vi.hoisted(() => ({
   terminalSetNotificationFocus: vi.fn(),
   addGitWorktree: vi.fn(),
   removeGitWorktree: vi.fn(),
+  inspectGitWorktree: vi.fn(),
   getRepos: vi.fn(),
   launchHarness: vi.fn(),
   getWorkspaceStartupPreset: vi.fn(),
@@ -114,7 +115,13 @@ describe("terminalStore.createMultiSessionGroup", () => {
     mockIpc.terminalClearNotification.mockResolvedValue(undefined);
     mockIpc.terminalSetNotificationFocus.mockResolvedValue(undefined);
     mockIpc.addGitWorktree.mockResolvedValue(undefined);
-    mockIpc.removeGitWorktree.mockResolvedValue(undefined);
+    mockIpc.removeGitWorktree.mockResolvedValue({ branchDeleteError: null });
+    mockIpc.inspectGitWorktree.mockResolvedValue({
+      changedCount: 0,
+      untrackedCount: 0,
+      unmergedCommitCount: 0,
+      fingerprint: "fp",
+    });
     mockIpc.getRepos.mockResolvedValue([]);
     mockIpc.launchHarness.mockResolvedValue(null);
     mockIpc.getWorkspaceStartupPreset.mockResolvedValue(null);
@@ -214,9 +221,60 @@ describe("terminalStore.createMultiSessionGroup", () => {
       1,
       "/repo",
       "/repo/.panes/worktrees/r1/agent-1",
-      true,
+      false,
       "panes/r1/agent-1",
       true,
+      false,
+    );
+    expect(mockIpc.removeGitWorktree).toHaveBeenNthCalledWith(
+      2,
+      "/repo",
+      "/repo/.panes/worktrees/r1/agent-2",
+      false,
+      "panes/r1/agent-2",
+      true,
+      false,
+    );
+  });
+
+  it("forces only the worktrees the user confirmed losing work in", async () => {
+    await useTerminalStore.getState().removeGroupWorktrees(
+      "ws-1",
+      [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-2",
+          branch: "panes/r1/agent-2",
+        },
+      ],
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-2",
+            branch: "panes/r1/agent-2",
+            changedCount: 1,
+            untrackedCount: 0,
+            unmergedCommitCount: 0,
+            fingerprint: "fp",
+          },
+        ],
+      },
+    );
+
+    expect(mockIpc.removeGitWorktree).toHaveBeenNthCalledWith(
+      1,
+      "/repo",
+      "/repo/.panes/worktrees/r1/agent-1",
+      false,
+      "panes/r1/agent-1",
+      true,
+      false,
     );
     expect(mockIpc.removeGitWorktree).toHaveBeenNthCalledWith(
       2,
@@ -225,7 +283,229 @@ describe("terminalStore.createMultiSessionGroup", () => {
       true,
       "panes/r1/agent-2",
       true,
+      false,
     );
+  });
+
+  it("forces only the part of a worktree the user confirmed losing", async () => {
+    await useTerminalStore.getState().removeGroupWorktrees(
+      "ws-1",
+      [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+      ],
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+            changedCount: 0,
+            untrackedCount: 0,
+            unmergedCommitCount: 1,
+            fingerprint: "fp",
+          },
+        ],
+      },
+    );
+
+    // Confirming one commit allows `branch -D` but not `worktree remove --force`.
+    expect(mockIpc.removeGitWorktree).toHaveBeenCalledWith(
+      "/repo",
+      "/repo/.panes/worktrees/r1/agent-1",
+      false,
+      "panes/r1/agent-1",
+      true,
+      true,
+    );
+  });
+
+  it("keeps a confirmed worktree whose work grew after the confirmation", async () => {
+    // The dialog named one changed file; the agent then committed it on a
+    // detached HEAD, which an unforced removal would still drop.
+    mockIpc.inspectGitWorktree.mockResolvedValueOnce({
+      changedCount: 0,
+      untrackedCount: 0,
+      unmergedCommitCount: 1,
+      fingerprint: "fp",
+    });
+
+    await useTerminalStore.getState().removeGroupWorktrees(
+      "ws-1",
+      [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+      ],
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+            changedCount: 1,
+            untrackedCount: 0,
+            unmergedCommitCount: 0,
+            fingerprint: "fp",
+          },
+        ],
+      },
+    );
+
+    expect(mockIpc.removeGitWorktree).not.toHaveBeenCalled();
+  });
+
+  it("keeps a confirmed worktree whose work was replaced at equal counts", async () => {
+    // The dialog named one changed file and one commit; the agent then edited
+    // the file again and amended the commit, so the counts match but the work
+    // the user agreed to lose is gone.
+    mockIpc.inspectGitWorktree.mockResolvedValueOnce({
+      changedCount: 1,
+      untrackedCount: 0,
+      unmergedCommitCount: 1,
+      fingerprint: "after-amend",
+    });
+
+    await useTerminalStore.getState().removeGroupWorktrees(
+      "ws-1",
+      [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+      ],
+      {
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+            changedCount: 1,
+            untrackedCount: 0,
+            unmergedCommitCount: 1,
+            fingerprint: "as-confirmed",
+          },
+        ],
+      },
+    );
+
+    expect(mockIpc.removeGitWorktree).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unconfirmed worktree that gained work before its removal", async () => {
+    mockIpc.inspectGitWorktree
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 0, fingerprint: "fp" })
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 1, unmergedCommitCount: 0, fingerprint: "fp" });
+
+    await useTerminalStore.getState().removeGroupWorktrees("ws-1", [
+      {
+        repoPath: "/repo",
+        worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+        branch: "panes/r1/agent-1",
+      },
+      {
+        repoPath: "/repo",
+        worktreePath: "/repo/.panes/worktrees/r1/agent-2",
+        branch: "panes/r1/agent-2",
+      },
+    ]);
+
+    expect(mockIpc.removeGitWorktree.mock.calls).toEqual([
+      ["/repo", "/repo/.panes/worktrees/r1/agent-1", false, "panes/r1/agent-1", true, false],
+    ]);
+  });
+
+  it("reports a branch kept after a forced removal as a removed worktree", async () => {
+    mockIpc.removeGitWorktree.mockResolvedValueOnce({
+      branchDeleteError: "error: cannot delete branch 'panes/r1/agent-1' used by worktree",
+    });
+
+    await expect(
+      useTerminalStore.getState().removeGroupWorktrees(
+        "ws-1",
+        [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+            branch: "panes/r1/agent-1",
+          },
+        ],
+        {
+          forceWorktrees: [
+            {
+              repoPath: "/repo",
+              worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+              branch: "panes/r1/agent-1",
+              changedCount: 0,
+              untrackedCount: 0,
+              unmergedCommitCount: 1,
+              fingerprint: "fp",
+            },
+          ],
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockIpc.removeGitWorktree.mock.calls[0]?.[5]).toBe(true);
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.error).toBeUndefined();
+  });
+
+  it("treats a kept unmerged branch as a removed worktree, not a failure", async () => {
+    mockIpc.removeGitWorktree.mockResolvedValueOnce({
+      branchDeleteError: "error: the branch 'panes/r1/agent-1' is not fully merged",
+    });
+
+    await expect(
+      useTerminalStore.getState().removeGroupWorktrees("ws-1", [
+        {
+          repoPath: "/repo",
+          worktreePath: "/repo/.panes/worktrees/r1/agent-1",
+          branch: "panes/r1/agent-1",
+        },
+      ]),
+    ).resolves.toBeUndefined();
+
+    expect(useTerminalStore.getState().workspaces["ws-1"]?.error).toBeUndefined();
+  });
+
+  it("reports only worktrees with uncommitted files or unmerged commits as removal risks", async () => {
+    mockIpc.inspectGitWorktree
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 0, fingerprint: "fp" })
+      .mockResolvedValueOnce({ changedCount: 2, untrackedCount: 1, unmergedCommitCount: 0, fingerprint: "fp" })
+      .mockResolvedValueOnce({ changedCount: 0, untrackedCount: 0, unmergedCommitCount: 3, fingerprint: "fp" });
+
+    const risks = await useTerminalStore.getState().inspectWorktreesForRemoval([
+      { repoPath: "/repo", worktreePath: "/repo/.panes/worktrees/r1/clean", branch: "panes/r1/clean" },
+      { repoPath: "/repo", worktreePath: "/repo/.panes/worktrees/r1/dirty", branch: "panes/r1/dirty" },
+      { repoPath: "/repo", worktreePath: "/repo/.panes/worktrees/r1/ahead", branch: "panes/r1/ahead" },
+    ]);
+
+    expect(risks).toEqual([
+      {
+        repoPath: "/repo",
+        worktreePath: "/repo/.panes/worktrees/r1/dirty",
+        branch: "panes/r1/dirty",
+        changedCount: 2,
+        untrackedCount: 1,
+        unmergedCommitCount: 0,
+        fingerprint: "fp",
+      },
+      {
+        repoPath: "/repo",
+        worktreePath: "/repo/.panes/worktrees/r1/ahead",
+        branch: "panes/r1/ahead",
+        changedCount: 0,
+        untrackedCount: 0,
+        unmergedCommitCount: 3,
+        fingerprint: "fp",
+      },
+    ]);
   });
 
   it("does not auto-clean worktrees when a session exits", async () => {
@@ -311,6 +591,42 @@ describe("terminalStore.createMultiSessionGroup", () => {
     expect(workspace?.error).toContain("create failed");
     expect(workspace?.error).toContain("Cleanup failed for 1 worktree(s)");
     expect(workspace?.error).toContain("panes/");
+    // Rolling back worktrees this launch just created stays forced.
+    expect(mockIpc.removeGitWorktree.mock.calls.every(
+      (call) => call[2] === true && call[5] === true,
+    )).toBe(true);
+  });
+
+  it("reports a branch the rollback could not delete when group creation fails", async () => {
+    mockIpc.addGitWorktree.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockIpc.terminalCreateSession
+      .mockResolvedValueOnce(makeSession("s1"))
+      .mockRejectedValueOnce(new Error("create failed"));
+    mockIpc.removeGitWorktree
+      .mockResolvedValueOnce({ branchDeleteError: null })
+      .mockResolvedValueOnce({ branchDeleteError: "error: branch is checked out elsewhere" });
+
+    await useTerminalStore.getState().createMultiSessionGroup(
+      "ws-1",
+      [
+        { harnessId: "h1", name: "Harness 1" },
+        { harnessId: "h2", name: "Harness 2" },
+      ],
+      {
+        enabled: true,
+        repoMode: "fixed_repo",
+        repoPath: "/repo",
+        baseBranch: "main",
+        baseDir: "/repo/.panes/worktrees",
+        branchPrefix: "panes",
+      },
+      120,
+      36,
+    );
+
+    const error = useTerminalStore.getState().workspaces["ws-1"]?.error;
+    expect(error).toContain("Cleanup failed for 1 worktree(s)");
+    expect(error).toContain("branch was kept");
   });
 
   it("syncs a saved startup preset without mutating the live layout", () => {
@@ -834,6 +1150,97 @@ describe("terminalStore.createMultiSessionGroup", () => {
     expect(runtimeWorkspace?.activeSessionId).toBe("s2");
     expect(runtimeWorkspace?.broadcastGroupId).toBeNull();
     expect(mockIpc.terminalCloseSession).toHaveBeenCalledWith("ws-1", "s1");
+  });
+
+  it("applies a preset keeping or forcing only the worktrees the user chose", async () => {
+    const worktreeMeta = (name: string) => ({
+      harnessId: "h1",
+      harnessName: "Harness 1",
+      autoDetectedHarness: false,
+      launchHarnessOnCreate: true,
+      worktree: {
+        repoPath: "/repo",
+        worktreePath: `/repo/.panes/worktrees/r1/${name}`,
+        branch: `panes/r1/${name}`,
+      },
+    });
+    useTerminalStore.setState({
+      workspaces: {
+        "ws-1": {
+          isOpen: true,
+          layoutMode: "split",
+          preEditorLayoutMode: "chat",
+          panelSize: 32,
+          sessions: [makeSession("s1"), makeSession("s2"), makeSession("s3")],
+          notificationsBySessionId: {},
+          activeSessionId: "s1",
+          groups: [
+            {
+              id: "g1",
+              name: "3 agents",
+              root: {
+                type: "split",
+                id: "split-1",
+                direction: "vertical",
+                ratio: 0.5,
+                children: [
+                  { type: "leaf", sessionId: "s1" },
+                  {
+                    type: "split",
+                    id: "split-2",
+                    direction: "vertical",
+                    ratio: 0.5,
+                    children: [
+                      { type: "leaf", sessionId: "s2" },
+                      { type: "leaf", sessionId: "s3" },
+                    ],
+                  },
+                ],
+              },
+              sessionMeta: {
+                s1: worktreeMeta("clean"),
+                s2: worktreeMeta("dirty"),
+                s3: worktreeMeta("kept"),
+              },
+              worktreeConfig: null,
+            },
+          ],
+          activeGroupId: "g1",
+          focusedSessionId: "s1",
+          broadcastGroupId: null,
+          startupPreset: null,
+          pendingStartupPreset: null,
+          loading: false,
+          error: undefined,
+        },
+      },
+    });
+
+    const applied = await useTerminalStore.getState().applyWorkspaceStartupPresetNow(
+      "ws-1",
+      { version: 1, defaultView: "chat", splitPanelSize: 40, terminal: null },
+      {
+        removeWorktrees: true,
+        forceWorktrees: [
+          {
+            repoPath: "/repo",
+            worktreePath: "/repo/.panes/worktrees/r1/dirty",
+            branch: "panes/r1/dirty",
+            changedCount: 2,
+            untrackedCount: 0,
+            unmergedCommitCount: 0,
+            fingerprint: "fp",
+          },
+        ],
+        keepWorktreePaths: ["/repo/.panes/worktrees/r1/kept"],
+      },
+    );
+
+    expect(applied).toBe(true);
+    expect(mockIpc.removeGitWorktree.mock.calls).toEqual([
+      ["/repo", "/repo/.panes/worktrees/r1/clean", false, "panes/r1/clean", true, false],
+      ["/repo", "/repo/.panes/worktrees/r1/dirty", true, "panes/r1/dirty", true, false],
+    ]);
   });
 
   it("stages preset bootstrap instead of creating sessions immediately during apply", async () => {

@@ -33,6 +33,10 @@ const FILE_TREE_EXCLUDED_DIR_NAMES: &[&str] = &[
     ".git",
     ".next",
     ".nuxt",
+    // Panes' own repo-local state, worktrees included. Workspace scans do not
+    // consult git's excludes, so without this every agent worktree would show
+    // up as a second copy of the repository.
+    ".panes",
     ".pnpm-store",
     ".turbo",
     ".yarn",
@@ -2843,6 +2847,32 @@ mod tests {
         assert!(paths.contains(&"apps/app/src/main.ts".to_string()));
         assert!(paths.contains(&"apps/app/packages/web/src/page.tsx".to_string()));
         assert!(!paths.iter().any(|path| path.starts_with(".git")));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_file_tree_page_skips_panes_worktrees() {
+        let root = std::env::temp_dir().join(format!("panes-workspace-tree-{}", Uuid::new_v4()));
+        let worktree_dir = root.join("repo/.panes/worktrees/feat");
+        fs::create_dir_all(&worktree_dir).expect("worktree dir should exist");
+        fs::write(root.join("repo/a.txt"), "main").expect("main file should exist");
+        fs::write(worktree_dir.join("a.txt"), "copy").expect("worktree file should exist");
+
+        let cache = FileTreeCache::new();
+        let page = get_workspace_file_tree_page(root.to_string_lossy().as_ref(), 0, 100, &cache)
+            .expect("workspace file tree should load");
+        let paths = page
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"repo/a.txt".to_string()));
+        assert!(
+            !paths.iter().any(|path| path.contains(".panes")),
+            "worktree copies must stay out of the workspace tree: {paths:?}"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

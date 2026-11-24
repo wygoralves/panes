@@ -16,9 +16,13 @@ import {
 import { ipc } from "../../lib/ipc";
 import { t as translate } from "../../i18n";
 import { useHarnessStore } from "../../stores/harnessStore";
-import { useTerminalStore } from "../../stores/terminalStore";
+import {
+  useTerminalStore,
+  type WorkspaceWorktreeRemovalOptions,
+} from "../../stores/terminalStore";
 import { toast } from "../../stores/toastStore";
 import { Dropdown } from "../shared/Dropdown";
+import { WorktreeRemovalRiskDialog } from "../terminal/WorktreeRemovalRiskDialog";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type {
   Workspace,
@@ -30,6 +34,7 @@ import type {
   WorkspaceStartupSession,
   WorkspaceStartupSplitNode,
   WorkspaceStartupWorktreeConfig,
+  WorktreeRemovalRisk,
 } from "../../types";
 import {
   resolveStartupSessionHarnessSelection,
@@ -293,6 +298,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
   const [advancedFormat, setAdvancedFormat] = useState<WorkspaceStartupPresetFormat>("json");
   const [advancedDraft, setAdvancedDraft] = useState("");
   const [pendingApplyPreset, setPendingApplyPreset] = useState<WorkspaceStartupPreset | null>(null);
+  const [worktreeRemovalRisks, setWorktreeRemovalRisks] = useState<WorktreeRemovalRisk[] | null>(null);
   const [liveSessionCount, setLiveSessionCount] = useState(0);
   const [expandedTabs, setExpandedTabs] = useState<Record<string, boolean>>({});
   const [expandedPanes, setExpandedPanes] = useState<Record<string, boolean>>({});
@@ -652,7 +658,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
   }, [advancedFormat, isActiveWorkspace, loading, serializeCurrentBuilder, t, workspace.id]);
 
   const performApply = useCallback(
-    async (removeWorktrees: boolean) => {
+    async (worktreeRemoval: WorkspaceWorktreeRemovalOptions) => {
       if (!pendingApplyPreset || applyInFlightRef.current || loading) return;
       applyInFlightRef.current = true;
       setSaving(true);
@@ -660,7 +666,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
         const normalized = await resolveCurrentPreset();
         const applied = await useTerminalStore
           .getState()
-          .applyWorkspaceStartupPresetNow(workspace.id, normalized, { removeWorktrees });
+          .applyWorkspaceStartupPresetNow(workspace.id, normalized, worktreeRemoval);
         if (!applied) throw new Error(t("startup.errors.presetCouldNotBeApplied"));
         setPendingApplyPreset(null);
         const canonical = normalizePresetDraft(normalized);
@@ -685,6 +691,47 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
       t,
       workspace.id,
     ],
+  );
+
+  // Removing worktrees first checks them for uncommitted files and unmerged
+  // commits; any that have some are only removed after a second confirmation.
+  const requestApply = useCallback(
+    async (removeWorktrees: boolean) => {
+      if (!removeWorktrees) {
+        await performApply({ removeWorktrees: false });
+        return;
+      }
+      if (!pendingApplyPreset || applyInFlightRef.current || loading) return;
+      applyInFlightRef.current = true;
+      setSaving(true);
+      let risks: WorktreeRemovalRisk[] = [];
+      try {
+        const store = useTerminalStore.getState();
+        risks = await store.inspectWorktreesForRemoval(store.getWorkspaceWorktrees(workspace.id));
+      } finally {
+        applyInFlightRef.current = false;
+        setSaving(false);
+      }
+      if (risks.length > 0) {
+        setWorktreeRemovalRisks(risks);
+        return;
+      }
+      await performApply({ removeWorktrees: true });
+    },
+    [loading, pendingApplyPreset, performApply, workspace.id],
+  );
+
+  const resolveWorktreeRemovalRisks = useCallback(
+    (forceRisky: boolean) => {
+      const riskyPaths = (worktreeRemovalRisks ?? []).map((risk) => risk.worktreePath);
+      setWorktreeRemovalRisks(null);
+      void performApply(
+        forceRisky
+          ? { removeWorktrees: true, forceWorktrees: worktreeRemovalRisks ?? [] }
+          : { removeWorktrees: true, keepWorktreePaths: riskyPaths },
+      );
+    },
+    [performApply, worktreeRemovalRisks],
   );
 
   const handleApplyNow = useCallback(async () => {
@@ -1300,7 +1347,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                 <button
                   type="button"
                   className="ws-prop-btn"
-                  onClick={() => void performApply(false)}
+                  onClick={() => void requestApply(false)}
                   disabled={saving}
                 >
                   {t("startup.confirm.keepWorktrees")}
@@ -1308,7 +1355,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
                 <button
                   type="button"
                   className="ws-prop-btn wss-danger-btn"
-                  onClick={() => void performApply(true)}
+                  onClick={() => void requestApply(true)}
                   disabled={saving}
                 >
                   {t("startup.confirm.removeWorktrees")}
@@ -1318,7 +1365,7 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
               <button
                 type="button"
                 className="ws-prop-btn ws-prop-btn-accent"
-                onClick={() => void performApply(false)}
+                onClick={() => void requestApply(false)}
                 disabled={saving}
               >
                 {t("startup.confirm.replace")}
@@ -1365,6 +1412,12 @@ export function WorkspaceStartupSection({ workspace }: WorkspaceStartupSectionPr
           </div>
         </div>
       )}
+      <WorktreeRemovalRiskDialog
+        risks={worktreeRemovalRisks}
+        onForceRemove={() => resolveWorktreeRemovalRisks(true)}
+        onKeep={() => resolveWorktreeRemovalRisks(false)}
+        onDismiss={() => setWorktreeRemovalRisks(null)}
+      />
     </div>
   );
 }

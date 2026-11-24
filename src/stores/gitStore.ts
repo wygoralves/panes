@@ -8,6 +8,7 @@ import type {
   GitStash,
   GitStatus,
   GitWorktree,
+  GitWorktreeRemoval,
 } from "../types";
 import { ipc } from "../lib/ipc";
 import { recordPerfMetric } from "../lib/perfTelemetry";
@@ -406,7 +407,7 @@ interface GitState {
   setMainRepoPath: (path: string | null) => void;
   loadWorktrees: (repoPath: string) => Promise<void>;
   addWorktree: (repoPath: string, worktreePath: string, branchName: string, baseRef?: string | null) => Promise<GitWorktree>;
-  removeWorktree: (repoPath: string, worktreePath: string, force: boolean, branchName?: string | null, deleteBranch?: boolean) => Promise<void>;
+  removeWorktree: (repoPath: string, worktreePath: string, force: boolean, branchName?: string | null, deleteBranch?: boolean) => Promise<GitWorktreeRemoval>;
   pruneWorktrees: (repoPath: string) => Promise<void>;
   loadStashes: (repoPath: string) => Promise<void>;
   pushStash: (repoPath: string, message?: string) => Promise<void>;
@@ -938,11 +939,20 @@ export const useGitStore = create<GitState>((set, get) => {
         beginLoading();
         set({ error: undefined });
         try {
-          await ipc.removeGitWorktree(repoPath, worktreePath, force, branchName, deleteBranch);
+          // A kept branch still means the worktree directory is gone, so the
+          // panel moves back to the main checkout either way.
+          const result = await ipc.removeGitWorktree(
+            repoPath,
+            worktreePath,
+            force,
+            branchName,
+            deleteBranch,
+          );
           get().setActiveRepoPath(repoPath);
           set({ mainRepoPath: null });
           get().invalidateRepoCache(repoPath);
           await runRefresh(repoPath, { force: true });
+          return result;
         } catch (error) {
           if (isRepoInWorktreeContext(repoPath)) {
             set({ error: String(error) });
@@ -951,11 +961,10 @@ export const useGitStore = create<GitState>((set, get) => {
         } finally {
           endLoading();
         }
-        return;
       }
 
       const refreshRepoPath = resolveRefreshRepoPathForWorktreeMutation(repoPath);
-      await runRepoMutationWithRefresh(refreshRepoPath, () =>
+      return runRepoMutationWithRefresh(refreshRepoPath, () =>
         ipc.removeGitWorktree(repoPath, worktreePath, force, branchName, deleteBranch),
       );
     },

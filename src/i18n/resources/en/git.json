@@ -132,7 +132,8 @@
     "toasts": {
       "created": "Created worktree: {{branchName}}",
       "pruned": "Pruned stale worktrees",
-      "removed": "Worktree removed"
+      "removed": "Worktree removed",
+      "removedBranchKept": "Worktree removed, but git kept branch {{branch}} (usually because it has unmerged commits)"
     },
     "errors": {
       "threadRunning": "This worktree is still running a chat ({{threads}}). Stop the turn, then remove the worktree."

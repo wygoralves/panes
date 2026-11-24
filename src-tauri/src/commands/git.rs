@@ -11,7 +11,8 @@ use crate::{
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
         GitCompareSourceDto, GitDiffPreviewDto, GitFileCompareDto, GitInitRepoStatusDto,
-        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, ThreadStatusDto, TrustLevelDto,
+        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, GitWorktreeInspectionDto,
+        GitWorktreeRemovalDto, ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
 };
@@ -538,7 +539,8 @@ pub async fn remove_git_worktree(
     force: bool,
     branch_name: Option<String>,
     delete_branch: bool,
-) -> Result<(), String> {
+    force_branch_delete: Option<bool>,
+) -> Result<GitWorktreeRemovalDto, String> {
     remove_git_worktree_inner(
         state.inner(),
         repo_path,
@@ -546,8 +548,30 @@ pub async fn remove_git_worktree(
         force,
         branch_name,
         delete_branch,
+        force_branch_delete.unwrap_or(false),
     )
     .await
+}
+
+#[tauri::command]
+pub async fn inspect_git_worktree(
+    _state: State<'_, AppState>,
+    repo_path: String,
+    worktree_path: String,
+    branch_name: Option<String>,
+) -> Result<GitWorktreeInspectionDto, String> {
+    tokio::task::spawn_blocking(move || {
+        worktree::inspect_worktree(&repo_path, &worktree_path, branch_name.as_deref())
+            .map(|inspection| GitWorktreeInspectionDto {
+                changed_count: inspection.changed_count,
+                untracked_count: inspection.untracked_count,
+                unmerged_commit_count: inspection.unmerged_commit_count,
+                fingerprint: inspection.fingerprint,
+            })
+            .map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Marker the frontend matches on so it can render localized copy for the one
@@ -561,7 +585,8 @@ async fn remove_git_worktree_inner(
     force: bool,
     branch_name: Option<String>,
     delete_branch: bool,
-) -> Result<(), String> {
+    force_branch_delete: bool,
+) -> Result<GitWorktreeRemovalDto, String> {
     let bound_threads = run_db(state.db.clone(), {
         let worktree_path = worktree_path.clone();
         move |db| {
@@ -599,13 +624,16 @@ async fn remove_git_worktree_inner(
         return Err(format!("{WORKTREE_BUSY_ERROR_PREFIX}{}", busy.join(", ")));
     }
 
-    tokio::task::spawn_blocking(move || {
+    // A refused branch delete comes back in the outcome rather than as an
+    // error: the worktree is already gone, so the detach below must still run.
+    let outcome = tokio::task::spawn_blocking(move || {
         worktree::remove_worktree(
             &repo_path,
             &worktree_path,
             force,
             branch_name.as_deref(),
             delete_branch,
+            force_branch_delete,
         )
         .map_err(err_to_string)
     })
@@ -632,7 +660,9 @@ async fn remove_git_worktree_inner(
         .await?;
     }
 
-    Ok(())
+    Ok(GitWorktreeRemovalDto {
+        branch_delete_error: outcome.branch_delete_error,
+    })
 }
 
 #[tauri::command]
@@ -1176,6 +1206,7 @@ mod tests {
             false,
             Some("feature".to_string()),
             false,
+            false,
         )
         .await
         .expect_err("expected removal to be refused while a turn is running");
@@ -1219,6 +1250,7 @@ mod tests {
             false,
             None,
             false,
+            false,
         )
         .await
         .expect_err("expected removal to be refused while a turn is registered");
@@ -1250,6 +1282,7 @@ mod tests {
             false,
             Some("feature".to_string()),
             false,
+            false,
         )
         .await
         .expect_err("expected git to refuse removing a dirty worktree");
@@ -1273,6 +1306,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn remove_git_worktree_detaches_threads_when_only_the_branch_delete_is_refused() {
+        let repo = TestRepo::init();
+        let worktree_path = repo.add_worktree("feature");
+        let idle = repo.thread_bound_to(&worktree_path, "Idle thread");
+        // A commit of its own makes `git branch -d` refuse the branch after
+        // the worktree directory is already gone.
+        fs::write(
+            std::path::Path::new(&worktree_path).join("agent.txt"),
+            "agent work\n",
+        )
+        .expect("write agent file");
+        run_git(&worktree_path, &["add", "-A"]).expect("git add");
+        run_git(&worktree_path, &["commit", "-m", "agent work"]).expect("git commit");
+
+        let outcome = remove_git_worktree_inner(
+            &repo.state,
+            repo.path_str().to_string(),
+            worktree_path.clone(),
+            false,
+            Some("feature".to_string()),
+            true,
+            false,
+        )
+        .await
+        .expect("the worktree removal itself succeeded");
+
+        assert!(!std::path::Path::new(&worktree_path).exists());
+        assert!(
+            outcome.branch_delete_error.is_some(),
+            "the kept branch must be reported"
+        );
+        assert!(
+            run_git(
+                repo.path_str(),
+                &["rev-parse", "--verify", "--quiet", "refs/heads/feature"]
+            )
+            .is_ok(),
+            "the unmerged branch must survive"
+        );
+        assert!(
+            crate::commands::threads::thread_worktree_path(
+                repo.reload(&idle.id).engine_metadata.as_ref()
+            )
+            .is_none(),
+            "threads bound to the removed directory must fall back to the main checkout"
+        );
+    }
+
+    #[tokio::test]
     async fn remove_git_worktree_detaches_idle_threads_after_removing() {
         let repo = TestRepo::init();
         let worktree_path = repo.add_worktree("feature");
@@ -1287,6 +1369,7 @@ mod tests {
             false,
             Some("feature".to_string()),
             true,
+            false,
         )
         .await
         .expect("expected the removal to succeed");

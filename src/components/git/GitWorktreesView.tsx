@@ -242,12 +242,16 @@ export function GitWorktreesView({ repo, onError }: Props) {
       setConfirmingRemove(null);
       setConfirmingRemoveWithBranch(null);
       closeMenu();
-      await removeWorktree(repo.path, wtPath, false, branch, deleteBranch);
+      const result = await removeWorktree(repo.path, wtPath, false, branch, deleteBranch);
       // Threads that were running in the worktree fall back to the main
       // checkout, so their bindings need to be re-read.
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
       if (workspaceId) void useThreadStore.getState().refreshThreads(workspaceId);
-      toast.success(t("worktrees.toasts.removed"));
+      if (result?.branchDeleteError) {
+        toast.warning(t("worktrees.toasts.removedBranchKept", { branch: branch ?? "" }));
+      } else {
+        toast.success(t("worktrees.toasts.removed"));
+      }
     } catch (e) {
       const busyThreads = readBusyWorktreeThreads(e);
       onError(

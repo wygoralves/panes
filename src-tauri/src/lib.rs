@@ -284,6 +284,7 @@ pub fn run() {
             commands::git::add_git_worktree,
             commands::git::list_git_worktrees,
             commands::git::remove_git_worktree,
+            commands::git::inspect_git_worktree,
             commands::git::prune_git_worktrees,
             commands::git::init_git_repo,
             commands::git::list_git_remotes,

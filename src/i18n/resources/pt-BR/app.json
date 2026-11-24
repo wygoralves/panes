@@ -395,9 +395,20 @@
     "gitWorktreesDescription": "Cada agente recebe sua própria branch",
     "launchCount": "Abrir {{count}}",
     "closeAgentGroupTitle": "Fechar grupo de agentes",
-    "closeAgentGroupMessage": "Este grupo tem git worktrees. Remover os diretórios e branches das worktrees ou mantê-los para depois?",
+    "closeAgentGroupMessage": "Este grupo tem git worktrees. Remover os diretórios e branches das worktrees ou mantê-los para depois? Antes de excluir qualquer coisa, o Panes verifica arquivos não commitados e commits não mesclados e pergunta de novo se encontrar algum.",
     "removeWorktrees": "Remover worktrees",
     "keepWorktrees": "Manter worktrees",
+    "unsavedWorktreesTitle": "Worktrees com trabalho não salvo",
+    "unsavedWorktreesMessage": "Remover estas worktrees exclui permanentemente: {{details}}. Forçar a remoção ou mantê-las e remover só as demais?",
+    "unsavedWorktreeEntry": "{{name}} ({{summary}})",
+    "unsavedChangedFiles_one": "{{count}} arquivo alterado",
+    "unsavedChangedFiles_other": "{{count}} arquivos alterados",
+    "unsavedUntrackedFiles_one": "{{count}} arquivo não rastreado",
+    "unsavedUntrackedFiles_other": "{{count}} arquivos não rastreados",
+    "unsavedUnmergedCommits_one": "{{count}} commit não mesclado",
+    "unsavedUnmergedCommits_other": "{{count}} commits não mesclados",
+    "forceRemoveWorktrees": "Forçar remoção",
+    "keepUnsavedWorktrees": "Manter estas",
     "toasts": {
       "noSessionForDiagnostics": "Nenhuma sessão de terminal disponível para diagnóstico",
       "diagnosticsCopied": "Diagnósticos do renderer copiados",
@@ -409,7 +420,11 @@
       "failedToCloseSessionsKept_other": "Falha ao fechar {{count}} sessões de terminal; as worktrees foram mantidas",
       "failedToCloseSessions_one": "Falha ao fechar {{count}} sessão de terminal",
       "failedToCloseSessions_other": "Falha ao fechar {{count}} sessões de terminal",
-      "someWorktreesNotRemoved": "Algumas worktrees não puderam ser removidas: {{message}}"
+      "someWorktreesNotRemoved": "Algumas worktrees não puderam ser removidas: {{message}}",
+      "worktreeBranchesKept_one": "Worktree removida, mas o git manteve a branch {{branches}} (normalmente porque ela tem commits não mesclados)",
+      "worktreeBranchesKept_other": "Worktrees removidas, mas o git manteve {{count}} branches (normalmente porque elas têm commits não mesclados): {{branches}}",
+      "worktreesKeptAfterChange_one": "Worktree {{names}} mantida: ela pode ter trabalho que você não confirmou perder",
+      "worktreesKeptAfterChange_other": "{{count}} worktrees mantidas porque podem ter trabalho que você não confirmou perder: {{names}}"
     }
   },
   "harnesses": {

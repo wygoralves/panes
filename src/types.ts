@@ -932,6 +932,22 @@ export interface WorktreeSessionInfo {
   branch: string;
 }
 
+export interface GitWorktreeRemoval {
+  /** Set when the worktree was removed but git kept its branch. */
+  branchDeleteError: string | null;
+}
+
+export interface GitWorktreeInspection {
+  changedCount: number;
+  untrackedCount: number;
+  unmergedCommitCount: number;
+  /** Identifies the exact files and commits counted, not just how many. */
+  fingerprint: string;
+}
+
+/** A worktree whose removal would discard uncommitted files or unmerged commits. */
+export interface WorktreeRemovalRisk extends WorktreeSessionInfo, GitWorktreeInspection {}
+
 export interface FileTreeEntry {
   path: string;
   isDir: boolean;
