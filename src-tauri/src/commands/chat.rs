@@ -693,9 +693,7 @@ async fn prepare_send_message_turn(
                 sandbox_mode_override.as_deref(),
                 codex_external_sandbox_active,
             ) {
-                return Err(
-                "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.".to_string(),
-            );
+                return Err(EXTERNAL_SANDBOX_OVERRIDE_ERROR.to_string());
             }
 
             validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode))?;
@@ -5187,11 +5185,14 @@ fn ensure_workspace_write_confirmed(
     Ok(())
 }
 
+const EXTERNAL_SANDBOX_OVERRIDE_ERROR: &str = "Codex read-only and workspace-write sandbox overrides are unavailable while Panes is using external sandbox mode. Clear the override or restore local Codex sandboxing first.";
+
 /// Starts or resumes the engine thread for a turn. Codex runs its
 /// workspace-write sandbox probe here and can fall back to external sandbox
 /// mode, where no OS sandbox holds a read-only thread read-only, so the
-/// multi-repo write confirmation is checked again against the sandbox state
-/// the engine ended on, before the turn is dispatched.
+/// sandbox override and the multi-repo write confirmation are checked again
+/// against the sandbox state the engine ended on, before the turn is
+/// dispatched.
 async fn ensure_engine_thread_for_turn(
     state: &AppState,
     thread: &ThreadDto,
@@ -5201,6 +5202,7 @@ async fn ensure_engine_thread_for_turn(
     workspace_writable_roots: Option<&WorkspaceWritableRootsResolution>,
 ) -> Result<String, String> {
     let sandbox_mode = sandbox.sandbox_mode.clone();
+    let has_permission_profile = sandbox.permission_profile.is_some();
     let engine_thread_id = state
         .engines
         .ensure_engine_thread(thread, Some(model_id), scope, sandbox)
@@ -5212,6 +5214,14 @@ async fn ensure_engine_thread_for_turn(
             .engines
             .codex_uses_external_sandbox_for(&thread.engine_id)
             .await;
+        if !has_permission_profile
+            && unsupported_thread_sandbox_override_for_external_sandbox(
+                thread_sandbox_mode(thread.engine_metadata.as_ref())?.as_deref(),
+                codex_external_sandbox_active,
+            )
+        {
+            return Err(EXTERNAL_SANDBOX_OVERRIDE_ERROR.to_string());
+        }
         ensure_workspace_write_confirmed(
             workspace_writable_roots,
             sandbox_mode.as_deref(),
@@ -7843,6 +7853,108 @@ done
         );
         let error = result.expect_err("the fallback must require the multi-repo confirmation");
         assert!(error.contains("requires explicit confirmation"), "{error}");
+    }
+
+    /// A thread's read-only override passes the check made before the engine
+    /// thread exists. The workspace-write probe that runs while Codex starts
+    /// the thread then fails and moves Codex to external sandbox mode, which
+    /// cannot honour the override, so the turn must be refused.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn codex_sandbox_fallback_while_starting_the_thread_rejects_a_sandbox_override() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script_dir =
+            std::env::temp_dir().join(format!("panes-chat-fake-codex-{}", Uuid::new_v4()));
+        fs::create_dir_all(&script_dir).expect("failed to create script dir");
+        let script = script_dir.join("codex");
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/^{"id":\("[^"]*"\),.*/\1/p')
+  [ -z "$id" ] && continue
+  case "$line" in
+    *'"method":"command/exec"'*)
+      printf '{"id":%s,"result":{"exitCode":1,"stderr":"sandbox_apply: Operation not permitted"}}\n' "$id" ;;
+    *'"method":"thread/start"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"fake-engine-thread"}}}\n' "$id" ;;
+    *)
+      printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+        )
+        .expect("failed to write fake codex");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755))
+            .expect("failed to make fake codex executable");
+
+        let mut state = test_app_state();
+        let mut config = AppConfig::default();
+        config.chat_providers = vec![crate::config::app_config::ChatProviderInstanceConfig {
+            id: "codex".to_string(),
+            kind: "codex".to_string(),
+            display_name: "Codex".to_string(),
+            binary_path: Some(script.to_string_lossy().into_owned()),
+            enabled: true,
+            ..Default::default()
+        }];
+        state.engines = Arc::new(EngineManager::from_config(&config));
+        state
+            .engines
+            .set_codex_sandbox_probe_result_for_test("codex", false)
+            .await;
+
+        let mut thread = test_thread(&state, "codex", "gpt-6.2-sol");
+        thread.engine_metadata = Some(serde_json::json!({ "sandboxMode": "read-only" }));
+        let workspace = db::workspaces::list_workspaces(&state.db)
+            .expect("failed to list workspaces")
+            .into_iter()
+            .find(|workspace| workspace.id == thread.workspace_id)
+            .expect("workspace should exist");
+
+        // The check made before the engine thread exists lets the turn on.
+        assert!(!unsupported_thread_sandbox_override_for_external_sandbox(
+            Some("read-only"),
+            state.engines.codex_uses_external_sandbox_for("codex").await,
+        ));
+
+        let sandbox = SandboxPolicy {
+            writable_roots: vec![workspace.root_path.clone()],
+            allow_network: false,
+            approval_policy: None,
+            permission_profile: None,
+            approvals_reviewer: None,
+            reasoning_effort: None,
+            sandbox_mode: Some("read-only".to_string()),
+            service_tier: None,
+            personality: None,
+            output_schema: None,
+            opencode_agent: None,
+            project_settings_trusted: false,
+        };
+        let result = ensure_engine_thread_for_turn(
+            &state,
+            &thread,
+            "gpt-6.2-sol",
+            ThreadScope::Workspace {
+                root_path: workspace.root_path.clone(),
+                writable_roots: Vec::new(),
+            },
+            sandbox,
+            None,
+        )
+        .await;
+        let fell_back = state.engines.codex_uses_external_sandbox_for("codex").await;
+        drop(state);
+        let _ = fs::remove_dir_all(&script_dir);
+
+        assert!(
+            fell_back,
+            "the failed probe should switch Codex to external mode"
+        );
+        let error = result.expect_err("the fallback must refuse the sandbox override");
+        assert!(error.contains("external sandbox mode"), "{error}");
     }
 
     #[tokio::test]
