@@ -1390,7 +1390,7 @@ export function FileExplorer() {
           />
           {filter && (
             <span
-              style={{ fontSize: 10, color: "var(--text-3)" }}
+              style={{ fontSize: 10, color: "var(--text-3)", whiteSpace: "nowrap", flexShrink: 0 }}
               title={t("explorer.filterCountTitle")}
             >
               {t("explorer.filterCount", { count: filteredFileCount })}

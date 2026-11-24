@@ -101,7 +101,8 @@
   },
   "files": {
     "filterPlaceholder": "Filter files...",
-    "filterCount": "{{count}} files",
+    "filterCount_one": "{{count}} file",
+    "filterCount_other": "{{count}} files",
     "filterCountTitle": "Only expanded folders are searched",
     "loading": "Loading files...",
     "emptyFiltered": "No files match filter",

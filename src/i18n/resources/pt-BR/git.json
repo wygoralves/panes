@@ -101,7 +101,8 @@
   },
   "files": {
     "filterPlaceholder": "Filtrar arquivos...",
-    "filterCount": "{{count}} arquivos",
+    "filterCount_one": "{{count}} arquivo",
+    "filterCount_other": "{{count}} arquivos",
     "filterCountTitle": "Só pastas expandidas entram na busca",
     "loading": "Carregando arquivos...",
     "emptyFiltered": "Nenhum arquivo corresponde ao filtro",
