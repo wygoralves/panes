@@ -87,16 +87,120 @@ pub fn insert_approval(
     Ok(())
 }
 
-pub fn answer_approval(db: &Database, approval_id: &str, decision: &str) -> anyhow::Result<()> {
+/// Error text for an answer that arrives after its approval left 'pending'.
+/// The frontend matches on "no longer pending" to retire the card.
+pub const APPROVAL_NOT_PENDING_ERROR: &str =
+    "This approval is no longer pending: the turn that asked for it has ended.";
+
+/// Claims a pending approval of `thread_id` for the user's decision. The row
+/// reads 'answering' until the engine took the answer: a second answer loses
+/// to the claim, turn-end expiry leaves the in-flight answer to its caller,
+/// and crash recovery expires an undelivered claim.
+pub fn answer_approval(
+    db: &Database,
+    approval_id: &str,
+    thread_id: &str,
+    decision: &str,
+) -> anyhow::Result<()> {
     let conn = db.connect()?;
-    conn.execute(
-        "UPDATE approvals
-     SET status = 'answered', decision = ?1, answered_at = datetime('now')
-     WHERE id = ?2",
-        params![decision, approval_id],
-    )
-    .context("failed to answer approval")?;
+    let changed = conn
+        .execute(
+            "UPDATE approvals
+     SET status = 'answering', decision = ?1, answered_at = datetime('now')
+     WHERE id = ?2
+       AND thread_id = ?3
+       AND status = 'pending'
+       AND EXISTS (
+         SELECT 1 FROM messages m WHERE m.id = approvals.message_id AND m.status = 'streaming'
+       )",
+            params![decision, approval_id, thread_id],
+        )
+        .context("failed to answer approval")?;
+    if changed == 0 {
+        anyhow::bail!(APPROVAL_NOT_PENDING_ERROR);
+    }
     Ok(())
+}
+
+/// Records that the engine took the claimed answer. Fails when the turn
+/// ended first and expired the claim.
+pub fn confirm_approval_answer(
+    db: &Database,
+    approval_id: &str,
+    decision: &str,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    let changed = conn
+        .execute(
+            "UPDATE approvals
+     SET status = 'answered'
+     WHERE id = ?1
+       AND decision = ?2
+       AND status IN ('answering', 'answered')",
+            params![approval_id, decision],
+        )
+        .context("failed to confirm approval answer")?;
+    if changed == 0 {
+        anyhow::bail!(APPROVAL_NOT_PENDING_ERROR);
+    }
+    Ok(())
+}
+
+/// Settles a claim the engine refused. While the turn that asked for it still
+/// runs (its reply is streaming and `turn_is_live`), the claim goes back to
+/// pending so the user can answer again; otherwise it expires, without the
+/// decision that never took effect. Returns whether it is pending again.
+pub fn release_approval_claim(
+    db: &Database,
+    approval_id: &str,
+    turn_is_live: bool,
+) -> anyhow::Result<bool> {
+    let conn = db.connect()?;
+    let status: Option<String> = conn
+        .query_row(
+            "UPDATE approvals
+     SET status = CASE WHEN ?2 AND EXISTS (
+           SELECT 1 FROM messages m WHERE m.id = approvals.message_id AND m.status = 'streaming'
+         ) THEN 'pending' ELSE 'expired' END,
+         answered_at = CASE WHEN ?2 AND EXISTS (
+           SELECT 1 FROM messages m WHERE m.id = approvals.message_id AND m.status = 'streaming'
+         ) THEN NULL ELSE COALESCE(answered_at, datetime('now')) END,
+         decision = NULL
+     WHERE id = ?1
+       AND status = 'answering'
+     RETURNING status",
+            params![approval_id, turn_is_live],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to release approval claim")?;
+    Ok(status.as_deref() == Some("pending"))
+}
+
+/// Marks every approval of a finished turn that nobody answered as expired
+/// and returns their ids. No engine is waiting on them anymore.
+pub fn expire_pending_approvals_for_message(
+    db: &Database,
+    message_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    let conn = db.connect()?;
+    let mut stmt = conn
+        .prepare(
+            "UPDATE approvals
+             SET status = 'expired', answered_at = COALESCE(answered_at, datetime('now'))
+             WHERE message_id = ?1
+               AND status = 'pending'
+             RETURNING id",
+        )
+        .context("failed to prepare approval expiry")?;
+    let rows = stmt
+        .query_map(params![message_id], |row| row.get::<_, String>(0))
+        .context("failed to expire pending approvals")?;
+    let mut expired = Vec::new();
+    for row in rows {
+        expired.push(row.context("failed to decode expired approval id")?);
+    }
+    Ok(expired)
 }
 
 #[cfg(test)]

@@ -168,6 +168,10 @@ pub struct MessageDto {
     pub status: MessageStatusDto,
     pub token_usage: Option<TokenUsageDto>,
     pub created_at: String,
+    /// Sequence number of the last stream event folded into `blocks`. A
+    /// client that subscribes mid-turn drops buffered events at or below it.
+    #[serde(default)]
+    pub stream_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

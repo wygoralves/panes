@@ -28,7 +28,7 @@ use crate::{
         ThreadStatusDto, TrustLevelDto,
     },
     runtime_env,
-    state::AppState,
+    state::{AppState, StreamSnapshotSync},
 };
 
 const MAX_THREAD_TITLE_CHARS: usize = 72;
@@ -229,12 +229,26 @@ struct ThreadUpdatedEvent {
 #[serde(rename_all = "camelCase")]
 struct ChatTurnFinishedEvent {
     thread_id: String,
+    /// The assistant message the turn wrote, so a view can tell it apart
+    /// from a newer turn's reply.
+    message_id: String,
     workspace_id: String,
     engine_id: String,
     thread_title: String,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     preview: Option<String>,
+}
+
+/// Sent once a finished turn's final write is stored and the thread is
+/// released, before the slower title and notification work, so queued
+/// messages drain without waiting on the engine.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatTurnReleasedEvent {
+    thread_id: String,
+    message_id: String,
+    status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -245,6 +259,49 @@ struct ChatApprovalRequestedEvent {
     engine_id: String,
     thread_title: String,
     summary: String,
+}
+
+/// Stream event as emitted to the webview: the engine event plus `seq`, a
+/// process-wide counter that only grows. Each assistant message stores the
+/// counter value its persisted blocks cover (`messages.stream_seq`), so a view
+/// that subscribes mid-turn can drop buffered events the snapshot already has.
+#[derive(Clone, Serialize)]
+struct SequencedStreamEvent<E> {
+    #[serde(flatten)]
+    event: E,
+    seq: u64,
+}
+
+/// Stream event for an engine failure found after the turn loop stopped. It
+/// is numbered like the loop's events, so the turn's final write covers it and
+/// a view that binds in between drops its buffered copy instead of adding a
+/// second error block.
+fn turn_end_engine_error_event(error: impl std::fmt::Display) -> SequencedStreamEvent<EngineEvent> {
+    SequencedStreamEvent {
+        event: EngineEvent::Error {
+            message: error.to_string(),
+            recoverable: false,
+        },
+        seq: next_stream_event_seq(),
+    }
+}
+
+/// Seeded from the wall clock (milliseconds times 1000) so values keep growing
+/// across restarts and never fall below a sequence stored by an earlier run.
+static STREAM_EVENT_SEQ: std::sync::OnceLock<std::sync::atomic::AtomicU64> =
+    std::sync::OnceLock::new();
+
+fn stream_event_seq_counter() -> &'static std::sync::atomic::AtomicU64 {
+    STREAM_EVENT_SEQ
+        .get_or_init(|| std::sync::atomic::AtomicU64::new(epoch_millis_now().saturating_mul(1000)))
+}
+
+fn next_stream_event_seq() -> u64 {
+    stream_event_seq_counter().fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+fn current_stream_event_seq() -> u64 {
+    stream_event_seq_counter().load(std::sync::atomic::Ordering::SeqCst)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -642,19 +699,23 @@ async fn prepare_send_message_turn(
             }
 
             validate_engine_sandbox_mode(thread.engine_id.as_str(), Some(sandbox_mode))?;
+        }
+    }
 
-            if workspace_write_confirmation_required(
-                workspace_writable_roots.as_ref(),
-                super::threads::sandbox_mode_for_write_confirmation(
-                    sandbox_mode,
-                    codex_external_sandbox_active,
-                ),
-                workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
-            ) {
-                return Err(
+    // Codex drops a thread's permission profile and runs on the sandbox mode,
+    // so the profile cannot waive the multi-repo write confirmation.
+    if let Some(sandbox_mode) = sandbox_mode.as_deref() {
+        if workspace_write_confirmation_required(
+            workspace_writable_roots.as_ref(),
+            super::threads::sandbox_mode_for_write_confirmation(
+                sandbox_mode,
+                codex_external_sandbox_active,
+            ),
+            workspace_write_opt_in_enabled(thread.engine_metadata.as_ref()),
+        ) {
+            return Err(
                 "Workspace thread with multiple writable repositories requires explicit confirmation before execution.".to_string(),
             );
-            }
         }
     }
 
@@ -794,7 +855,7 @@ pub async fn send_message(
     let cancellation = CancellationToken::new();
     if !state
         .turns
-        .try_register(&thread_id, cancellation.clone())
+        .register_or_wait(&thread_id, cancellation.clone(), TURN_CANCEL_GRACE)
         .await
     {
         return Err(
@@ -935,13 +996,6 @@ pub async fn start_codex_review(
     target: CodexReviewTargetPayload,
     delivery: Option<CodexReviewDeliveryPayload>,
 ) -> Result<ThreadDto, String> {
-    if state.turns.get(&thread_id).await.is_some() {
-        return Err(
-            "A turn is already running for this thread. Cancel it before starting a review."
-                .to_string(),
-        );
-    }
-
     let db = state.db.clone();
     let source_thread = run_db(db.clone(), {
         let thread_id = thread_id.clone();
@@ -967,7 +1021,7 @@ pub async fn start_codex_review(
     let cancellation = CancellationToken::new();
     if !state
         .turns
-        .try_register(&source_thread.id, cancellation.clone())
+        .register_or_wait(&source_thread.id, cancellation.clone(), TURN_CANCEL_GRACE)
         .await
     {
         return Err(
@@ -1510,7 +1564,28 @@ async fn respond_to_approval_inner(
     let approval_route =
         load_approval_response_route(db.clone(), thread.engine_id.as_str(), &approval_id).await?;
 
-    state
+    // An approval outlives its turn only as a record. Answering it then would
+    // reach no engine (or one that silently drops it) and still log a decision.
+    let turn_is_live = state
+        .turns
+        .get(&thread_id)
+        .await
+        .is_some_and(|token| !token.is_cancelled());
+    if !turn_is_live {
+        return Err(db::actions::APPROVAL_NOT_PENDING_ERROR.to_string());
+    }
+
+    // Claim the row before the engine hears the answer: turn-end expiry and a
+    // second answer for the same approval both lose to the claim.
+    let decision = approval_response_decision_for_persistence(&normalized_response);
+    run_db(db.clone(), {
+        let approval_id = approval_id.clone();
+        let thread_id = thread_id.clone();
+        move |db| db::actions::answer_approval(db, &approval_id, &thread_id, decision)
+    })
+    .await?;
+
+    if let Err(error) = state
         .engines
         .respond_to_approval(
             &thread,
@@ -1519,24 +1594,42 @@ async fn respond_to_approval_inner(
             approval_route,
         )
         .await
-        .map_err(err_to_string)?;
+    {
+        let turn_is_live = state
+            .turns
+            .get(&thread_id)
+            .await
+            .is_some_and(|token| !token.is_cancelled());
+        let released = run_db(db.clone(), {
+            let approval_id = approval_id.clone();
+            move |db| db::actions::release_approval_claim(db, &approval_id, turn_is_live)
+        })
+        .await;
+        return match released {
+            // The turn ended meanwhile, so the approval expired.
+            Ok(false) => Err(db::actions::APPROVAL_NOT_PENDING_ERROR.to_string()),
+            Ok(true) => Err(err_to_string(error)),
+            Err(release_error) => {
+                log::warn!("failed to release approval claim {approval_id}: {release_error}");
+                Err(err_to_string(error))
+            }
+        };
+    }
 
-    let decision = approval_response_decision_for_persistence(&normalized_response);
     run_db(db, {
         let approval_id = approval_id.clone();
         let thread_id = thread_id.clone();
-        let decision = decision.to_string();
         move |db| {
-            db::actions::answer_approval(db, &approval_id, &decision)?;
+            db::actions::confirm_approval_answer(db, &approval_id, decision)?;
             if let Some(message_id) = db::actions::find_approval_message_id(db, &approval_id)? {
                 let _ = db::messages::mark_approval_block_answered(
                     db,
                     &message_id,
                     &approval_id,
-                    &decision,
+                    decision,
                 );
             }
-            db::threads::update_thread_status(db, &thread_id, ThreadStatusDto::Streaming)?;
+            db::threads::resume_thread_after_approval(db, &thread_id, &approval_id)?;
             Ok(())
         }
     })
@@ -1634,6 +1727,20 @@ pub async fn get_thread_messages_window(
 ) -> Result<MessageWindowDto, String> {
     let requested_limit = limit.unwrap_or(MESSAGE_WINDOW_DEFAULT_LIMIT);
     let clamped_limit = requested_limit.clamp(1, MESSAGE_WINDOW_MAX_LIMIT);
+
+    if cursor.is_none() {
+        // The stored blocks of a running turn trail its stream; have the turn
+        // store them first so the window covers every event emitted so far.
+        if !state
+            .turns
+            .request_stream_snapshot(&thread_id, STREAM_SNAPSHOT_MAX_WAIT)
+            .await
+        {
+            log::warn!(
+                "running turn of thread {thread_id} did not store its blocks within {STREAM_SNAPSHOT_MAX_WAIT:?}; the window may miss recent stream events"
+            );
+        }
+    }
 
     run_db(state.db.clone(), move |db| {
         db::messages::get_thread_messages_window(db, &thread_id, cursor.as_ref(), clamped_limit)
@@ -1820,6 +1927,10 @@ async fn run_turn(
     let stream_event_topic = format!("stream-event-{}", thread.id);
     let approval_event_topic = format!("approval-request-{}", thread.id);
     let mut pending_event: Option<EngineEvent> = None;
+    let snapshot_sync = state.turns.snapshot_sync(&thread.id).await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.start_serving();
+    }
 
     let initial_turn_started_event = EngineEvent::TurnStarted { client_turn_id };
     let initial_progress = process_stream_event(
@@ -1867,10 +1978,47 @@ async fn run_turn(
     .await;
 
     loop {
+        let received = match next_stream_input(
+            &mut event_rx,
+            &cancellation,
+            pending_event.is_some(),
+            snapshot_sync.as_deref(),
+        )
+        .await
+        {
+            StreamInput::Received(received) => received,
+            StreamInput::SnapshotRequested => {
+                // A view is binding to this thread mid-turn: store what the
+                // stream has so far, with the current sequence even if no
+                // block changed, so its snapshot covers every event it could
+                // not hear. The next events draw higher numbers.
+                blocks_dirty = true;
+                flush_stream_state(
+                    &state,
+                    &thread,
+                    &assistant_message_id,
+                    &blocks,
+                    &message_status,
+                    &thread_status,
+                    &turn_model_id,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                    &mut last_persisted_thread_status,
+                    &mut last_persist_at,
+                    &mut last_blocks_persist_at,
+                    true,
+                )
+                .await;
+                if let Some(sync) = snapshot_sync.as_deref() {
+                    sync.mark_flushed();
+                }
+                continue;
+            }
+        };
         let incoming_event = if pending_event.is_some() {
-            match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
-                .await
-            {
+            match received {
                 Ok(event) => event,
                 Err(_) => {
                     if let Some(event) = pending_event.take() {
@@ -1922,7 +2070,8 @@ async fn run_turn(
                 }
             }
         } else {
-            recv_engine_event(&mut event_rx, &cancellation, TURN_CANCEL_GRACE).await
+            // Without a pending event the receive never times out.
+            received.unwrap_or(None)
         };
 
         let Some(incoming_event) = incoming_event else {
@@ -2131,6 +2280,30 @@ async fn run_turn(
         .await;
     }
 
+    // The stream is over: store it now and stop answering snapshot requests,
+    // so a view opening the thread during teardown reads everything at once.
+    flush_stream_state(
+        &state,
+        &thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        true,
+    )
+    .await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.stop_serving();
+    }
+
     // A stopped turn waits a bounded time for the engine task, then aborts it:
     // a task that ignored the interrupt must not keep the thread registered.
     let engine_abort = engine_task.abort_handle();
@@ -2164,13 +2337,7 @@ async fn run_turn(
                 thread_status = ThreadStatusDto::Error;
                 thread_status_dirty = true;
             }
-            let _ = app.emit(
-                &stream_event_topic,
-                EngineEvent::Error {
-                    message: format!("{error}"),
-                    recoverable: false,
-                },
-            );
+            let _ = app.emit(&stream_event_topic, turn_end_engine_error_event(&error));
         }
         Err(error) => {
             blocks.push(ContentBlock::Error {
@@ -2193,6 +2360,19 @@ async fn run_turn(
         message_state_dirty = true;
         thread_status = ThreadStatusDto::Idle;
         thread_status_dirty = true;
+    }
+
+    if settle_turn_end_blocks(
+        &app,
+        &state,
+        &stream_event_topic,
+        &assistant_message_id,
+        &mut blocks,
+        &message_status,
+    )
+    .await
+    {
+        blocks_dirty = true;
     }
 
     flush_stream_state(
@@ -2247,6 +2427,9 @@ async fn run_turn(
         }
     }
 
+    // The title asks the engine and may wait on it, so the release goes first.
+    emit_chat_turn_released(&app, &thread.id, &assistant_message_id, &message_status);
+
     let _ =
         maybe_update_thread_title(&state, &thread, &engine_thread_id, &turn_input.message).await;
 
@@ -2263,7 +2446,13 @@ async fn run_turn(
     let (thread_updated_event, final_thread) = build_final_thread_event(latest_thread, &thread);
     let _ = app.emit("thread-updated", thread_updated_event);
     if let Some(final_thread) = final_thread.as_ref() {
-        emit_chat_turn_finished(&app, final_thread, &message_status, &blocks);
+        emit_chat_turn_finished(
+            &app,
+            final_thread,
+            &assistant_message_id,
+            &message_status,
+            &blocks,
+        );
     }
 }
 
@@ -2385,6 +2574,10 @@ async fn run_codex_review_turn(
     let stream_event_topic = format!("stream-event-{}", review_thread.id);
     let approval_event_topic = format!("approval-request-{}", review_thread.id);
     let mut pending_event: Option<EngineEvent> = None;
+    let snapshot_sync = state.turns.snapshot_sync(&review_thread.id).await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.start_serving();
+    }
 
     let initial_turn_started_event = EngineEvent::TurnStarted {
         client_turn_id: None,
@@ -2438,10 +2631,47 @@ async fn run_codex_review_turn(
     }
 
     loop {
+        let received = match next_stream_input(
+            &mut event_rx,
+            &cancellation,
+            pending_event.is_some(),
+            snapshot_sync.as_deref(),
+        )
+        .await
+        {
+            StreamInput::Received(received) => received,
+            StreamInput::SnapshotRequested => {
+                // A view is binding to this thread mid-turn: store what the
+                // stream has so far, with the current sequence even if no
+                // block changed, so its snapshot covers every event it could
+                // not hear. The next events draw higher numbers.
+                blocks_dirty = true;
+                flush_stream_state(
+                    &state,
+                    &review_thread,
+                    &assistant_message_id,
+                    &blocks,
+                    &message_status,
+                    &thread_status,
+                    &turn_model_id,
+                    &mut blocks_dirty,
+                    &mut message_state_dirty,
+                    &mut thread_status_dirty,
+                    &mut turn_model_dirty,
+                    &mut last_persisted_thread_status,
+                    &mut last_persist_at,
+                    &mut last_blocks_persist_at,
+                    true,
+                )
+                .await;
+                if let Some(sync) = snapshot_sync.as_deref() {
+                    sync.mark_flushed();
+                }
+                continue;
+            }
+        };
         let incoming_event = if pending_event.is_some() {
-            match tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv())
-                .await
-            {
+            match received {
                 Ok(event) => event,
                 Err(_) => {
                     if let Some(event) = pending_event.take() {
@@ -2493,7 +2723,8 @@ async fn run_codex_review_turn(
                 }
             }
         } else {
-            recv_engine_event(&mut event_rx, &cancellation, TURN_CANCEL_GRACE).await
+            // Without a pending event the receive never times out.
+            received.unwrap_or(None)
         };
 
         let Some(incoming_event) = incoming_event else {
@@ -2702,6 +2933,30 @@ async fn run_codex_review_turn(
         .await;
     }
 
+    // The stream is over: store it now and stop answering snapshot requests,
+    // so a view opening the thread during teardown reads everything at once.
+    flush_stream_state(
+        &state,
+        &review_thread,
+        &assistant_message_id,
+        &blocks,
+        &message_status,
+        &thread_status,
+        &turn_model_id,
+        &mut blocks_dirty,
+        &mut message_state_dirty,
+        &mut thread_status_dirty,
+        &mut turn_model_dirty,
+        &mut last_persisted_thread_status,
+        &mut last_persist_at,
+        &mut last_blocks_persist_at,
+        true,
+    )
+    .await;
+    if let Some(sync) = snapshot_sync.as_deref() {
+        sync.stop_serving();
+    }
+
     // A stopped turn waits a bounded time for the engine task, then aborts it:
     // a task that ignored the interrupt must not keep the thread registered.
     let engine_abort = engine_task.abort_handle();
@@ -2735,13 +2990,7 @@ async fn run_codex_review_turn(
                 thread_status = ThreadStatusDto::Error;
                 thread_status_dirty = true;
             }
-            let _ = app.emit(
-                &stream_event_topic,
-                EngineEvent::Error {
-                    message: format!("{error}"),
-                    recoverable: false,
-                },
-            );
+            let _ = app.emit(&stream_event_topic, turn_end_engine_error_event(&error));
         }
         Err(error) => {
             blocks.push(ContentBlock::Error {
@@ -2766,6 +3015,19 @@ async fn run_codex_review_turn(
         thread_status_dirty = true;
     }
 
+    if settle_turn_end_blocks(
+        &app,
+        &state,
+        &stream_event_topic,
+        &assistant_message_id,
+        &mut blocks,
+        &message_status,
+    )
+    .await
+    {
+        blocks_dirty = true;
+    }
+
     flush_stream_state(
         &state,
         &review_thread,
@@ -2786,7 +3048,11 @@ async fn run_codex_review_turn(
     .await;
 
     state.turns.finish(&source_thread.id).await;
-    state.turns.finish(&review_thread.id).await;
+    // An inline review runs on the source thread: releasing it twice could
+    // drop a turn registered in between.
+    if review_thread.id != source_thread.id {
+        state.turns.finish(&review_thread.id).await;
+    }
 
     if let Err(error) = run_db(state.db.clone(), {
         let assistant_message_id = assistant_message_id.clone();
@@ -2819,6 +3085,13 @@ async fn run_codex_review_turn(
         }
     }
 
+    emit_chat_turn_released(
+        &app,
+        &review_thread.id,
+        &assistant_message_id,
+        &message_status,
+    );
+
     let latest_review_thread = run_db(state.db.clone(), {
         let review_thread_id = review_thread.id.clone();
         move |db| db::threads::get_thread(db, &review_thread_id)
@@ -2832,8 +3105,90 @@ async fn run_codex_review_turn(
         build_final_thread_event(latest_review_thread, &review_thread);
     let _ = app.emit("thread-updated", thread_updated_event);
     if let Some(final_review_thread) = final_review_thread.as_ref() {
-        emit_chat_turn_finished(&app, final_review_thread, &message_status, &blocks);
+        emit_chat_turn_finished(
+            &app,
+            final_review_thread,
+            &assistant_message_id,
+            &message_status,
+            &blocks,
+        );
     }
+}
+
+/// Closes out what a finished turn left open. Approvals nobody answered are
+/// expired (the engine no longer waits on them) and the open transcript is
+/// told to retire their cards. When the turn did not complete, running actions
+/// and subagents are finalized, since no completion event will arrive for them.
+/// Returns whether `blocks` changed.
+async fn settle_turn_end_blocks(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    stream_event_topic: &str,
+    assistant_message_id: &str,
+    blocks: &mut [ContentBlock],
+    message_status: &MessageStatusDto,
+) -> bool {
+    let mut changed = false;
+    if !matches!(message_status, MessageStatusDto::Completed) {
+        changed |= finalize_running_blocks(blocks, &TurnCompletionStatus::Interrupted);
+    }
+
+    match run_db(state.db.clone(), {
+        let assistant_message_id = assistant_message_id.to_string();
+        move |db| db::actions::expire_pending_approvals_for_message(db, &assistant_message_id)
+    })
+    .await
+    {
+        Ok(expired) if !expired.is_empty() => {
+            changed |= expire_approval_blocks(blocks, &expired);
+            let _ = app.emit(
+                stream_event_topic,
+                serde_json::json!({
+                    "type": "ApprovalExpired",
+                    "approval_ids": expired,
+                }),
+            );
+        }
+        Ok(_) => {}
+        Err(error) => log::warn!("failed to expire pending approvals: {error}"),
+    }
+
+    changed
+}
+
+/// Running actions become errors and running subagents take the turn's fate.
+fn finalize_running_blocks(
+    blocks: &mut [ContentBlock],
+    turn_status: &TurnCompletionStatus,
+) -> bool {
+    let mut changed = finalize_running_subagent_blocks(blocks, turn_status);
+    for block in blocks.iter_mut() {
+        if let ContentBlock::Action { status, .. } = block {
+            if status == "running" || status == "pending" {
+                *status = "error".to_string();
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn expire_approval_blocks(blocks: &mut [ContentBlock], approval_ids: &[String]) -> bool {
+    let mut changed = false;
+    for block in blocks.iter_mut() {
+        if let ContentBlock::Approval {
+            approval_id,
+            status,
+            ..
+        } = block
+        {
+            if status == "pending" && approval_ids.contains(approval_id) {
+                *status = "expired".to_string();
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 fn is_coalescable_stream_event(event: &EngineEvent) -> bool {
@@ -3020,7 +3375,52 @@ async fn process_stream_event(
         _ => {}
     }
 
-    let _ = app.emit(stream_event_topic, &normalized_event);
+    // Store the approval before publishing it: an answer to the card must
+    // find a pending row to claim.
+    if let EngineEvent::ApprovalRequested {
+        approval_id,
+        action_type,
+        summary,
+        details,
+    } = &normalized_event
+    {
+        if let Err(error) = run_db(state.db.clone(), {
+            let approval_id = approval_id.clone();
+            let thread_id = thread.id.clone();
+            let assistant_message_id = assistant_message_id.to_string();
+            let action_type = action_type.clone();
+            let summary = summary.clone();
+            let details = details.clone();
+            move |db| {
+                db::actions::insert_approval(
+                    db,
+                    &approval_id,
+                    &thread_id,
+                    &assistant_message_id,
+                    &action_type,
+                    &summary,
+                    &details,
+                )
+            }
+        })
+        .await
+        {
+            log::warn!("failed to persist approval: {error}");
+        }
+    }
+
+    if matches!(normalized_event, EngineEvent::TurnCompleted { .. }) {
+        // The view treats the turn as over once it sees this event; a send it
+        // makes now waits for the release instead of bouncing.
+        state.turns.mark_finishing(&thread.id).await;
+    }
+    let _ = app.emit(
+        stream_event_topic,
+        SequencedStreamEvent {
+            event: &normalized_event,
+            seq: next_stream_event_seq(),
+        },
+    );
     if let EngineEvent::ApprovalRequested { summary, .. } = &normalized_event {
         let _ = app.emit(approval_event_topic, &normalized_event);
         // Unscoped companion event so background threads can surface pending
@@ -3103,36 +3503,6 @@ async fn process_stream_event(
                 log::warn!("failed to persist action completion: {error}");
             }
         }
-        EngineEvent::ApprovalRequested {
-            approval_id,
-            action_type,
-            summary,
-            details,
-        } => {
-            if let Err(error) = run_db(state.db.clone(), {
-                let approval_id = approval_id.clone();
-                let thread_id = thread.id.clone();
-                let assistant_message_id = assistant_message_id.to_string();
-                let action_type = action_type.clone();
-                let summary = summary.clone();
-                let details = details.clone();
-                move |db| {
-                    db::actions::insert_approval(
-                        db,
-                        &approval_id,
-                        &thread_id,
-                        &assistant_message_id,
-                        &action_type,
-                        &summary,
-                        &details,
-                    )
-                }
-            })
-            .await
-            {
-                log::warn!("failed to persist approval: {error}");
-            }
-        }
         _ => {}
     }
 
@@ -3171,6 +3541,10 @@ fn apply_stream_progress(
     if let Some(status) = progress.thread_status {
         if *thread_status != status {
             *thread_status = status;
+            *thread_status_dirty = true;
+        } else if status == ThreadStatusDto::AwaitingApproval {
+            // Answering the previous approval moved the stored status back to
+            // streaming behind this loop's back; the new request must land.
             *thread_status_dirty = true;
         }
     }
@@ -3211,9 +3585,21 @@ async fn flush_stream_state(
         return;
     }
 
+    // A forced write stores the blocks with the message status, so a stored
+    // terminal status never sits next to a stream_seq that trails it.
+    if force && *message_state_dirty {
+        *blocks_dirty = true;
+    }
+
     let now = Instant::now();
 
-    if *thread_status_dirty && *last_persisted_thread_status == *thread_status {
+    // An answered approval rewrites the stored status outside this loop, so
+    // a repeated awaiting-approval status is written even when it matches.
+    let rewrite_thread_status = *thread_status == ThreadStatusDto::AwaitingApproval;
+    if *thread_status_dirty
+        && !rewrite_thread_status
+        && *last_persisted_thread_status == *thread_status
+    {
         *thread_status_dirty = false;
     }
 
@@ -3230,6 +3616,9 @@ async fn flush_stream_state(
     let mut did_flush_blocks = false;
 
     if *blocks_dirty && should_flush_blocks {
+        // Every event this turn emitted so far is already in `blocks`, and the
+        // next one draws a higher number, so the snapshot covers this value.
+        let stream_seq = current_stream_event_seq();
         match serde_json::to_string(blocks) {
             Ok(blocks_json) => {
                 if let Err(error) = run_db(state.db.clone(), {
@@ -3243,6 +3632,7 @@ async fn flush_stream_state(
                             &blocks_json,
                             message_status,
                             Some(turn_model_id.as_str()),
+                            stream_seq,
                         )
                     }
                 })
@@ -3299,7 +3689,9 @@ async fn flush_stream_state(
         }
     }
 
-    if *thread_status_dirty && should_flush_state && *last_persisted_thread_status != *thread_status
+    if *thread_status_dirty
+        && should_flush_state
+        && (rewrite_thread_status || *last_persisted_thread_status != *thread_status)
     {
         if let Err(error) = run_db(state.db.clone(), {
             let thread_id = thread.id.clone();
@@ -3477,24 +3869,43 @@ fn preview_from_blocks(blocks: &[ContentBlock], include_subagents: bool) -> Opti
 fn emit_chat_turn_finished(
     app: &tauri::AppHandle,
     thread: &ThreadDto,
+    assistant_message_id: &str,
     status: &MessageStatusDto,
     blocks: &[ContentBlock],
 ) {
     let event = ChatTurnFinishedEvent {
         thread_id: thread.id.clone(),
+        message_id: assistant_message_id.to_string(),
         workspace_id: thread.workspace_id.clone(),
         engine_id: thread.engine_id.clone(),
         thread_title: thread.title.clone(),
-        status: match status {
-            MessageStatusDto::Completed => "completed",
-            MessageStatusDto::Interrupted => "interrupted",
-            MessageStatusDto::Error => "error",
-            MessageStatusDto::Streaming => "completed",
-        }
-        .to_string(),
+        status: turn_finished_status(status).to_string(),
         preview: chat_notification_preview(blocks),
     };
     let _ = app.emit("chat-turn-finished", event);
+}
+
+fn emit_chat_turn_released(
+    app: &tauri::AppHandle,
+    thread_id: &str,
+    assistant_message_id: &str,
+    status: &MessageStatusDto,
+) {
+    let event = ChatTurnReleasedEvent {
+        thread_id: thread_id.to_string(),
+        message_id: assistant_message_id.to_string(),
+        status: turn_finished_status(status).to_string(),
+    };
+    let _ = app.emit("chat-turn-released", event);
+}
+
+fn turn_finished_status(status: &MessageStatusDto) -> &'static str {
+    match status {
+        MessageStatusDto::Completed => "completed",
+        MessageStatusDto::Interrupted => "interrupted",
+        MessageStatusDto::Error => "error",
+        MessageStatusDto::Streaming => "completed",
+    }
 }
 
 fn build_final_thread_event(
@@ -3524,11 +3935,48 @@ fn build_final_thread_event(
 /// How long a stopped turn waits for the engine to report the interruption
 /// before the turn is closed without it.
 const TURN_CANCEL_GRACE: Duration = Duration::from_secs(10);
+/// How long opening a thread waits for its running turn to store its blocks.
+const STREAM_SNAPSHOT_MAX_WAIT: Duration = Duration::from_secs(2);
 
 /// The next engine event, or `None` once the channel closes. After Stop the
 /// wait is bounded: an engine that never answers the interrupt (a killed
 /// sidecar whose sender is still alive, a hung transport) would otherwise keep
 /// the turn registered forever and block every later message on the thread.
+enum StreamInput {
+    /// An engine event, `Ok(None)` once the engine is done, or `Err` when a
+    /// coalesced event sat idle long enough to be emitted on its own.
+    Received(Result<Option<EngineEvent>, tokio::time::error::Elapsed>),
+    SnapshotRequested,
+}
+
+/// Waits for the next engine event or for a view asking for a snapshot. Both
+/// waits are cancel-safe, so whichever loses keeps nothing half done.
+async fn next_stream_input(
+    event_rx: &mut mpsc::Receiver<EngineEvent>,
+    cancellation: &CancellationToken,
+    coalescing: bool,
+    snapshot_sync: Option<&StreamSnapshotSync>,
+) -> StreamInput {
+    let receive = async {
+        if coalescing {
+            tokio::time::timeout(STREAM_EVENT_COALESCE_IDLE_FLUSH_INTERVAL, event_rx.recv()).await
+        } else {
+            Ok(recv_engine_event(event_rx, cancellation, TURN_CANCEL_GRACE).await)
+        }
+    };
+    let snapshot_requested = async {
+        match snapshot_sync {
+            Some(sync) => sync.requested().await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        biased;
+        () = snapshot_requested => StreamInput::SnapshotRequested,
+        received = receive => StreamInput::Received(received),
+    }
+}
+
 async fn recv_engine_event(
     event_rx: &mut mpsc::Receiver<EngineEvent>,
     cancellation: &CancellationToken,
@@ -3567,7 +4015,14 @@ fn apply_event_to_blocks(
             progress.force_persist = true;
             // A subagent still running when the turn ends shares the turn's
             // fate; nothing will complete it later.
-            progress.blocks_changed = finalize_running_subagent_blocks(blocks, status);
+            // A turn that did not complete leaves its running actions open
+            // too; settle them in this forced write so a crash before the
+            // epilogue cannot leave them running.
+            progress.blocks_changed = if matches!(status, TurnCompletionStatus::Completed) {
+                finalize_running_subagent_blocks(blocks, status)
+            } else {
+                finalize_running_blocks(blocks, status)
+            };
             match status {
                 TurnCompletionStatus::Completed => {
                     progress.message_status = Some(MessageStatusDto::Completed);
@@ -3853,6 +4308,8 @@ fn apply_event_to_blocks(
             });
             progress.blocks_changed = true;
             if !recoverable {
+                // This forced write ends the message: settle what it left open.
+                finalize_running_blocks(blocks, &TurnCompletionStatus::Failed);
                 progress.message_status = Some(MessageStatusDto::Error);
                 progress.thread_status = Some(ThreadStatusDto::Error);
                 progress.force_persist = true;
@@ -6679,6 +7136,539 @@ mod tests {
             .is_none());
     }
 
+    fn approval_row(state: &AppState, approval_id: &str) -> (String, Option<String>) {
+        let conn = state.db.connect().expect("failed to open db connection");
+        conn.query_row(
+            "SELECT status, decision FROM approvals WHERE id = ?1",
+            params![approval_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .expect("failed to load approval row")
+    }
+
+    fn thread_status_value(state: &AppState, thread_id: &str) -> String {
+        let conn = state.db.connect().expect("failed to open db connection");
+        conn.query_row(
+            "SELECT status FROM threads WHERE id = ?1",
+            params![thread_id],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("failed to load thread status")
+    }
+
+    #[tokio::test]
+    async fn approval_without_a_running_turn_is_rejected_and_left_unanswered() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-orphaned";
+        insert_pending_approval(&state, &thread, approval_id);
+        db::threads::update_thread_status(&state.db, &thread.id, ThreadStatusDto::Idle)
+            .expect("failed to set thread status");
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected an approval without a turn to be rejected");
+
+        assert!(error.contains("no longer pending"));
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("pending".to_string(), None)
+        );
+        assert_eq!(thread_status_value(&state, &thread.id), "idle");
+    }
+
+    #[tokio::test]
+    async fn expired_approval_is_rejected_even_while_a_turn_runs() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-expired";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+        db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+            .expect("failed to expire approvals");
+        assert!(
+            state
+                .turns
+                .try_register(&thread.id, CancellationToken::new())
+                .await
+        );
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected an expired approval to be rejected");
+
+        assert!(error.contains("no longer pending"));
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("expired".to_string(), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_of_a_stopped_turn_is_rejected_and_left_pending() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-stopped";
+        insert_pending_approval(&state, &thread, approval_id);
+        let token = CancellationToken::new();
+        assert!(state.turns.try_register(&thread.id, token.clone()).await);
+        token.cancel();
+
+        let error = respond_to_approval_inner(
+            &state,
+            thread.id.clone(),
+            approval_id.to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )
+        .await
+        .expect_err("expected an approval of a stopped turn to be rejected");
+
+        assert!(error.contains("no longer pending"));
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("pending".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn an_approval_is_claimed_once_by_its_own_thread() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-claimed";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+
+        assert!(
+            db::actions::answer_approval(&state.db, approval_id, "other-thread", "accept").is_err()
+        );
+        db::actions::answer_approval(&state.db, approval_id, &thread.id, "accept")
+            .expect("first answer should claim the approval");
+        assert!(
+            db::actions::answer_approval(&state.db, approval_id, &thread.id, "decline").is_err()
+        );
+        db::actions::confirm_approval_answer(&state.db, approval_id, "accept")
+            .expect("delivered answer should be confirmed");
+        assert!(
+            db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+                .expect("expiry should run")
+                .is_empty()
+        );
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("answered".to_string(), Some("accept".to_string()))
+        );
+    }
+
+    #[test]
+    fn an_answer_in_flight_outlives_the_turn_end_and_settles_by_its_delivery() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "opencode", "model");
+        let delivered = "approval-delivered";
+        let refused = "approval-refused";
+        let message_id = insert_pending_approval(&state, &thread, delivered);
+        db::actions::insert_approval(
+            &state.db,
+            refused,
+            &thread.id,
+            &message_id,
+            &crate::engines::events::ActionType::Command,
+            "Run command",
+            &serde_json::json!({}),
+        )
+        .expect("failed to insert approval");
+
+        db::actions::answer_approval(&state.db, delivered, &thread.id, "accept")
+            .expect("answer should claim the approval");
+        db::actions::answer_approval(&state.db, refused, &thread.id, "accept")
+            .expect("answer should claim the approval");
+        // The turn ends while both answers are in flight.
+        assert!(
+            db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+                .expect("expiry should run")
+                .is_empty()
+        );
+
+        db::actions::confirm_approval_answer(&state.db, delivered, "accept")
+            .expect("a delivered answer is confirmed after the turn ended");
+        assert!(
+            !db::actions::release_approval_claim(&state.db, refused, false)
+                .expect("release should run")
+        );
+        assert_eq!(
+            approval_row(&state, delivered),
+            ("answered".to_string(), Some("accept".to_string()))
+        );
+        assert_eq!(approval_row(&state, refused), ("expired".to_string(), None));
+    }
+
+    #[test]
+    fn a_finished_turns_approval_cannot_be_answered_during_a_newer_turn() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "opencode", "model");
+        let claimed = "approval-claimed-late";
+        let untouched = "approval-untouched";
+        let message_id = insert_pending_approval(&state, &thread, claimed);
+        db::actions::insert_approval(
+            &state.db,
+            untouched,
+            &thread.id,
+            &message_id,
+            &crate::engines::events::ActionType::Command,
+            "Run command",
+            &serde_json::json!({}),
+        )
+        .expect("failed to insert approval");
+        db::actions::answer_approval(&state.db, claimed, &thread.id, "accept")
+            .expect("answer should claim the approval");
+
+        // The turn ends and a newer one starts while the answer is in flight.
+        db::messages::update_assistant_status(&state.db, &message_id, MessageStatusDto::Completed)
+            .expect("failed to complete the reply");
+        assert!(
+            !db::actions::release_approval_claim(&state.db, claimed, true)
+                .expect("release should run")
+        );
+        assert_eq!(approval_row(&state, claimed), ("expired".to_string(), None));
+        assert!(db::actions::answer_approval(&state.db, untouched, &thread.id, "accept").is_err());
+    }
+
+    #[test]
+    fn answering_a_non_pending_approval_fails() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let approval_id = "approval-twice";
+        let message_id = insert_pending_approval(&state, &thread, approval_id);
+        db::actions::expire_pending_approvals_for_message(&state.db, &message_id)
+            .expect("failed to expire approvals");
+
+        assert!(
+            db::actions::answer_approval(&state.db, approval_id, &thread.id, "accept").is_err()
+        );
+        assert_eq!(
+            approval_row(&state, approval_id),
+            ("expired".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn turn_end_expires_pending_approval_blocks_only() {
+        let mut blocks = vec![
+            ContentBlock::Approval {
+                approval_id: "a1".to_string(),
+                action_type: "command".to_string(),
+                summary: "Run".to_string(),
+                details: empty_raw_value(),
+                status: "pending".to_string(),
+                decision: None,
+            },
+            ContentBlock::Approval {
+                approval_id: "a2".to_string(),
+                action_type: "command".to_string(),
+                summary: "Run".to_string(),
+                details: empty_raw_value(),
+                status: "answered".to_string(),
+                decision: Some("accept".to_string()),
+            },
+        ];
+
+        assert!(expire_approval_blocks(
+            &mut blocks,
+            &["a1".to_string(), "a2".to_string()]
+        ));
+        let statuses: Vec<&str> = blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Approval { status, .. } => Some(status.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, vec!["expired", "answered"]);
+    }
+
+    #[test]
+    fn stopped_turn_finalizes_running_actions_and_subagents() {
+        let mut blocks = vec![
+            ContentBlock::Action {
+                action_id: "act-1".to_string(),
+                engine_action_id: None,
+                action_type: "command".to_string(),
+                summary: "ls".to_string(),
+                details: empty_raw_value(),
+                output_chunks: Vec::new(),
+                status: "running".to_string(),
+                result: None,
+                agent_id: None,
+            },
+            ContentBlock::Action {
+                action_id: "act-2".to_string(),
+                engine_action_id: None,
+                action_type: "command".to_string(),
+                summary: "pwd".to_string(),
+                details: empty_raw_value(),
+                output_chunks: Vec::new(),
+                status: "done".to_string(),
+                result: None,
+                agent_id: None,
+            },
+            ContentBlock::Subagent {
+                agent_id: "agent-1".to_string(),
+                agent_type: None,
+                description: "explore".to_string(),
+                parent_action_id: None,
+                parent_agent_id: None,
+                status: "running".to_string(),
+                summary: None,
+                started_at: Some(1),
+                duration_ms: None,
+                progress: Some("reading".to_string()),
+            },
+        ];
+
+        assert!(finalize_running_blocks(
+            &mut blocks,
+            &TurnCompletionStatus::Interrupted
+        ));
+        let statuses: Vec<&str> = blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Action { status, .. } | ContentBlock::Subagent { status, .. } => {
+                    Some(status.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, vec!["error", "done", "interrupted"]);
+    }
+
+    #[test]
+    fn interrupted_completion_settles_running_actions_in_its_forced_write() {
+        let mut blocks = vec![ContentBlock::Action {
+            action_id: "act-1".to_string(),
+            engine_action_id: None,
+            action_type: "command".to_string(),
+            summary: "ls".to_string(),
+            details: empty_raw_value(),
+            output_chunks: Vec::new(),
+            status: "running".to_string(),
+            result: None,
+            agent_id: None,
+        }];
+        let progress = apply_event_to_blocks(
+            &mut blocks,
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            &EngineEvent::TurnCompleted {
+                token_usage: None,
+                status: TurnCompletionStatus::Interrupted,
+            },
+            1_000,
+        );
+
+        assert!(progress.force_persist && progress.blocks_changed);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Action { status, .. } if status == "error"
+        ));
+
+        let mut blocks = vec![ContentBlock::Action {
+            action_id: "act-2".to_string(),
+            engine_action_id: None,
+            action_type: "command".to_string(),
+            summary: "ls".to_string(),
+            details: empty_raw_value(),
+            output_chunks: Vec::new(),
+            status: "running".to_string(),
+            result: None,
+            agent_id: None,
+        }];
+        apply_event_to_blocks(
+            &mut blocks,
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            &EngineEvent::Error {
+                message: "boom".to_string(),
+                recoverable: false,
+            },
+            1_000,
+        );
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Action { status, .. } if status == "error"
+        ));
+    }
+
+    #[test]
+    fn a_second_approval_in_one_turn_marks_the_thread_status_dirty() {
+        let mut message_status = MessageStatusDto::Streaming;
+        let mut thread_status = ThreadStatusDto::AwaitingApproval;
+        let mut turn_model_id = "model".to_string();
+        let mut token_usage = None;
+        let mut blocks_dirty = false;
+        let mut message_state_dirty = false;
+        let mut thread_status_dirty = false;
+        let mut turn_model_dirty = false;
+
+        apply_stream_progress(
+            EventProgress {
+                thread_status: Some(ThreadStatusDto::AwaitingApproval),
+                ..EventProgress::default()
+            },
+            &mut message_status,
+            &mut thread_status,
+            &mut turn_model_id,
+            &mut token_usage,
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+        );
+
+        assert!(thread_status_dirty);
+    }
+
+    #[tokio::test]
+    async fn forced_status_write_stores_the_stream_seq_with_it() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "claude", "claude-sonnet-4-6");
+        let message = db::messages::insert_assistant_placeholder(
+            &state.db,
+            &thread.id,
+            Some("claude"),
+            None,
+            None,
+        )
+        .expect("failed to create assistant message");
+        let emitted_seq = next_stream_event_seq();
+
+        let mut blocks_dirty = false;
+        let mut message_state_dirty = true;
+        let mut thread_status_dirty = false;
+        let mut turn_model_dirty = false;
+        let mut last_persisted_thread_status = ThreadStatusDto::Streaming;
+        let mut last_persist_at = Instant::now();
+        let mut last_blocks_persist_at = Instant::now();
+        flush_stream_state(
+            &state,
+            &thread,
+            &message.id,
+            &[],
+            &MessageStatusDto::Completed,
+            &ThreadStatusDto::Streaming,
+            "model",
+            &mut blocks_dirty,
+            &mut message_state_dirty,
+            &mut thread_status_dirty,
+            &mut turn_model_dirty,
+            &mut last_persisted_thread_status,
+            &mut last_persist_at,
+            &mut last_blocks_persist_at,
+            true,
+        )
+        .await;
+
+        let window = db::messages::get_thread_messages_window(&state.db, &thread.id, None, 10)
+            .expect("failed to load window");
+        let stored = window
+            .messages
+            .iter()
+            .find(|candidate| candidate.id == message.id)
+            .expect("message should be in the window");
+        assert_eq!(stored.status, MessageStatusDto::Completed);
+        assert!(stored.stream_seq >= emitted_seq as i64);
+    }
+
+    #[test]
+    fn stream_events_carry_a_growing_sequence_next_to_their_type() {
+        let event = EngineEvent::TextDelta {
+            content: "hi".to_string(),
+        };
+        let first = next_stream_event_seq();
+        let value = serde_json::to_value(SequencedStreamEvent {
+            event: &event,
+            seq: first,
+        })
+        .expect("sequenced event should serialize");
+
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("TextDelta"));
+        assert_eq!(value.get("content").and_then(Value::as_str), Some("hi"));
+        assert_eq!(value.get("seq").and_then(Value::as_u64), Some(first));
+        assert!(current_stream_event_seq() >= first);
+        assert!(next_stream_event_seq() > first);
+    }
+
+    #[test]
+    fn turn_end_engine_error_is_numbered_below_the_final_write() {
+        let before = current_stream_event_seq();
+        let value = serde_json::to_value(turn_end_engine_error_event("sidecar exited"))
+            .expect("sequenced event should serialize");
+
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("Error"));
+        assert_eq!(
+            value.get("message").and_then(Value::as_str),
+            Some("sidecar exited")
+        );
+        assert_eq!(
+            value.get("recoverable").and_then(Value::as_bool),
+            Some(false)
+        );
+        let seq = value
+            .get("seq")
+            .and_then(Value::as_u64)
+            .expect("a turn-end error carries a stream seq");
+        assert!(seq > before);
+        // The final write stores the counter read after this emit.
+        assert!(current_stream_event_seq() >= seq);
+    }
+
+    #[tokio::test]
+    async fn permission_profile_does_not_skip_multi_repo_write_confirmation() {
+        let state = test_app_state();
+        let thread = test_thread(&state, "codex", "gpt-5.5-codex");
+        let workspace = db::workspaces::list_workspaces(&state.db)
+            .expect("failed to list workspaces")
+            .into_iter()
+            .find(|workspace| workspace.id == thread.workspace_id)
+            .expect("workspace should exist");
+        for name in ["repo-a", "repo-b"] {
+            let path = std::path::Path::new(&workspace.root_path).join(name);
+            fs::create_dir_all(&path).expect("failed to create repo dir");
+            db::repos::upsert_repo(
+                &state.db,
+                &workspace.id,
+                name,
+                path.to_string_lossy().as_ref(),
+                "main",
+                true,
+            )
+            .expect("failed to create repo");
+        }
+        db::threads::update_engine_metadata(
+            &state.db,
+            &thread.id,
+            &serde_json::json!({ "permissionProfile": { "fileSystem": "write" } }),
+        )
+        .expect("failed to store permission profile");
+
+        let error = match prepare_send_message_turn(
+            &state, &thread.id, "hello", None, None, None, None, None,
+        )
+        .await
+        {
+            Ok(_) => panic!("expected the multi-repo confirmation to be required"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("requires explicit confirmation"));
+    }
+
     #[tokio::test]
     async fn missing_live_codex_approval_request_keeps_approval_pending() {
         let state = test_app_state();
@@ -6693,6 +7683,13 @@ mod tests {
                 "_serverMethod": "item/fileChange/requestApproval",
                 "_rawRequestId": 42
             }),
+        );
+        // The turn is still live; only the engine lost the request.
+        assert!(
+            state
+                .turns
+                .try_register(&thread.id, CancellationToken::new())
+                .await
         );
 
         let error = respond_to_approval_inner(

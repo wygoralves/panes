@@ -613,7 +613,8 @@
         "answered": "Respondido",
         "denied": "Negado",
         "canceled": "Cancelado",
-        "approved": "Aprovado"
+        "approved": "Aprovado",
+        "expired": "Expirado"
       },
       "invalidJson": "JSON inválido: {{error}}",
       "payloadMustBeObject": "O payload precisa ser um objeto JSON.",

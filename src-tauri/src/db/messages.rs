@@ -295,6 +295,7 @@ pub fn update_assistant_blocks_json(
     blocks_json: &str,
     status: MessageStatusDto,
     turn_model_id: Option<&str>,
+    stream_seq: u64,
 ) -> anyhow::Result<()> {
     let conn = db.connect()?;
     let normalized_blocks_json = normalize_blocks_json_for_message(&conn, message_id, blocks_json)?;
@@ -304,14 +305,16 @@ pub fn update_assistant_blocks_json(
     let searchable_text = extract_searchable_text_from_blocks(&normalized_blocks_json);
     conn.execute(
         "UPDATE messages
-     SET blocks_json = ?1, content = ?2, status = ?3, turn_model_id = COALESCE(?4, turn_model_id)
+     SET blocks_json = ?1, content = ?2, status = ?3, turn_model_id = COALESCE(?4, turn_model_id),
+         stream_seq = ?6
      WHERE id = ?5",
         params![
             normalized_blocks_json,
             searchable_text,
             status.as_str(),
             turn_model_id,
-            message_id
+            message_id,
+            stream_seq as i64
         ],
     )
     .context("failed to update assistant blocks")?;
@@ -416,7 +419,8 @@ pub fn get_thread_messages(db: &Database, thread_id: &str) -> anyhow::Result<Vec
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at,
+            stream_seq
      FROM messages
      WHERE thread_id = ?1
      ORDER BY created_at ASC, rowid ASC",
@@ -442,7 +446,8 @@ pub fn get_thread_messages_window(
     let conn = db.connect()?;
     let mut stmt = conn.prepare(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at, rowid
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at,
+            stream_seq, rowid
      FROM messages
      WHERE thread_id = ?1
        AND (
@@ -474,7 +479,7 @@ pub fn get_thread_messages_window(
         ],
         |row| {
             let message = map_message_row(row)?;
-            let row_id: i64 = row.get(13)?;
+            let row_id: i64 = row.get(14)?;
             Ok((message, row_id))
         },
     )?;
@@ -639,8 +644,14 @@ pub fn mark_approval_block_resolved(
     approval_id: &str,
     decision: Option<&str>,
 ) -> anyhow::Result<bool> {
-    let conn = db.connect()?;
-    let Some(raw_blocks): Option<String> = conn
+    let mut conn = db.connect()?;
+    // Hold the write lock across the read and the rewrite: a stream flush that
+    // commits in between would otherwise be rolled back under its newer
+    // stream_seq.
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .context("failed to start approval block transaction")?;
+    let Some(raw_blocks): Option<String> = tx
         .query_row(
             "SELECT blocks_json FROM messages WHERE id = ?1",
             params![message_id],
@@ -657,18 +668,23 @@ pub fn mark_approval_block_resolved(
     let mut resolved = HashMap::new();
     resolved.insert(
         approval_id.to_string(),
-        decision.map(std::string::ToString::to_string),
+        ResolvedApproval {
+            status: "answered".to_string(),
+            decision: decision.map(std::string::ToString::to_string),
+        },
     );
     let changed = apply_resolved_approvals_to_blocks(&mut blocks_value, &resolved);
     if !changed {
         return Ok(false);
     }
 
-    conn.execute(
+    tx.execute(
         "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
         params![blocks_value.to_string(), message_id],
     )
     .context("failed to persist answered approval in message blocks")?;
+    tx.commit()
+        .context("failed to commit approval block transaction")?;
 
     Ok(true)
 }
@@ -921,7 +937,8 @@ fn insert_message(
     let conn = db.connect()?;
     conn.query_row(
         "SELECT id, thread_id, role, content, blocks_json, schema_version, status,
-            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at
+            token_input, token_output, turn_engine_id, turn_model_id, turn_reasoning_effort, created_at,
+            stream_seq
      FROM messages
      WHERE id = ?1",
         params![id],
@@ -954,12 +971,20 @@ fn map_message_row(row: &Row<'_>) -> rusqlite::Result<MessageDto> {
             None
         },
         created_at: row.get(12)?,
+        stream_seq: row.get(13)?,
     })
+}
+
+/// A settled approval row: `answered` (optionally with the decision) or
+/// `expired` (its turn ended before anyone answered).
+struct ResolvedApproval {
+    status: String,
+    decision: Option<String>,
 }
 
 fn apply_resolved_approvals_to_blocks(
     blocks: &mut Value,
-    resolved: &HashMap<String, Option<String>>,
+    resolved: &HashMap<String, ResolvedApproval>,
 ) -> bool {
     let Some(items) = blocks.as_array_mut() else {
         return false;
@@ -983,21 +1008,24 @@ fn apply_resolved_approvals_to_blocks(
             continue;
         };
 
-        let Some(decision) = resolved.get(approval_id) else {
+        let Some(resolution) = resolved.get(approval_id) else {
             continue;
         };
 
         let should_update_status = object
             .get("status")
             .and_then(Value::as_str)
-            .map(|value| value != "answered")
+            .map(|value| value != resolution.status)
             .unwrap_or(true);
 
         if should_update_status {
-            object.insert("status".to_string(), Value::String("answered".to_string()));
+            object.insert(
+                "status".to_string(),
+                Value::String(resolution.status.clone()),
+            );
             changed = true;
         }
-        if let Some(decision) = decision {
+        if let Some(decision) = resolution.decision.as_deref() {
             let should_update_decision = object
                 .get("decision")
                 .and_then(Value::as_str)
@@ -1058,7 +1086,79 @@ fn reconcile_answered_approvals_for_messages(
     Ok(())
 }
 
-fn reconcile_answered_approvals_for_message(
+/// Brings a recovered message's blocks in line with what survived a restart:
+/// approval blocks take their row's status, and when the turn was cut off
+/// mid-stream, actions and subagents stop reading as running.
+pub(super) fn settle_recovered_message_blocks(
+    conn: &Connection,
+    message_id: &str,
+    finalize_running: bool,
+) -> anyhow::Result<bool> {
+    let raw_blocks: Option<Option<String>> = conn
+        .query_row(
+            "SELECT blocks_json FROM messages WHERE id = ?1",
+            params![message_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to load message blocks for recovery")?;
+    let Some(Some(raw_blocks)) = raw_blocks else {
+        return Ok(false);
+    };
+    let Ok(mut blocks) = serde_json::from_str::<Value>(&raw_blocks) else {
+        return Ok(false);
+    };
+
+    let mut changed = reconcile_answered_approvals_for_message(conn, message_id, &mut blocks)?;
+    if finalize_running {
+        changed |= finalize_running_blocks_json(&mut blocks);
+    }
+    if !changed {
+        return Ok(false);
+    }
+
+    conn.execute(
+        "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+        params![blocks.to_string(), message_id],
+    )
+    .context("failed to persist recovered message blocks")?;
+    Ok(true)
+}
+
+/// Nothing will complete an action or subagent whose turn is gone: show the
+/// action as failed and the subagent as interrupted instead of running.
+fn finalize_running_blocks_json(blocks: &mut Value) -> bool {
+    let Some(items) = blocks.as_array_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for block in items.iter_mut() {
+        let Some(object) = block.as_object_mut() else {
+            continue;
+        };
+        let status = object.get("status").and_then(Value::as_str);
+        match object.get("type").and_then(Value::as_str) {
+            Some("action") if matches!(status, Some("running") | Some("pending")) => {
+                object.insert("status".to_string(), Value::String("error".to_string()));
+                changed = true;
+            }
+            Some("subagent") if status == Some("running") => {
+                object.insert(
+                    "status".to_string(),
+                    Value::String("interrupted".to_string()),
+                );
+                // The stop time is unknown after a restart, so no duration is
+                // made up for it.
+                object.remove("progress");
+                changed = true;
+            }
+            _ => {}
+        }
+    }
+    changed
+}
+
+pub(super) fn reconcile_answered_approvals_for_message(
     conn: &Connection,
     message_id: &str,
     blocks: &mut Value,
@@ -1074,25 +1174,29 @@ fn reconcile_answered_approvals_for_message(
 fn load_resolved_approvals_for_message(
     conn: &Connection,
     message_id: &str,
-) -> anyhow::Result<HashMap<String, Option<String>>> {
+) -> anyhow::Result<HashMap<String, ResolvedApproval>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, decision
+            "SELECT id, status, decision
          FROM approvals
          WHERE message_id = ?1
-           AND status = 'answered'",
+           AND status IN ('answered', 'expired')",
         )
         .context("failed to prepare approval lookup for message")?;
     let rows = stmt
         .query_map(params![message_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })
         .context("failed to query answered approvals for message")?;
 
     let mut resolved = HashMap::new();
     for row in rows {
-        let (approval_id, decision) = row?;
-        resolved.insert(approval_id, decision);
+        let (approval_id, status, decision) = row?;
+        resolved.insert(approval_id, ResolvedApproval { status, decision });
     }
 
     Ok(resolved)
@@ -1101,7 +1205,7 @@ fn load_resolved_approvals_for_message(
 fn load_resolved_approvals_for_message_ids(
     conn: &Connection,
     message_ids: &[String],
-) -> anyhow::Result<HashMap<String, HashMap<String, Option<String>>>> {
+) -> anyhow::Result<HashMap<String, HashMap<String, ResolvedApproval>>> {
     if message_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -1110,10 +1214,10 @@ fn load_resolved_approvals_for_message_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT message_id, id, decision
+        "SELECT message_id, id, status, decision
          FROM approvals
          WHERE message_id IS NOT NULL
-           AND status = 'answered'
+           AND status IN ('answered', 'expired')
            AND message_id IN ({placeholders})"
     );
     let mut stmt = conn
@@ -1124,18 +1228,20 @@ fn load_resolved_approvals_for_message_ids(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })
         .context("failed to query answered approvals for messages")?;
 
-    let mut resolved_by_message: HashMap<String, HashMap<String, Option<String>>> = HashMap::new();
+    let mut resolved_by_message: HashMap<String, HashMap<String, ResolvedApproval>> =
+        HashMap::new();
     for row in rows {
-        let (message_id, approval_id, decision) = row?;
+        let (message_id, approval_id, status, decision) = row?;
         resolved_by_message
             .entry(message_id)
             .or_default()
-            .insert(approval_id, decision);
+            .insert(approval_id, ResolvedApproval { status, decision });
     }
 
     Ok(resolved_by_message)
@@ -1315,6 +1421,7 @@ mod tests {
             &blocks.to_string(),
             MessageStatusDto::Completed,
             None,
+            0,
         )
         .unwrap();
 
@@ -1531,7 +1638,8 @@ mod tests {
             &json!({}),
         )
         .unwrap();
-        actions::answer_approval(&db, approval_id, "accept").unwrap();
+        actions::answer_approval(&db, approval_id, &thread_id, "accept").unwrap();
+        actions::confirm_approval_answer(&db, approval_id, "accept").unwrap();
 
         update_assistant_blocks_json(
             &db,
@@ -1539,6 +1647,7 @@ mod tests {
             &pending_blocks.to_string(),
             MessageStatusDto::Completed,
             None,
+            0,
         )
         .unwrap();
 
@@ -1585,6 +1694,7 @@ mod tests {
             &pending_blocks.to_string(),
             MessageStatusDto::Completed,
             None,
+            0,
         )
         .unwrap();
 
@@ -1619,6 +1729,87 @@ mod tests {
     }
 
     #[test]
+    fn update_assistant_blocks_json_keeps_expired_approval_expired() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let approval_id = "approval-expired";
+        let pending_blocks = approval_blocks_json(approval_id);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(pending_blocks.clone()),
+            MessageStatusDto::Streaming,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        actions::insert_approval(
+            &db,
+            approval_id,
+            &thread_id,
+            &message.id,
+            &ActionType::Command,
+            "Run tests",
+            &json!({}),
+        )
+        .unwrap();
+        let expired = actions::expire_pending_approvals_for_message(&db, &message.id).unwrap();
+        assert_eq!(expired, vec![approval_id.to_string()]);
+
+        update_assistant_blocks_json(
+            &db,
+            &message.id,
+            &pending_blocks.to_string(),
+            MessageStatusDto::Interrupted,
+            None,
+            0,
+        )
+        .unwrap();
+
+        let blocks = get_message_blocks(&db, &message.id).unwrap().unwrap();
+        let (status, decision) = approval_block_status(&blocks).unwrap();
+        assert_eq!(status, "expired");
+        assert_eq!(decision, None);
+    }
+
+    #[test]
+    fn stream_seq_written_with_blocks_is_returned_by_the_window() {
+        let db = test_db();
+        let thread_id = test_thread(&db);
+        let message = insert_message(
+            &db,
+            &thread_id,
+            "assistant",
+            None,
+            Some(json!([])),
+            MessageStatusDto::Streaming,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(message.stream_seq, 0);
+
+        update_assistant_blocks_json(
+            &db,
+            &message.id,
+            &json!([{ "type": "text", "content": "Hello" }]).to_string(),
+            MessageStatusDto::Streaming,
+            None,
+            42,
+        )
+        .unwrap();
+
+        let window = get_thread_messages_window(&db, &thread_id, None, 20).unwrap();
+        assert_eq!(window.messages[0].stream_seq, 42);
+        let all = get_thread_messages(&db, &thread_id).unwrap();
+        assert_eq!(all[0].stream_seq, 42);
+    }
+
+    #[test]
     fn get_thread_messages_window_reconciles_stale_approval_blocks() {
         let db = test_db();
         let thread_id = test_thread(&db);
@@ -1630,7 +1821,7 @@ mod tests {
             "assistant",
             None,
             Some(pending_blocks.clone()),
-            MessageStatusDto::Completed,
+            MessageStatusDto::Streaming,
             None,
             None,
             None,
@@ -1647,11 +1838,12 @@ mod tests {
             &json!({}),
         )
         .unwrap();
-        actions::answer_approval(&db, approval_id, "accept").unwrap();
+        actions::answer_approval(&db, approval_id, &thread_id, "accept").unwrap();
+        actions::confirm_approval_answer(&db, approval_id, "accept").unwrap();
 
         let conn = db.connect().unwrap();
         conn.execute(
-            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+            "UPDATE messages SET blocks_json = ?1, status = 'completed' WHERE id = ?2",
             params![pending_blocks.to_string(), message.id],
         )
         .unwrap();

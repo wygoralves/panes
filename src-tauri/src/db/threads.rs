@@ -11,6 +11,7 @@ pub struct RuntimeRecoveryReport {
     pub messages_marked_interrupted: usize,
     pub thread_status_updates: usize,
     pub message_counts_repaired: usize,
+    pub approvals_expired: usize,
 }
 
 pub fn create_thread(
@@ -164,6 +165,35 @@ pub fn update_thread_status(
         params![status.as_str(), thread_id],
     )
     .context("failed to update thread status")?;
+    Ok(())
+}
+
+/// An answered approval lets the turn run again. Only a thread still waiting
+/// on approval, in the turn that asked for this approval, moves to streaming,
+/// so a late answer never revives a finished turn or resumes a newer one.
+pub fn resume_thread_after_approval(
+    db: &Database,
+    thread_id: &str,
+    approval_id: &str,
+) -> anyhow::Result<()> {
+    let conn = db.connect()?;
+    conn.execute(
+        "UPDATE threads
+     SET status = ?1, last_activity_at = datetime('now')
+     WHERE id = ?2
+       AND status = ?3
+       AND EXISTS (
+         SELECT 1 FROM approvals a JOIN messages m ON m.id = a.message_id
+         WHERE a.id = ?4 AND m.status = 'streaming'
+       )",
+        params![
+            ThreadStatusDto::Streaming.as_str(),
+            thread_id,
+            ThreadStatusDto::AwaitingApproval.as_str(),
+            approval_id
+        ],
+    )
+    .context("failed to resume thread after approval")?;
     Ok(())
 }
 
@@ -461,6 +491,12 @@ pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryR
         .transaction()
         .context("failed to start runtime recovery transaction")?;
 
+    let interrupted_message_ids = query_ids(
+        &tx,
+        "SELECT id FROM messages WHERE role = 'assistant' AND status = 'streaming'",
+    )
+    .context("failed to load stale streaming assistant messages")?;
+
     let messages_marked_interrupted = tx
         .execute(
             "UPDATE messages
@@ -470,6 +506,37 @@ pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryR
             [],
         )
         .context("failed to normalize stale streaming assistant messages")?;
+
+    // No engine request survives a restart, so an approval still pending now
+    // can never be answered. Leaving it pending would bring its thread back
+    // as awaiting approval on every launch.
+    let approval_message_ids = query_ids(
+        &tx,
+        "SELECT DISTINCT message_id FROM approvals
+       WHERE status IN ('pending', 'answering')
+         AND message_id IS NOT NULL",
+    )
+    .context("failed to load messages with stale pending approvals")?;
+    let approvals_expired = tx
+        .execute(
+            "UPDATE approvals
+       SET status = 'expired', decision = NULL,
+           answered_at = COALESCE(answered_at, datetime('now'))
+       WHERE status IN ('pending', 'answering')",
+            [],
+        )
+        .context("failed to expire stale pending approvals")?;
+
+    let mut settled_message_ids: Vec<&String> = interrupted_message_ids.iter().collect();
+    settled_message_ids.extend(
+        approval_message_ids
+            .iter()
+            .filter(|id| !interrupted_message_ids.contains(id)),
+    );
+    for message_id in settled_message_ids {
+        let finalize_running = interrupted_message_ids.contains(message_id);
+        super::messages::settle_recovered_message_blocks(&tx, message_id, finalize_running)?;
+    }
 
     let thread_ids = {
         let mut stmt = tx
@@ -520,31 +587,24 @@ pub fn reconcile_runtime_state(db: &Database) -> anyhow::Result<RuntimeRecoveryR
         messages_marked_interrupted,
         thread_status_updates,
         message_counts_repaired,
+        approvals_expired,
     })
+}
+
+fn query_ids(conn: &rusqlite::Connection, sql: &str) -> anyhow::Result<Vec<String>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 fn derive_thread_status_for_recovery(
     conn: &rusqlite::Connection,
     thread_id: &str,
 ) -> anyhow::Result<ThreadStatusDto> {
-    let has_pending_approval = conn
-        .query_row(
-            "SELECT 1
-       FROM approvals
-       WHERE thread_id = ?1
-         AND status = 'pending'
-       LIMIT 1",
-            params![thread_id],
-            |_| Ok(()),
-        )
-        .optional()
-        .context("failed to inspect pending approvals during runtime recovery")?
-        .is_some();
-
-    if has_pending_approval {
-        return Ok(ThreadStatusDto::AwaitingApproval);
-    }
-
     let last_assistant_status = conn
         .query_row(
             "SELECT status
@@ -741,6 +801,89 @@ mod tests {
             get_thread(&db, &thread.id).unwrap().unwrap().message_count,
             2
         );
+    }
+
+    #[test]
+    fn reconcile_runtime_state_expires_orphaned_approvals_and_finalizes_running_blocks() {
+        let db = test_db();
+        let thread = test_thread(&db, "Stuck approval");
+        let message =
+            messages::insert_assistant_placeholder(&db, &thread.id, Some("claude"), None, None)
+                .unwrap();
+        let blocks = json!([
+            {
+                "type": "approval",
+                "approvalId": "approval-1",
+                "actionType": "command",
+                "summary": "Run command",
+                "details": {},
+                "status": "pending"
+            },
+            {
+                "type": "action",
+                "actionId": "action-1",
+                "actionType": "command",
+                "summary": "ls",
+                "details": {},
+                "outputChunks": [],
+                "status": "running"
+            },
+            {
+                "type": "subagent",
+                "agentId": "agent-1",
+                "description": "explore",
+                "status": "running",
+                "startedAt": 1,
+                "progress": "reading"
+            }
+        ]);
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "UPDATE messages SET blocks_json = ?1 WHERE id = ?2",
+            params![blocks.to_string(), message.id],
+        )
+        .unwrap();
+        drop(conn);
+        crate::db::actions::insert_approval(
+            &db,
+            "approval-1",
+            &thread.id,
+            &message.id,
+            &crate::engines::events::ActionType::Command,
+            "Run command",
+            &json!({}),
+        )
+        .unwrap();
+        update_thread_status(&db, &thread.id, ThreadStatusDto::AwaitingApproval).unwrap();
+        // The user answered, but the app died before the engine took it.
+        crate::db::actions::answer_approval(&db, "approval-1", &thread.id, "accept").unwrap();
+
+        let report = reconcile_runtime_state(&db).unwrap();
+
+        assert_eq!(report.approvals_expired, 1);
+        assert_eq!(
+            get_thread(&db, &thread.id).unwrap().unwrap().status,
+            ThreadStatusDto::Idle
+        );
+        let conn = db.connect().unwrap();
+        let (approval_status, decision, raw_blocks): (String, Option<String>, String) = conn
+            .query_row(
+                "SELECT a.status, a.decision, m.blocks_json
+                 FROM approvals a JOIN messages m ON m.id = a.message_id
+                 WHERE a.id = 'approval-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(approval_status, "expired");
+        assert_eq!(decision, None);
+        let blocks: serde_json::Value = serde_json::from_str(&raw_blocks).unwrap();
+        assert_eq!(blocks[0]["status"], "expired");
+        assert!(blocks[0].get("decision").is_none());
+        assert_eq!(blocks[1]["status"], "error");
+        assert_eq!(blocks[2]["status"], "interrupted");
+        assert!(blocks[2].get("progress").is_none());
+        assert!(blocks[2].get("durationMs").is_none());
     }
 
     #[test]
