@@ -129,6 +129,42 @@ describe("Claude sidecar SDK staging", () => {
     ]);
   });
 
+  it("drops the SDK's peer packages from the staged node_modules", async () => {
+    const optionalDependencies = {
+      "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.330",
+    };
+    const fixture = await createSdkFixture(optionalDependencies);
+    await createNativePackage(
+      fixture.anthropicDir,
+      "@anthropic-ai/claude-agent-sdk-linux-x64",
+      "claude",
+    );
+    for (const peer of ["@anthropic-ai/sdk", "@modelcontextprotocol/sdk", "zod"]) {
+      const peerDir = path.join(fixture.nodeModulesDir, ...peer.split("/"));
+      await mkdir(peerDir, { recursive: true });
+      await writeFile(path.join(peerDir, "package.json"), "{}");
+    }
+    // pnpm writes launchers for the peers' bins inside the SDK package.
+    const sdkBinDir = path.join(fixture.sdkPackageDir, "node_modules", ".bin");
+    await mkdir(sdkBinDir, { recursive: true });
+    await writeFile(path.join(sdkBinDir, "anthropic-ai-sdk"), "#!/bin/sh");
+
+    await stageClaudeSdkPlatformAssets({
+      sdkDistNodeModulesDir: fixture.nodeModulesDir,
+      sdkDistPackageDir: fixture.sdkPackageDir,
+      targetPlatform: "linux",
+      targetArch: "x64",
+      logger: () => {},
+    });
+
+    expect((await readdir(fixture.nodeModulesDir)).sort()).toEqual(["@anthropic-ai"]);
+    expect((await readdir(fixture.anthropicDir)).sort()).toEqual([
+      "claude-agent-sdk",
+      "claude-agent-sdk-linux-x64",
+    ]);
+    expect(await readdir(fixture.sdkPackageDir)).not.toContain("node_modules");
+  });
+
   it("fails when a required native package was not installed", async () => {
     const optionalDependencies = {
       "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.207",
