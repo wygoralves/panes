@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use super::cli_fallback::run_git;
+use super::cli_fallback::{run_git, run_git_read};
 use crate::models::GitWorktreeDto;
 
 /// Directory Panes keeps its own repo-local scratch state in, worktrees included.
@@ -28,7 +28,24 @@ pub fn add_worktree(
         }
     }
 
-    let mut args = vec!["worktree", "add", "-b", branch_name, worktree_path];
+    // `git worktree add` hands the new branch and the base on to `git branch`
+    // with no option boundary, so a leading dash would be read as an option.
+    anyhow::ensure!(
+        !branch_name.starts_with('-'),
+        "invalid branch name: {branch_name}"
+    );
+    if let Some(base) = base_ref {
+        anyhow::ensure!(!base.starts_with('-'), "invalid base ref: {base}");
+    }
+
+    let mut args = vec![
+        "worktree",
+        "add",
+        "-b",
+        branch_name,
+        "--end-of-options",
+        worktree_path,
+    ];
     if let Some(base) = base_ref {
         args.push(base);
     }
@@ -41,14 +58,25 @@ pub fn add_worktree(
         .ok_or_else(|| anyhow::anyhow!("worktree created but not found in listing"))
 }
 
+/// Strips the one line ending git ends a printed path with, and nothing
+/// else: on unix a directory name can end in a space or a line break.
+pub fn strip_git_line_end(output: &str) -> &str {
+    let line = output.strip_suffix('\n').unwrap_or(output);
+    if cfg!(windows) {
+        line.strip_suffix('\r').unwrap_or(line)
+    } else {
+        line
+    }
+}
+
 /// Resolves the git directory shared by a repository and all of its linked
 /// worktrees. `git rev-parse --git-common-dir` follows `gitdir:` pointer files
 /// and linked-worktree admin directories, so the answer is the main repository's
 /// git dir even when `repo_path` is itself a worktree.
 pub fn git_common_dir(repo_path: &str) -> anyhow::Result<PathBuf> {
-    let output = run_git(repo_path, &["rev-parse", "--git-common-dir"])
+    let output = run_git_read(repo_path, &["rev-parse", "--git-common-dir"])
         .context("failed to resolve the git common directory")?;
-    let resolved = output.trim();
+    let resolved = strip_git_line_end(&output);
     if resolved.is_empty() {
         anyhow::bail!("git returned an empty common directory for '{repo_path}'");
     }
@@ -173,7 +201,7 @@ pub fn worktree_paths_match(listed_path: &str, requested_path: &str) -> bool {
 
 /// Lists all worktrees for a repository using porcelain format.
 pub fn list_worktrees(repo_path: &str) -> anyhow::Result<Vec<GitWorktreeDto>> {
-    let output = run_git(repo_path, &["worktree", "list", "--porcelain"])
+    let output = run_git_read(repo_path, &["worktree", "list", "--porcelain"])
         .context("failed to list worktrees")?;
 
     let mut worktrees = Vec::new();
@@ -250,12 +278,12 @@ pub fn remove_worktree(
     if force {
         args.push("--force");
     }
-    args.push(worktree_path);
+    args.extend(["--end-of-options", worktree_path]);
     run_git(repo_path, &args).context("failed to remove worktree")?;
     if delete_branch {
         if let Some(branch) = branch_name {
             let flag = if force { "-D" } else { "-d" };
-            run_git(repo_path, &["branch", flag, branch])
+            run_git(repo_path, &["branch", flag, "--end-of-options", branch])
                 .with_context(|| format!("failed to delete worktree branch '{branch}'"))?;
         }
     }
@@ -319,6 +347,58 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn add_worktree_succeeds_when_the_repo_defines_an_unusable_filter_name() {
+        let repo = TempRepo::init();
+        run_git(repo.path_str(), &["config", "filter.a=b.clean", "cat"]).expect("config");
+        let worktree_path = repo.path.join(".panes/worktrees/feature");
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+
+        add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "feature",
+            None,
+        )
+        .expect("worktree listing does not read filter config");
+    }
+
+    #[test]
+    fn add_worktree_does_not_read_a_dash_prefixed_base_or_branch_as_an_option() {
+        let repo = TempRepo::init();
+        let worktree_path = repo.path.join(".panes/worktrees/feature");
+        fs::create_dir_all(worktree_path.parent().expect("parent")).expect("create parent");
+
+        // Before the fix this ran `git worktree add -b feature <path> --lock`.
+        let result = add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "feature",
+            Some("--lock"),
+        );
+
+        assert!(result.is_err(), "--lock is not a ref");
+        assert!(!worktree_path.exists());
+
+        // git passes the new branch name on to `git branch`, where `-M`
+        // renamed the current branch.
+        run_git(repo.path_str(), &["branch", "other"]).expect("create branch");
+        let result = add_worktree(
+            repo.path_str(),
+            worktree_path.to_str().expect("utf-8 worktree path"),
+            "-M",
+            Some("other"),
+        );
+
+        assert!(result.is_err(), "-M is not a branch name");
+        let branches = run_git(
+            repo.path_str(),
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        )
+        .expect("list branches");
+        assert_eq!(branches.trim(), "main\nother");
     }
 
     #[test]

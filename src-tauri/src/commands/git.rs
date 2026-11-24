@@ -1,14 +1,17 @@
+use std::path::PathBuf;
+
+use anyhow::Context;
 use serde::Serialize;
 use tauri::Emitter;
 use tauri::State;
 
 use crate::{
     db,
-    git::{repo, worktree},
+    git::{cli_fallback::run_git_read, repo, worktree},
     models::{
         FileTreeEntryDto, FileTreePageDto, GitBranchPageDto, GitBranchScopeDto, GitCommitPageDto,
         GitCompareSourceDto, GitDiffPreviewDto, GitFileCompareDto, GitInitRepoStatusDto,
-        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, ThreadStatusDto,
+        GitRemoteDto, GitStashDto, GitStatusDto, GitWorktreeDto, ThreadStatusDto, TrustLevelDto,
     },
     state::AppState,
 };
@@ -125,25 +128,140 @@ pub async fn soft_reset_last_commit(
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
-pub async fn fetch_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || repo::fetch_repo(&repo_path).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+/// The trust level of the repository git opens at `repo_path`. Trust covers
+/// the repository the user marked and its worktrees, which share its config,
+/// so repo rows are matched by git's common dir. That finds a worktree
+/// outside the repo, a separate git dir or a symlinked path, and gives a
+/// different repository nested inside a trusted one no trust from it; one
+/// nested inside a restricted repo stays restricted. When the same repository
+/// has several rows, the least trusted wins.
+fn repo_trust_level(db: &db::Database, repo_path: &str) -> anyhow::Result<TrustLevelDto> {
+    let common_dir = canonicalize_dir(worktree::git_common_dir(repo_path)?)?;
+    let git_dir = canonicalize_dir(PathBuf::from(worktree::strip_git_line_end(&run_git_read(
+        repo_path,
+        &["rev-parse", "--absolute-git-dir"],
+    )?)))?;
+
+    let rows = db::repos::list_discovered_repos(db)?;
+    let mut matched: Option<TrustLevelDto> = None;
+    for repo in &rows {
+        if registered_common_dir(&repo.path).as_ref() == Some(&common_dir) {
+            matched = Some(match matched {
+                Some(level) if trust_rank(&level) <= trust_rank(&repo.trust_level) => level,
+                _ => repo.trust_level.clone(),
+            });
+        }
+    }
+
+    Ok(match matched {
+        // Trust covers config files under the trusted git dir: the main
+        // checkout's, or a linked worktree's admin dir under `worktrees/`.
+        // A `.git` file can point elsewhere and still share the common dir.
+        Some(TrustLevelDto::Trusted)
+            if git_dir == common_dir
+                || git_dir.parent() == Some(common_dir.join("worktrees").as_path()) =>
+        {
+            TrustLevelDto::Trusted
+        }
+        Some(TrustLevelDto::Trusted) => TrustLevelDto::Standard,
+        Some(level) => level,
+        // A repo with no row of its own (the scan stops at the first repo it
+        // finds) stays restricted inside any restricted repo row, whether it
+        // is reached through its checkout or through the main checkout beside
+        // its common dir.
+        None => {
+            let main_checkout = common_dir.parent().map(|dir| dir.to_string_lossy());
+            let locations: Vec<String> = std::iter::once(repo_path.to_string())
+                .chain(main_checkout.map(|dir| dir.into_owned()))
+                .collect();
+            let restricted = rows.iter().any(|repo| {
+                matches!(repo.trust_level, TrustLevelDto::Restricted)
+                    && locations
+                        .iter()
+                        .any(|path| crate::path_utils::is_path_within_root(path, &repo.path))
+            });
+            if restricted {
+                TrustLevelDto::Restricted
+            } else {
+                TrustLevelDto::Standard
+            }
+        }
+    })
+}
+
+/// The common dir of a registered repo, read in process the way git reads
+/// it: a linked worktree's git dir names it in a `commondir` file.
+/// Only a regular file is read, so a pipe planted there cannot block.
+fn registered_common_dir(path: &str) -> Option<PathBuf> {
+    let git_dir = git2::Repository::open(path).ok()?.path().to_path_buf();
+    let commondir = git_dir.join("commondir");
+    let common_dir = if commondir.is_file() {
+        let relative = std::fs::read_to_string(&commondir).ok()?;
+        // Git drops every trailing CR and LF when it reads this file, so a
+        // CRLF or doubled line ending still names the same common dir.
+        git_dir.join(relative.trim_end_matches(['\n', '\r']))
+    } else if commondir.exists() {
+        return None;
+    } else {
+        git_dir
+    };
+    common_dir.canonicalize().ok()
+}
+
+fn trust_rank(level: &TrustLevelDto) -> u8 {
+    match level {
+        TrustLevelDto::Restricted => 0,
+        TrustLevelDto::Standard => 1,
+        TrustLevelDto::Trusted => 2,
+    }
+}
+
+/// Resolves a directory git printed. A name that was not UTF-8 was changed
+/// when decoded and could resolve to a different directory, so it is refused.
+fn canonicalize_dir(dir: PathBuf) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        !dir.to_string_lossy().contains(char::REPLACEMENT_CHARACTER),
+        "git returned a directory Panes cannot read: {}",
+        dir.display()
+    );
+    dir.canonicalize()
+        .with_context(|| format!("failed to resolve '{}'", dir.display()))
 }
 
 #[tauri::command]
-pub async fn pull_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || repo::pull_repo(&repo_path).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+pub async fn fetch_git(state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let trust = repo_trust_level(&db, &repo_path)?;
+        repo::fetch_repo(&repo_path, &trust)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err_to_string)
 }
 
 #[tauri::command]
-pub async fn push_git(_state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || repo::push_repo(&repo_path).map_err(err_to_string))
-        .await
-        .map_err(|error| error.to_string())?
+pub async fn pull_git(state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let trust = repo_trust_level(&db, &repo_path)?;
+        repo::pull_repo(&repo_path, &trust)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn push_git(state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let trust = repo_trust_level(&db, &repo_path)?;
+        repo::push_repo(&repo_path, &trust)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err_to_string)
 }
 
 #[tauri::command]
@@ -744,6 +862,299 @@ mod tests {
                 let _ = fs::remove_dir_all(root);
             }
         }
+    }
+
+    #[test]
+    fn trust_follows_the_repository_git_opens() {
+        let repo = TestRepo::init();
+        // Registered paths are canonical, as the workspace scan stores them.
+        let root = repo.path.canonicalize().expect("canonical repo path");
+        let registered = crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "repo",
+            root.to_str().unwrap(),
+            "main",
+            true,
+        )
+        .expect("register repo");
+        crate::db::repos::set_repo_trust_level(
+            &repo.state.db,
+            &registered.id,
+            TrustLevelDto::Trusted,
+        )
+        .expect("trust repo");
+        let worktree = repo.add_worktree("feature");
+        let nested = root.join("vendor/nested");
+        fs::create_dir_all(&nested).expect("create nested repo dir");
+        run_git(nested.to_str().unwrap(), &["init", "-q"]).expect("init nested repo");
+
+        let outside = root.with_file_name(format!(
+            "{}-outside",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        worktree::add_worktree(
+            root.to_str().unwrap(),
+            outside.to_str().unwrap(),
+            "outside",
+            None,
+        )
+        .expect("add worktree outside the repo");
+        let outside_str = outside.to_str().unwrap().to_string();
+
+        let trust = |path: &str| repo_trust_level(&repo.state.db, path).expect("trust level");
+        assert!(matches!(
+            trust(root.to_str().unwrap()),
+            TrustLevelDto::Trusted
+        ));
+        assert!(matches!(trust(&worktree), TrustLevelDto::Trusted));
+        assert!(matches!(trust(&outside_str), TrustLevelDto::Trusted));
+        assert!(matches!(
+            trust(nested.to_str().unwrap()),
+            TrustLevelDto::Standard
+        ));
+
+        // A `.git` file pointing at an admin dir outside the trusted git dir
+        // shares the common dir but brings its own worktree config.
+        let sibling = |suffix: &str| {
+            root.with_file_name(format!(
+                "{}-{suffix}",
+                root.file_name().unwrap().to_string_lossy()
+            ))
+        };
+        let borrowed = sibling("borrowed");
+        let admin = borrowed.join("admin");
+        fs::create_dir_all(&admin).expect("create admin dir");
+        fs::write(
+            admin.join("commondir"),
+            format!("{}\n", root.join(".git").display()),
+        )
+        .expect("commondir");
+        fs::write(admin.join("HEAD"), "ref: refs/heads/main\n").expect("HEAD");
+        fs::write(
+            borrowed.join(".git"),
+            format!("gitdir: {}\n", admin.display()),
+        )
+        .expect(".git file");
+        assert!(matches!(
+            trust(borrowed.to_str().unwrap()),
+            TrustLevelDto::Standard
+        ));
+
+        // A restricted repo with a separate git dir, seen from a worktree.
+        let separate = sibling("separate");
+        let separate_git = sibling("separate.git");
+        run_git(
+            root.to_str().unwrap(),
+            &[
+                "init",
+                "-q",
+                "--separate-git-dir",
+                separate_git.to_str().unwrap(),
+                separate.to_str().unwrap(),
+            ],
+        )
+        .expect("init separate repo");
+        run_git(
+            separate.to_str().unwrap(),
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
+        )
+        .expect("commit");
+        let separate_row = crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "separate",
+            separate.to_str().unwrap(),
+            "main",
+            true,
+        )
+        .expect("register separate repo");
+        crate::db::repos::set_repo_trust_level(
+            &repo.state.db,
+            &separate_row.id,
+            TrustLevelDto::Restricted,
+        )
+        .expect("restrict separate repo");
+        let separate_worktree = sibling("separate-wt");
+        worktree::add_worktree(
+            separate.to_str().unwrap(),
+            separate_worktree.to_str().unwrap(),
+            "wt",
+            None,
+        )
+        .expect("add worktree of the separate repo");
+        assert!(matches!(
+            trust(separate_worktree.to_str().unwrap()),
+            TrustLevelDto::Restricted
+        ));
+        for dir in [&borrowed, &separate, &separate_git, &separate_worktree] {
+            let _ = fs::remove_dir_all(dir);
+        }
+
+        crate::db::repos::set_repo_trust_level(
+            &repo.state.db,
+            &registered.id,
+            TrustLevelDto::Restricted,
+        )
+        .expect("restrict repo");
+        assert!(matches!(trust(&outside_str), TrustLevelDto::Restricted));
+        assert!(matches!(
+            trust(nested.to_str().unwrap()),
+            TrustLevelDto::Restricted
+        ));
+        // The nested repo has no row; its own outside worktree stays restricted.
+        run_git(
+            nested.to_str().unwrap(),
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "i",
+            ],
+        )
+        .expect("commit in nested repo");
+        let nested_outside = sibling("nested-outside");
+        worktree::add_worktree(
+            nested.to_str().unwrap(),
+            nested_outside.to_str().unwrap(),
+            "nested-wt",
+            None,
+        )
+        .expect("add worktree of the nested repo");
+        assert!(matches!(
+            trust(nested_outside.to_str().unwrap()),
+            TrustLevelDto::Restricted
+        ));
+        let _ = fs::remove_dir_all(&nested_outside);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn a_nested_repo_stays_restricted_when_its_parent_also_has_a_standard_row() {
+        let repo = TestRepo::init();
+        let root = repo.path.canonicalize().expect("canonical repo path");
+        let other_root = root.join("other-workspace");
+        fs::create_dir_all(&other_root).expect("create other workspace root");
+        let other_workspace = crate::db::workspaces::upsert_workspace(
+            &repo.state.db,
+            other_root.to_str().unwrap(),
+            Some(1),
+        )
+        .expect("create other workspace");
+        for (workspace_id, level) in [
+            (repo.workspace_id.as_str(), TrustLevelDto::Standard),
+            (other_workspace.id.as_str(), TrustLevelDto::Restricted),
+        ] {
+            let row = crate::db::repos::upsert_repo(
+                &repo.state.db,
+                workspace_id,
+                "repo",
+                root.to_str().unwrap(),
+                "main",
+                true,
+            )
+            .expect("register repo");
+            crate::db::repos::set_repo_trust_level(&repo.state.db, &row.id, level)
+                .expect("set trust");
+        }
+        let nested = root.join("vendor/nested");
+        fs::create_dir_all(&nested).expect("create nested repo dir");
+        run_git(nested.to_str().unwrap(), &["init", "-q"]).expect("init nested repo");
+
+        let level = repo_trust_level(&repo.state.db, nested.to_str().unwrap()).expect("trust");
+        assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
+
+        // Swap the levels so a lookup that keeps either row fails one case.
+        for row in crate::db::repos::list_discovered_repos(&repo.state.db).expect("rows") {
+            let swapped = match row.trust_level {
+                TrustLevelDto::Restricted => TrustLevelDto::Standard,
+                _ => TrustLevelDto::Restricted,
+            };
+            crate::db::repos::set_repo_trust_level(&repo.state.db, &row.id, swapped)
+                .expect("swap trust");
+        }
+        let level = repo_trust_level(&repo.state.db, nested.to_str().unwrap()).expect("trust");
+        assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
+    }
+
+    #[test]
+    fn a_restricted_worktree_row_with_a_crlf_commondir_still_matches() {
+        let repo = TestRepo::init();
+        let root = repo.path.canonicalize().expect("canonical repo path");
+        let worktree = repo.add_worktree("feature");
+        let row = crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "feature",
+            &worktree,
+            "feature",
+            true,
+        )
+        .expect("register worktree");
+        crate::db::repos::set_repo_trust_level(&repo.state.db, &row.id, TrustLevelDto::Restricted)
+            .expect("restrict worktree");
+        // Git reads this file with every trailing CR and LF removed.
+        let commondir = root.join(".git/worktrees/feature/commondir");
+        let relative = fs::read_to_string(&commondir).expect("read commondir");
+        fs::write(&commondir, format!("{}\r\n\n", relative.trim_end())).expect("commondir");
+
+        let level = repo_trust_level(&repo.state.db, root.to_str().unwrap()).expect("trust");
+
+        assert!(matches!(level, TrustLevelDto::Restricted), "{level:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_in_another_repo_does_not_block_the_trust_lookup() {
+        let repo = TestRepo::init();
+        let other = repo.path.join("other");
+        fs::create_dir_all(&other).expect("create other repo dir");
+        run_git(other.to_str().unwrap(), &["init", "-q"]).expect("init other repo");
+        let fifo = std::ffi::CString::new(other.join(".git/commondir").to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0, "mkfifo");
+        crate::db::repos::upsert_repo(
+            &repo.state.db,
+            &repo.workspace_id,
+            "other",
+            other.to_str().unwrap(),
+            "main",
+            true,
+        )
+        .expect("register other repo");
+
+        let db = repo.state.db.clone();
+        let path = repo.path_str().to_string();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(repo_trust_level(&db, &path).map(|level| level.as_str()));
+        });
+
+        let result = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the trust lookup must not block");
+        assert!(result.is_ok(), "{result:?}");
+        // Unblock a reader that may still wait on the pipe; with no reader
+        // a non-blocking open fails at once.
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(other.join(".git/commondir"));
     }
 
     #[tokio::test]

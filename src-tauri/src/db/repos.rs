@@ -217,6 +217,24 @@ pub fn set_workspace_active_repos(
     Ok(())
 }
 
+/// Every repo row the workspace scans currently find, across workspaces.
+pub fn list_discovered_repos(db: &Database) -> anyhow::Result<Vec<RepoDto>> {
+    let conn = db.connect()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
+             FROM repos
+             WHERE is_discovered = 1",
+        )
+        .context("failed to prepare discovered repo query")?;
+    let rows = stmt
+        .query_map([], map_repo_row)
+        .context("failed to query discovered repos")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode discovered repo rows")?;
+    Ok(rows)
+}
+
 pub fn find_deepest_repo_containing_path(
     db: &Database,
     path: &str,
@@ -240,19 +258,7 @@ pub fn find_deepest_repo_containing_path(
             .context("failed to decode containing repo rows")?;
         rows
     } else {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, workspace_id, name, path, default_branch, is_active, trust_level
-                 FROM repos
-                 WHERE is_discovered = 1",
-            )
-            .context("failed to prepare containing repo query")?;
-        let rows = stmt
-            .query_map([], map_repo_row)
-            .context("failed to query containing repos")?
-            .collect::<Result<Vec<_>, _>>()
-            .context("failed to decode containing repo rows")?;
-        rows
+        list_discovered_repos(db)?
     };
 
     let mut best_match: Option<RepoDto> = None;
