@@ -62,7 +62,7 @@ Panes is not a full IDE, but it does ship with a built-in multi-tab editor for q
 - Native PTY terminal powered by xterm.js + WebGL
 - Terminal groups, split panes, draggable resize, and broadcast mode
 - Session replay/resume and renderer diagnostics
-- Harness detection, install, and launch flows for Codex CLI, Claude Code, Antigravity CLI, Gemini CLI, Kiro, OpenCode, Kilo Code, Factory Droid, Cursor CLI, GitHub Copilot CLI, Amp, Qwen Code, and Crush
+- Harness detection, install, and launch flows for Codex CLI, Claude Code, Antigravity CLI, Gemini CLI (Enterprise and Cloud licenses only), Kiro, OpenCode, Kilo Code, Factory Droid, Cursor CLI, GitHub Copilot CLI, Amp, Qwen Code, and Crush
 - Multi-launch mode that can fan out one session per harness, optionally with one git worktree per session
 
 ### Editor & Desktop UX
@@ -78,12 +78,23 @@ Panes is not a full IDE, but it does ship with a built-in multi-tab editor for q
 
 ### Prerequisites
 
+To use a prebuilt release:
+
+| Requirement | Version |
+|---|---|
+| Codex CLI | Required for the Codex chat engine; setup can install it via npm |
+| Node.js | 20.5+, required for the Claude chat engine; setup also checks for Node.js before enabling the Codex chat engine |
+| Claude authentication | Required for the Claude chat engine, for example a Claude Code login or `ANTHROPIC_API_KEY` |
+| OpenCode CLI | `opencode` on your `PATH`, required for the OpenCode chat engine |
+| Git | Recommended, for the git panel |
+
+To build from source, you also need:
+
 | Requirement | Version |
 |---|---|
 | Rust toolchain | stable |
 | Node.js | 20+ |
 | pnpm | 9+ |
-| Codex CLI | Required for the Codex chat engine; setup can install it via npm |
 | Tauri v2 prerequisites | [See Tauri docs](https://v2.tauri.app/start/prerequisites/) |
 
 ### Install on macOS
@@ -113,6 +124,8 @@ Maintainers can find the tap/release automation setup in [docs/homebrew-distribu
 ### Install on Windows
 
 Download the latest `*-setup.exe` installer from [GitHub Releases](https://github.com/wygoralves/panes/releases/latest) and run it. Later updates are delivered in-app through the Tauri updater.
+
+The Windows installer is not code-signed yet, so Microsoft Defender SmartScreen may show an "unrecognized app" warning on first run. Choose **More info**, then **Run anyway** to continue.
 
 For this Windows release, the validated scope is installer, updater, startup, and bundled-runtime compatibility. It does not guarantee that Codex and Claude are fully validated end to end through the in-app chat flow yet, so expect some rough edges there.
 

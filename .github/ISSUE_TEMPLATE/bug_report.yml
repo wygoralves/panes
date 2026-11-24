@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in Panes is broken or behaves unexpectedly.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a workspace
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: panes-version
+    attributes:
+      label: Panes version
+      description: Shown in the update dialog, or in the release you installed.
+      placeholder: "0.66.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.4, Windows 11 24H2, Ubuntu 24.04"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Homebrew
+        - DMG
+        - Windows installer (setup.exe)
+        - AppImage
+        - .deb
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Chat (Codex engine)
+        - Chat (Claude engine)
+        - Chat (OpenCode engine)
+        - Terminal or harnesses
+        - Git panel
+        - Editor
+        - Setup or updater
+        - Other
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Any error message Panes showed, or the terminal output if you started Panes from a terminal. Remove anything private before pasting.
+      render: text
+    validations:
+      required: false
