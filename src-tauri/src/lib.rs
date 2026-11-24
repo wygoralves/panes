@@ -94,8 +94,16 @@ pub fn run() {
         }
     }
 
-    let _ =
+    let (default_workspace, default_workspace_created) =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
+    if default_workspace_created {
+        let db = db.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = commands::workspace::scan_workspace_repos(&db, &default_workspace) {
+                log::warn!("failed to scan default workspace repos: {error}");
+            }
+        });
+    }
 
     let engines = EngineManager::from_config(&app_config);
     let app_state = AppState {
