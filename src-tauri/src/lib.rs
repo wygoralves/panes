@@ -96,13 +96,13 @@ pub fn run() {
 
     let (default_workspace, default_workspace_created) =
         db::workspaces::ensure_default_workspace(&db).expect("failed to ensure default workspace");
+    // Runs before the window exists, so the first get_repos already sees the row.
     if default_workspace_created {
-        let db = db.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            if let Err(error) = commands::workspace::scan_workspace_repos(&db, &default_workspace) {
-                log::warn!("failed to scan default workspace repos: {error}");
-            }
-        });
+        if let Err(error) =
+            commands::workspace::register_workspace_root_repo(&db, &default_workspace)
+        {
+            log::warn!("failed to register default workspace repo: {error}");
+        }
     }
 
     let engines = EngineManager::from_config(&app_config);
