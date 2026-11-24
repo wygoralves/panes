@@ -2,6 +2,7 @@
 name = "Panes"
 version = "0.66.0"
 edition = "2021"
+rust-version = "1.90"
 authors = ["Panes contributors"]
 license = "MIT"
 
@@ -10,16 +11,16 @@ name = "agent_workspace_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["image-png"] }
-tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
+tauri = { version = "2.12", features = ["image-png"] }
+tauri-plugin-shell = "2.6"
+tauri-plugin-dialog = "2.8"
+tauri-plugin-fs = "2.7"
+tauri-plugin-notification = "2.8"
+tauri-plugin-updater = "2.14.1"
+tauri-plugin-process = "2.4"
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"

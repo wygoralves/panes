@@ -42,13 +42,12 @@
     "@codemirror/state": "^6.5.4",
     "@codemirror/view": "^6.39.15",
     "@lezer/highlight": "^1.2.3",
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@tauri-apps/plugin-fs": "^2.0.0",
-    "@tauri-apps/plugin-notification": "^2.0.0",
-    "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-shell": "^2.0.0",
-    "@tauri-apps/plugin-updater": "^2.10.0",
+    "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-fs": "^2.7.1",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-shell": "^2.6.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-image": "^0.9.0",
     "@xterm/addon-unicode11": "^0.9.0",
@@ -56,7 +55,6 @@
     "@xterm/xterm": "6.0.0",
     "codemirror": "^6.0.2",
     "diff": "^8.0.3",
-    "diff2html": "^3.4.52",
     "dompurify": "^3.5.0",
     "highlight.js": "^11.11.1",
     "i18next": "^25.6.0",
@@ -66,24 +64,24 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-i18next": "^16.2.4",
-    "react-markdown": "^9.0.0",
     "react-resizable-panels": "^2.1.4",
-    "rehype-highlight": "^7.0.2",
-    "rehype-raw": "^7.0.0",
-    "remark-gfm": "^4.0.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@release-it/conventional-changelog": "^10.0.5",
-    "@tauri-apps/cli": "^2.0.0",
+    "@release-it/conventional-changelog": "^10.0.6",
+    "@tauri-apps/cli": "^2.12.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.1",
-    "esbuild": "^0.25.12",
     "release-it": "^19.2.4",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.5.0",
-    "vite": "^6.0.0",
-    "vitest": "^3.2.4"
+    "vite": "^6.4.6",
+    "vitest": "^3.2.7"
+  },
+  "pnpm": {
+    "overrides": {
+      "release-it>undici": "^6.29.1"
+    }
   }
 }
