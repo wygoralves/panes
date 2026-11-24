@@ -1430,6 +1430,7 @@ fn resolve_node_candidates(
 async fn probe_node_executable(path: PathBuf) -> NodeExecutableCandidate {
     let mut command = Command::new(&path);
     process_utils::configure_tokio_command(&mut command);
+    command.kill_on_drop(true);
     let probe = timeout(
         NODE_RUNTIME_PROBE_TIMEOUT,
         command.arg("-e").arg(NODE_RUNTIME_PROBE_SCRIPT).output(),

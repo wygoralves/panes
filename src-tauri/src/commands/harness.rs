@@ -17,6 +17,7 @@ fn err_to_string(error: impl std::fmt::Display) -> String {
 }
 
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 // ---------------------------------------------------------------------------
 // Harness definitions
@@ -238,20 +239,26 @@ const HARNESSES: &[HarnessDef] = &[
 
 #[tauri::command]
 pub async fn check_harnesses() -> Result<HarnessReport, String> {
-    let mut harnesses = Vec::new();
-    let node_major = if HARNESSES.iter().any(|def| def.min_node_major.is_some()) {
-        detect_node_major().await
-    } else {
-        None
+    // Probes run concurrently so one slow CLI costs one timeout, not one per harness.
+    let node_probe = async {
+        if HARNESSES.iter().any(|def| def.min_node_major.is_some()) {
+            detect_node_major().await
+        } else {
+            None
+        }
     };
+    let npm_probe = async {
+        runtime_env::resolve_executable("npm").is_some()
+            || detect_via_login_shell("npm", "--version").await.is_some()
+    };
+    let harness_probes = futures::future::join_all(HARNESSES.iter().map(locate_harness));
+    let (node_major, npm_available, located) = tokio::join!(node_probe, npm_probe, harness_probes);
 
-    for def in HARNESSES {
-        let status = detect_harness(def, node_major).await;
-        harnesses.push(status);
-    }
-
-    let npm_available = runtime_env::resolve_executable("npm").is_some()
-        || detect_via_login_shell("npm", "--version").await.is_some();
+    let harnesses = HARNESSES
+        .iter()
+        .zip(located)
+        .map(|(def, located)| harness_info(def, located, node_major))
+        .collect();
 
     let mise_preferred =
         runtime_env::is_flatpak() && runtime_env::resolve_executable("mise").is_some();
@@ -464,55 +471,35 @@ pub async fn set_harness_launch_args(
 // Detection
 // ---------------------------------------------------------------------------
 
-async fn detect_harness(def: &HarnessDef, node_major: Option<u32>) -> HarnessInfo {
+async fn locate_harness(def: &HarnessDef) -> Option<(String, String)> {
     if let Some(path) = runtime_env::resolve_executable(def.command) {
         if let Some(version) = get_command_version(&path, &[def.version_flag])
             .await
             .filter(|version| version_belongs_to_harness(def, version))
         {
-            return HarnessInfo {
-                id: def.id.to_string(),
-                name: def.name.to_string(),
-                description: def.description.to_string(),
-                command: def.command.to_string(),
-                found: true,
-                version: Some(version),
-                path: Some(path.display().to_string()),
-                can_auto_install: harness_can_auto_install(def, node_major),
-                install_command_display: install_command_display(def),
-                website: def.website.to_string(),
-                native: def.native,
-            };
+            return Some((path.display().to_string(), version));
         }
     }
 
-    if let Some((path, version)) = detect_via_login_shell(def.command, def.version_flag)
+    detect_via_login_shell(def.command, def.version_flag)
         .await
         .filter(|(_, version)| version_belongs_to_harness(def, version))
-    {
-        return HarnessInfo {
-            id: def.id.to_string(),
-            name: def.name.to_string(),
-            description: def.description.to_string(),
-            command: def.command.to_string(),
-            found: true,
-            version: Some(version),
-            path: Some(path),
-            can_auto_install: harness_can_auto_install(def, node_major),
-            install_command_display: install_command_display(def),
-            website: def.website.to_string(),
-            native: def.native,
-        };
-    }
+}
 
+fn harness_info(
+    def: &HarnessDef,
+    located: Option<(String, String)>,
+    node_major: Option<u32>,
+) -> HarnessInfo {
+    let (path, version) = located.unzip();
     HarnessInfo {
         id: def.id.to_string(),
         name: def.name.to_string(),
         description: def.description.to_string(),
         command: def.command.to_string(),
-        found: false,
-        version: None,
-        path: None,
+        found: version.is_some(),
+        version,
+        path,
         can_auto_install: harness_can_auto_install(def, node_major),
         install_command_display: install_command_display(def),
         website: def.website.to_string(),
@@ -863,7 +850,14 @@ async fn detect_node_major() -> Option<u32> {
 async fn get_command_version(path: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new(path);
     process_utils::configure_tokio_command(&mut command);
-    let output = command.args(args).output().await.ok()?;
+    command.kill_on_drop(true);
+    let output = match timeout(VERSION_PROBE_TIMEOUT, command.args(args).output()).await {
+        Ok(result) => result.ok()?,
+        Err(_) => {
+            log::warn!("timed out probing `{}` for its version", path.display());
+            return None;
+        }
+    };
     if !output.status.success() {
         return None;
     }
@@ -883,6 +877,7 @@ async fn detect_via_login_shell(command: &str, version_flag: &str) -> Option<(St
             LOGIN_SHELL_PROBE_TIMEOUT,
             Command::new(&shell)
                 .args(runtime_env::login_probe_shell_args(&shell, &probe_cmd))
+                .kill_on_drop(true)
                 .output(),
         )
         .await
@@ -1120,5 +1115,36 @@ mod tests {
                 "accepted unsafe args: {args}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    fn fake_executable(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_probe_gives_up_on_a_cli_that_never_answers() {
+        let dir = std::env::temp_dir().join(format!("panes-harness-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let hanging = fake_executable(&dir, "hanging-cli", "exec sleep 600");
+        let healthy = fake_executable(&dir, "healthy-cli", "echo 1.2.3");
+
+        let started = std::time::Instant::now();
+        let version = get_command_version(&hanging, &["--version"]).await;
+        let elapsed = started.elapsed();
+        let healthy_version = get_command_version(&healthy, &["--version"]).await;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(version, None);
+        assert!(
+            elapsed < VERSION_PROBE_TIMEOUT + Duration::from_secs(2),
+            "probe took {elapsed:?}"
+        );
+        assert_eq!(healthy_version.as_deref(), Some("1.2.3"));
     }
 }
